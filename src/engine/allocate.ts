@@ -1,16 +1,13 @@
-import type { Ability, Unit, Upgrade } from './types.ts';
+import type { Ability, Pos, Unit, Upgrade } from './types.ts';
 import { alive } from './types.ts';
-import { scoreAction, canTarget, scoreUpgrade, unitMove } from './combat.ts';
-import { key, parseKey, reachable, type MapDef, type Pos } from './grid.ts';
+import { scoreAction, canTarget, scoreUpgrade } from './combat.ts';
 
 export interface Action {
   unit: Unit;
   /** Null when this action is buying an upgrade rather than using an ability. */
   ability: Ability | null;
   upgrade?: Upgrade;
-  /** Tile the unit moves to before acting. Movement is free; dice pay abilities. */
-  movePos: Pos;
-  /** Centre of the ability's effect. */
+  /** Slot the ability is aimed at. */
   target: Pos;
   dice: number[];
   diceMask: number;
@@ -49,79 +46,58 @@ export function countBits(mask: number): number {
   return c;
 }
 
-/** Where a unit could stand this turn, given who is blocking. */
-export function movementOptions(unit: Unit, units: Unit[], map: MapDef, budget?: number): Pos[] {
-  const others = units.filter((u) => alive(u) && u !== unit);
-  const blocked = new Set(others.map((u) => key(u.pos)));
-  const allowance = budget ?? unitMove(unit);
-  if (allowance <= 0) return [unit.pos];
-  return [...reachable(map, unit.pos, allowance, blocked).keys()].map(parseKey);
-}
-
 /**
- * Tiles a unit may act from with a specific ability. Normal movement is only
- * available if it has not moved yet, but an ability's `dash` always applies --
- * that is the whole point of a gap-closer.
- */
-export function actionTiles(unit: Unit, ability: Ability, units: Unit[], map: MapDef): Pos[] {
-  const budget = (unit.hasMoved ? 0 : unitMove(unit)) + (ability.dash ?? 0);
-  return movementOptions(unit, units, map, budget);
-}
-
-/**
- * Best (tile, target) pairing for one ability. Candidate target centres are
- * restricted to tiles occupied by the relevant side rather than every tile in
- * range -- for a 5v5 that is 5 candidates instead of ~13, which is what keeps
+ * Best target for one ability. Candidate centres are the slots the relevant side
+ * actually occupies rather than every slot on the field, which is what keeps
  * headless idle simulation fast enough to run thousands of battles.
+ *
+ * There used to be a second dimension here -- which tile to act FROM -- because
+ * movement widened where an ability was legal. Nobody moves now, so the search
+ * is just "which target scores best".
  */
-function bestPlacement(
-  unit: Unit, ability: Ability, tiles: Pos[], allies: Unit[], enemies: Unit[], map: MapDef,
-): { movePos: Pos; target: Pos; score: number } | null {
+function bestTarget(
+  unit: Unit, ability: Ability, allies: Unit[], enemies: Unit[],
+): { target: Pos; score: number } | null {
+  const units = [...allies, ...enemies];
   const centres = (ability.kind === 'attack' ? enemies : allies).filter(alive).map((u) => u.pos);
-  if (centres.length === 0) return null;
 
-  let best: { movePos: Pos; target: Pos; score: number } | null = null;
-  for (const tile of tiles) {
-    for (const centre of centres) {
-      if (!canTarget(ability, tile, centre, map)) continue;
-      const score = scoreAction(unit, ability, centre, allies, enemies, map);
-      if (score > 0 && (!best || score > best.score)) best = { movePos: tile, target: centre, score };
-    }
+  let best: { target: Pos; score: number } | null = null;
+  for (const centre of centres) {
+    if (!canTarget(ability, unit, centre, units)) continue;
+    const score = scoreAction(unit, ability, centre, allies, enemies);
+    if (score > 0 && (!best || score > best.score)) best = { target: centre, score };
   }
   return best;
 }
 
 interface Option { mask: number; action: Omit<Action, 'dice' | 'diceMask'> }
 
-function optionsFor(unit: Unit, dice: number[], allies: Unit[], enemies: Unit[], map: MapDef): Option[] {
-  const units = [...allies, ...enemies];
+function optionsFor(unit: Unit, dice: number[], allies: Unit[], enemies: Unit[]): Option[] {
   const byMask = new Map<number, Option>();
 
   // Buying the next upgrade tier competes for the same dice as an ability.
   const nextTier = (unit.def.upgrades ?? [])[unit.upgrades];
   if (nextTier) {
-    const score = scoreUpgrade(unit, enemies, map);
+    const score = scoreUpgrade(unit, enemies);
     for (const mask of payingMasks(dice, { cost: nextTier.cost } as Ability)) {
       const existing = byMask.get(mask);
       if (existing && existing.action.score >= score) continue;
       byMask.set(mask, {
         mask,
-        action: { unit, ability: null, upgrade: nextTier, movePos: unit.pos, target: unit.pos, score },
+        action: { unit, ability: null, upgrade: nextTier, target: unit.pos, score },
       });
     }
   }
 
   for (const ability of unit.def.abilities) {
-    // Recomputed per ability, since a dash widens where this one can be used from.
-    const tiles = actionTiles(unit, ability, units, map);
-    const placement = bestPlacement(unit, ability, tiles, allies, enemies, map);
+    const placement = bestTarget(unit, ability, allies, enemies);
     if (!placement) continue;
     for (const mask of payingMasks(dice, ability)) {
       const existing = byMask.get(mask);
       if (existing && existing.action.score >= placement.score) continue;
       byMask.set(mask, {
         mask,
-        action: { unit, ability, movePos: placement.movePos, target: placement.target, score: placement.score },
+        action: { unit, ability, target: placement.target, score: placement.score },
       });
     }
   }
@@ -137,11 +113,11 @@ function optionsFor(unit: Unit, dice: number[], allies: Unit[], enemies: Unit[],
  * size, which keeps this fast enough to run every turn for both sides.
  *
  * Used for enemy AI and for auto-battling idle stages. The player-facing UI uses
- * `movementOptions` and `payingMasks` directly to show legal choices instead.
+ * `payingMasks` directly to show legal choices instead.
  */
-export function bestPlan(team: Unit[], dice: number[], foes: Unit[], map: MapDef): Plan {
+export function bestPlan(team: Unit[], dice: number[], foes: Unit[]): Plan {
   const actors = team.filter(alive);
-  const optionSets = actors.map((u) => optionsFor(u, dice, team, foes, map));
+  const optionSets = actors.map((u) => optionsFor(u, dice, team, foes));
 
   let best: Plan = { actions: [], diceUsed: 0, totalScore: 0 };
   const current: Action[] = [];

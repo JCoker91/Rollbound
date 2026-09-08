@@ -1,10 +1,50 @@
 import type {
   CharacterDef,
+  SpriteSheet,
   StarEffect,
   StarNode,
   StarTier,
 } from './types.ts';
-import { parseTiles, type MapDef, type Terrain } from './grid.ts';
+import {
+  STANDARD_ENEMY_SLOTS,
+  STANDARD_PARTY_SLOTS,
+  type EncounterDef,
+} from './formation.ts';
+import { SPRITE_METRICS, type SpriteId } from './sprites.generated.ts';
+
+/**
+ * How many tiles the style guide's 64px native canvas spans. The single knob for
+ * the whole roster's size.
+ *
+ * There is no per-character height table any more, and that is the point. Every
+ * sheet is built on the same 64px grid (documents/SPRITE_STYLE_GUIDE.md), so the
+ * art ALREADY encodes relative stature -- and it encodes the guide's rule that a
+ * large warrior gets "broader, not dramatically taller". Kael is exactly
+ * Benjamin's height and half again as wide; Rebar is a low quadruped at 37px to
+ * their 42. Scaling everyone by one factor keeps those proportions intact, where
+ * a hand-tuned table would quietly overwrite the artist's decisions.
+ *
+ * Sized so the tallest sits under 1.0 tiles: at the old 1.05 Dart overhung his
+ * cell into the row above, leaving no headroom for anyone drawn larger.
+ */
+const CANVAS_TILES = 1.35;
+
+/**
+ * Fallback for pre-guide art with no native grid to measure. Empty now that the
+ * whole roster is on the guide -- an entry here means a sheet still needs
+ * regenerating, and should be deleted rather than updated when it is.
+ */
+const LEGACY_SCALE: Partial<Record<SpriteId, number>> = {};
+
+/**
+ * Measured facts from the generated module, plus a height derived from the art.
+ * Nothing here is hand-authored per character.
+ */
+const sprite = (id: SpriteId): SpriteSheet => {
+  const { nativePx, pixelArt, ...metrics } = SPRITE_METRICS[id];
+  const scale = nativePx != null ? (nativePx / 64) * CANVAS_TILES : (LEGACY_SCALE[id] ?? 0.9);
+  return { ...metrics, scale, pixelated: pixelArt };
+};
 
 /**
  * Roster note: the ability COSTS are the real balance lever, not the stats.
@@ -16,10 +56,14 @@ import { parseTiles, type MapDef, type Terrain } from './grid.ts';
  * Costs 4-6 are the reliable band (87-97% payable with 5d6). Costs 1-2 are
  * deliberately unreliable (60-70%) and used as a drawback on otherwise strong kits.
  *
- * Current spread, one entry per paid ability:
- *   2: Kael, Rebar   3: Dart          4: Kael, Tide, Vesper   5: Dart, Vesper
- *   6: Tide, Rebar   7: Kael          8: Vesper               9: Dart
- *  10: Tide         11: Rebar
+ * Current spread, one entry per paid ability. Nothing has three claimants:
+ *   1: Aethis        2: Kael, Rebar    3: Benj, Maxine  4: Kael
+ *   5: Benj, Aethis  6: Rebar          7: Kael, Maxine   8: Aethis
+ *   9: Benjamin     10: Maxine        11: Rebar
+ *
+ * Aethis took 1/5/8 to fill the two holes Vesper left and to claim cost 1, which
+ * had sat empty since Cairn -- the least reliable cost in the game (59.8%), and
+ * exactly the right drawback to hang on a heal that would otherwise be too cheap.
  */
 
 /**
@@ -51,17 +95,9 @@ const node = (id: string, name: string, effects: StarEffect[]): StarNode => ({ i
 
 export const ROSTER: CharacterDef[] = [
   {
-    id: 'dart', name: 'Dart', rarity: 3, element: 'fire', role: 'blade',
-    maxHp: 780, attack: 96, defense: 40, move: 4,
-    sprite: {
-      src: '/sprites/dart/dart.png',
-      icon: '/sprites/dart/dart_icon.png',
-      aspect: 396 / 320,
-      // Left of centre: his sword extends right, so the image's middle is not
-      // where he stands. Measured from the lowest band of pixels -- his feet.
-      anchorX: 0.418,
-      scale: 1.05,
-    },
+    id: 'benjamin', name: 'Benjamin', rarity: 3, element: 'fire', role: 'blade',
+    maxHp: 780, attack: 96, defense: 40,
+    sprite: sprite('benjamin'),
     abilities: [
       { name: 'Quick Cut', cost: 0, wildcard: true, kind: 'attack', power: 0.8, element: 'fire', range: 1 },
       { name: 'Riposte', cost: 3, kind: 'attack', power: 1.0, element: 'fire', range: 1 },
@@ -75,16 +111,16 @@ export const ROSTER: CharacterDef[] = [
     ],
     starTree: starTree(
       [
-        node('dart-edge', 'Honed Edge', [{ kind: 'stat', stat: 'attack', percent: 9 }]),
-        node('dart-guard', 'Duelist Guard', [{ kind: 'stat', stat: 'defense', percent: 14 }]),
+        node('benjamin-edge', 'Honed Edge', [{ kind: 'stat', stat: 'attack', percent: 9 }]),
+        node('benjamin-guard', 'Duelist Guard', [{ kind: 'stat', stat: 'defense', percent: 14 }]),
       ],
       [
-        node('dart-bleed', 'Bleeding Cuts', [{ kind: 'passive', passive: { kind: 'lifesteal', percent: 10 } }]),
-        node('dart-reach', 'Extended Guard', [{ kind: 'ability', ability: 'Crimson Arc', range: 1 }]),
+        node('benjamin-bleed', 'Bleeding Cuts', [{ kind: 'passive', passive: { kind: 'lifesteal', percent: 10 } }]),
+        node('benjamin-reach', 'Extended Guard', [{ kind: 'ability', ability: 'Crimson Arc', range: 1 }]),
       ],
       [
-        node('dart-tempest', 'Widening Tempest', [{ kind: 'ability', ability: 'Scarlet Tempest', power: 0.3 }]),
-        node('dart-swift', 'Swift Advance', [{ kind: 'move', tiles: 1 }, { kind: 'ability', ability: 'Riposte', cost: -1 }]),
+        node('benjamin-tempest', 'Widening Tempest', [{ kind: 'ability', ability: 'Scarlet Tempest', power: 0.3 }]),
+        node('benjamin-swift', 'Practised Riposte', [{ kind: 'ability', ability: 'Riposte', cost: -1 }]),
       ],
     ),
   },
@@ -92,14 +128,8 @@ export const ROSTER: CharacterDef[] = [
     id: 'kael', name: 'Kael', rarity: 2, element: 'wind', role: 'blade',
     // Heavier and slower than the support he replaces: an axe bruiser who wants
     // to be in the middle of things, not circling the edges.
-    maxHp: 860, attack: 102, defense: 52, move: 4,
-    sprite: {
-      src: '/sprites/kael/kael.png',
-      icon: '/sprites/kael/kael_icon.png',
-      aspect: 390 / 320,
-      anchorX: 0.491,
-      scale: 1.05,
-    },
+    maxHp: 860, attack: 102, defense: 52,
+    sprite: sprite('kael'),
     abilities: [
       { name: 'Cleave', cost: 0, wildcard: true, kind: 'attack', power: 0.85, element: 'wind', range: 1 },
       { name: 'Hookstrike', cost: 2, kind: 'attack', power: 1.05, element: 'wind', range: 1 },
@@ -136,21 +166,16 @@ export const ROSTER: CharacterDef[] = [
     // and can put itself between the enemy and whoever is about to die.
     // Attack is deliberately low -- his heals scale off ATK, so the ceiling on
     // Sanctuary is the same knob that keeps his damage honest.
-    maxHp: 1040, attack: 70, defense: 68, move: 3,
-    sprite: {
-      src: '/sprites/rebar/rebar.png',
-      icon: '/sprites/rebar/rebar_icon.png',
-      // Square art, unlike the human sheets: he is on all fours, so he is as
-      // wide as he is tall and the anchor sits dead centre between four paws.
-      aspect: 320 / 320,
-      anchorX: 0.509,
-      scale: 1.25,
-    },
+    maxHp: 1040, attack: 70, defense: 68,
+    // On all fours, so his sheet is as wide as it is tall and the anchor sits
+    // dead centre between four paws -- unlike the humans, who stand off-centre
+    // under an outstretched weapon.
+    sprite: sprite('rebar'),
     abilities: [
       { name: 'Maul', cost: 0, wildcard: true, kind: 'attack', power: 0.9, element: 'light', range: 1 },
-      // Cost 2 is in the unreliable band (~70%), which is the price of a
-      // gap-closer this long on a unit this durable -- you cannot plan around it.
-      { name: 'Ironpaw Charge', cost: 2, kind: 'attack', power: 1.1, element: 'light', range: 1, dash: 3 },
+      // TODO: this was a 3-tile gap-closer and it was Rebar's whole identity.
+      // With no movement it is a plain cheap melee hit and he needs a new one.
+      { name: 'Ironpaw Charge', cost: 2, kind: 'attack', power: 1.1, element: 'light', range: 1 },
       // His signature, and parked on 6 on purpose: the most reliable cost in the
       // game (97.4%), because a guard buff is worthless if it arrives a turn late.
       { name: 'Aegis', cost: 6, kind: 'buff', power: 35, element: 'light', range: 3, aoeRadius: 2, stat: 'defense' },
@@ -185,68 +210,108 @@ export const ROSTER: CharacterDef[] = [
         node('rebar-sanctuary', 'Greater Sanctuary', [{ kind: 'ability', ability: 'Sanctuary', power: 0.4 }]),
         node('rebar-charge', 'Thundering Charge', [
           { kind: 'ability', ability: 'Ironpaw Charge', power: 0.4 },
-          { kind: 'move', tiles: 1 },
         ]),
       ],
     ),
   },
   {
-    id: 'tide', name: 'Tide', rarity: 2, element: 'water', role: 'staff',
-    maxHp: 700, attack: 74, defense: 44, move: 4,
+    id: 'maxine', name: 'Maxine', rarity: 3, element: 'water', role: 'staff',
+    // The roster's artillery, and a deliberate trade: she replaced its only
+    // dedicated healer, so the team's sustain is now Rebar's Sanctuary alone and
+    // fights are meant to be won by ending them faster.
+    //
+    // Glass in both directions -- the lowest HP and defence on the roster paired
+    // with the highest attack. Her whole defence is range: Glacial Lance reaches
+    // 5, which is one tile further than the Fallen Seraph's Judgment, so she can
+    // shell the boss from outside the only attack that threatens her.
+    maxHp: 640, attack: 100, defense: 32,
+    sprite: sprite('maxine'),
     abilities: [
-      { name: 'Mend', cost: 0, wildcard: true, kind: 'heal', power: 0.6, element: 'water', range: 3 },
-      { name: 'Riptide', cost: 4, kind: 'attack', power: 1.1, element: 'water', range: 3 },
-      { name: 'Wellspring', cost: 6, kind: 'heal', power: 1.6, element: 'water', range: 3 },
-      { name: 'Maelstrom', cost: 10, kind: 'attack', power: 1.3, element: 'water', range: 3, aoeRadius: 2 },
+      // The only ranged wildcard in the roster: low power, but it means she
+      // contributes from safety on a die nobody else wanted.
+      { name: 'Frostbolt', cost: 0, wildcard: true, kind: 'attack', power: 0.7, element: 'water', range: 3 },
+      { name: 'Rime Shard', cost: 3, kind: 'attack', power: 1.15, element: 'water', range: 4 },
+      // Her identity. Costs 7 and outranges the whole board.
+      { name: 'Glacial Lance', cost: 7, kind: 'attack', power: 2.0, element: 'water', range: 5 },
+      // Inherits the 10 slot the healer vacated -- uncontested by every other kit.
+      { name: 'Absolute Zero', cost: 10, kind: 'attack', power: 1.5, element: 'water', range: 4, aoeRadius: 2 },
     ],
     upgrades: [
-      { name: 'Deep Current', cost: 6, passive: { kind: 'regen', percent: 5 } },
-      { name: 'Undertow', cost: 8, passive: { kind: 'lifesteal', percent: 16 } },
-      { name: 'Tidelord', cost: 12, passive: { kind: 'resilient', percent: 20 } },
+      // Ordered against her weakness: survive first, then push damage. A caster
+      // this brittle dies to one bad approach without the opening tier.
+      { name: 'Frost Ward', cost: 6, passive: { kind: 'resilient', percent: 14 } },
+      { name: 'Overchannel', cost: 8, passive: { kind: 'frenzy', percent: 35 } },
+      { name: 'Mana Siphon', cost: 12, passive: { kind: 'lifesteal', percent: 18 } },
     ],
     starTree: starTree(
       [
-        node('tide-flow', 'Steady Flow', [{ kind: 'stat', stat: 'attack', percent: 9 }]),
-        node('tide-depth', 'Deep Reserves', [{ kind: 'stat', stat: 'maxHp', percent: 12 }]),
+        node('maxine-focus', 'Arcane Focus', [{ kind: 'stat', stat: 'attack', percent: 10 }]),
+        node('maxine-silks', 'Warded Silks', [{ kind: 'stat', stat: 'maxHp', percent: 12 }]),
       ],
+      // The identity rung: buy back some survivability, or lean all the way into
+      // being a glass cannon that hits hardest when it is nearly dead.
       [
-        node('tide-mend', 'Practised Mend', [{ kind: 'ability', ability: 'Mend', power: 0.25 }]),
-        node('tide-tide', 'Rising Tide', [{ kind: 'passive', passive: { kind: 'regen', percent: 4 } }]),
+        node('maxine-siphon', 'Mana Siphon', [{ kind: 'passive', passive: { kind: 'lifesteal', percent: 12 } }]),
+        node('maxine-over', 'Overchannel', [{ kind: 'passive', passive: { kind: 'frenzy', percent: 28 } }]),
       ],
+      // ...and the payoff rung follows it: wider blast, or a cheaper sniper that
+      // reaches 6 and can open on anything on the board.
       [
-        node('tide-well', 'Cheaper Wellspring', [{ kind: 'ability', ability: 'Wellspring', cost: -1 }]),
-        node('tide-storm', 'Greater Maelstrom', [{ kind: 'ability', ability: 'Maelstrom', power: 0.3 }]),
+        node('maxine-zero', 'Deeper Winter', [{ kind: 'ability', ability: 'Absolute Zero', power: 0.35 }]),
+        node('maxine-lance', 'Piercing Lance', [
+          { kind: 'ability', ability: 'Glacial Lance', cost: -1, range: 1 },
+        ]),
       ],
     ),
   },
   {
-    id: 'vesper', name: 'Vesper', rarity: 1, element: 'dark', role: 'dagger',
-    maxHp: 610, attack: 80, defense: 30, move: 5,
+    id: 'aethis', name: 'Aethis', rarity: 1, element: 'earth', role: 'staff',
+    // The roster's dedicated healer, and its only earth unit -- the wheel has had
+    // a hole in it since Cairn, so nothing countered water until she arrived.
+    //
+    // Healing scales off ATK, so her attack stat is really her heal stat; it is
+    // set low because everything she does keys off it at once, and a healer who
+    // out-damages the blades is a design mistake, not a nice surprise.
+    maxHp: 620, attack: 68, defense: 36,
+    sprite: sprite('aethis'),
     abilities: [
-      // Shadowstep carries its own movement, so Vesper threatens 8 tiles of board
-      // on a single die -- the whole point of the assassin.
-      { name: 'Shadowstep', cost: 0, wildcard: true, kind: 'attack', power: 0.85, element: 'dark', range: 1, dash: 3 },
-      { name: 'Umbral Slash', cost: 4, kind: 'attack', power: 1.25, element: 'dark', range: 1 },
-      { name: 'Assassinate', cost: 5, kind: 'attack', power: 1.75, element: 'dark', range: 1, dash: 2 },
-      { name: 'Nightfall', cost: 8, kind: 'attack', power: 1.8, element: 'dark', range: 2 },
+      // Her wildcard is the ATTACK, not a heal -- deliberately the other way round
+      // from how a healer reads. A wildcard heal is worth nothing on a turn the
+      // party is at full HP, which would leave her with no way to spend a spare
+      // die; chip damage means she always has something to do.
+      { name: 'Thornlash', cost: 0, wildcard: true, kind: 'attack', power: 0.65, element: 'earth', range: 2 },
+      // Cost 1 is the least reliable in the game (59.8%), and that unreliability
+      // is the price of a heal this cheap. You cannot build a turn around it.
+      { name: 'Poultice', cost: 1, kind: 'heal', power: 1.1, element: 'earth', range: 2 },
+      // The one she is meant to cast: parked at 5, inside the reliable band, so
+      // the heal you actually plan around is the one that turns up when needed.
+      { name: 'Verdant Grace', cost: 5, kind: 'heal', power: 1.7, element: 'earth', range: 3 },
+      // Radius 1, not 2 -- the same lesson Sanctuary taught. A radius-2 team heal
+      // catches the whole party regardless of formation and swamps every other
+      // option in the AI's scoring. She gets reach instead: range 3 to Rebar's 2.
+      { name: 'Hallowed Grove', cost: 8, kind: 'heal', power: 1.15, element: 'earth', range: 3, aoeRadius: 1 },
     ],
     upgrades: [
-      { name: 'Bloodscent', cost: 6, passive: { kind: 'frenzy', percent: 30 } },
-      { name: 'Nightstride', cost: 8, passive: { kind: 'swift', percent: 2 } },
-      { name: 'Void Feast', cost: 12, passive: { kind: 'lifesteal', percent: 24 } },
+      { name: 'Herbalist', cost: 6, passive: { kind: 'regen', percent: 6 } },
+      { name: 'Bramble Guard', cost: 8, passive: { kind: 'thorns', percent: 22 } },
+      { name: 'Evergreen', cost: 12, passive: { kind: 'resilient', percent: 18 } },
     ],
     starTree: starTree(
       [
-        node('vesper-edge', 'Whetted Fangs', [{ kind: 'stat', stat: 'attack', percent: 10 }]),
-        node('vesper-shade', 'Shrouded', [{ kind: 'stat', stat: 'defense', percent: 16 }]),
+        // Attack raises her healing too, so this rung is genuinely "heal harder"
+        // versus "survive longer" rather than the usual damage-or-bulk choice.
+        node('aethis-bloom', 'Blossoming', [{ kind: 'stat', stat: 'attack', percent: 10 }]),
+        node('aethis-roots', 'Deep Roots', [{ kind: 'stat', stat: 'maxHp', percent: 12 }]),
       ],
       [
-        node('vesper-drain', 'Sanguine', [{ kind: 'passive', passive: { kind: 'lifesteal', percent: 14 } }]),
-        node('vesper-fury', 'Cornered', [{ kind: 'passive', passive: { kind: 'frenzy', percent: 28 } }]),
+        node('aethis-verdure', 'Verdure', [{ kind: 'passive', passive: { kind: 'regen', percent: 5 } }]),
+        node('aethis-ward', 'Bramble Ward', [{ kind: 'passive', passive: { kind: 'thorns', percent: 20 } }]),
       ],
       [
-        node('vesper-step', 'Longer Shadowstep', [{ kind: 'ability', ability: 'Shadowstep', power: 0.25 }]),
-        node('vesper-night', 'Cheaper Nightfall', [{ kind: 'ability', ability: 'Nightfall', cost: -1 }]),
+        node('aethis-grace', 'Greater Grace', [{ kind: 'ability', ability: 'Verdant Grace', power: 0.4 }]),
+        node('aethis-grove', 'Wider Grove', [
+          { kind: 'ability', ability: 'Hallowed Grove', cost: -1, range: 1 },
+        ]),
       ],
     ),
   },
@@ -265,22 +330,21 @@ export const ROSTER: CharacterDef[] = [
 export const ENEMIES: CharacterDef[] = [
   {
     id: 'husk', icon: 'husk', name: 'Ash Husk', rarity: 1, element: 'fire', role: 'blade',
-    maxHp: 520, attack: 72, defense: 30, move: 4,
+    maxHp: 520, attack: 72, defense: 30,
     abilities: [
       { name: 'Claw', cost: 0, kind: 'attack', power: 0.85, element: 'fire', range: 1, priority: 1 },
     ],
   },
   {
     id: 'wisp', icon: 'wisp', name: 'Bog Wisp', rarity: 1, element: 'water', role: 'bow',
-    maxHp: 460, attack: 66, defense: 24, move: 5,
+    maxHp: 460, attack: 66, defense: 24,
     abilities: [
-      // Cannot fire point-blank, so closing on it genuinely shuts it down.
-      { name: 'Spit', cost: 0, kind: 'attack', power: 0.9, element: 'water', range: 3, minRange: 2, priority: 1 },
+      { name: 'Spit', cost: 0, kind: 'attack', power: 0.9, element: 'water', range: 3, priority: 1 },
     ],
   },
   {
     id: 'golem', icon: 'golem', name: 'Crag Golem', rarity: 2, element: 'earth', role: 'shield',
-    maxHp: 1100, attack: 76, defense: 70, move: 3,
+    maxHp: 1100, attack: 76, defense: 70,
     abilities: [
       { name: 'Slam', cost: 0, kind: 'attack', power: 1.0, element: 'earth', range: 1, priority: 1 },
     ],
@@ -291,15 +355,15 @@ export const ENEMIES: CharacterDef[] = [
   },
   {
     id: 'shade', icon: 'shade', name: 'Pale Shade', rarity: 1, element: 'dark', role: 'dagger',
-    maxHp: 430, attack: 76, defense: 20, move: 5,
+    maxHp: 430, attack: 76, defense: 20,
     abilities: [
-      { name: 'Rend', cost: 0, kind: 'attack', power: 0.95, element: 'dark', range: 1, dash: 2, priority: 1 },
+      { name: 'Rend', cost: 0, kind: 'attack', power: 0.95, element: 'dark', range: 1, priority: 1 },
     ],
     passives: [{ kind: 'frenzy', percent: 35 }],
   },
   {
     id: 'seraph', icon: 'seraph', name: 'Fallen Seraph', rarity: 3, element: 'light', role: 'staff',
-    maxHp: 950, attack: 84, defense: 48, move: 3, boss: true,
+    maxHp: 950, attack: 84, defense: 48, boss: true,
     abilities: [
       // Priority order decides the turn: Judgment whenever it is off cooldown,
       // Rebuke to punish anyone adjacent, Radiance as the filler.
@@ -317,84 +381,24 @@ export const ENEMIES: CharacterDef[] = [
   },
 ];
 
-const P: Terrain = 'plain', F: Terrain = 'forest', H: Terrain = 'hill', W: Terrain = 'water';
-
 /**
- * The lake splits the field into a north and south approach, so committing your
- * slow units to one side is a real decision. Hills flank each spawn as defensive
- * anchors; forests near the middle give squishy units somewhere to stand.
+ * Encounters.
+ *
+ * An encounter is a backdrop plus the two slot clusters everyone deploys into.
+ * There is no terrain and no map geometry any more -- where a character stands
+ * is chosen by the encounter, not walked to, so the only spatial decision left
+ * is how deep into the enemy line an ability reaches.
+ *
+ * Enemies fill `enemySlots` in the order they are supplied, and the standard
+ * cluster is ordered front rank first. So a three-enemy encounter forms a line
+ * facing the party, while a seven-enemy one fills all three ranks -- and putting
+ * a boss last places it at the back, behind its own adds.
  */
-export const RIVERSIDE: MapDef = {
-  name: 'Riverside Crossing',
-  width: 10,
-  height: 8,
-  tiles: [
-    [P, P, F, P, P, P, P, F, P, P],
-    [P, F, P, P, H, H, P, P, F, P],
-    [P, P, P, W, W, W, P, P, P, P],
-    [P, P, P, W, W, W, P, P, P, P],
-    [P, P, P, P, P, P, P, P, P, P],
-    [P, F, P, P, H, H, P, P, F, P],
-    [P, P, F, P, P, P, P, F, P, P],
-    [P, P, P, P, P, P, P, P, P, P],
-  ],
-  playerSpawns: [
-    { x: 0, y: 1 }, { x: 0, y: 3 }, { x: 0, y: 5 }, { x: 1, y: 2 }, { x: 1, y: 4 },
-  ],
-  enemySpawns: [
-    { x: 9, y: 1 }, { x: 9, y: 3 }, { x: 9, y: 5 }, { x: 8, y: 2 }, { x: 8, y: 4 },
-  ],
+export const CURTAIN_CALL: EncounterDef = {
+  name: 'Curtain Call',
+  background: '/background/battle_screens/battle_screen_1.png',
+  partySlots: STANDARD_PARTY_SLOTS,
+  enemySlots: STANDARD_ENEMY_SLOTS,
 };
 
-/**
- * Urban Environment -- 17x22, drawn over public/maps/Urban_Environment.jpg.
- * The image is exactly 100px per cell and flush to the grid, so the background
- * stretches to the tile grid and lines up at any zoom.
- *
- * Terrain here is a FIRST PASS read off the artwork by eye. Rooftops are
- * impassable, market awnings and clutter are difficult ground, planters and
- * hedges give cover, and the raised stone walkways count as high ground.
- * Correct it in the in-app terrain editor rather than hand-editing this block.
- *
- *   P open ground   F foliage/cover   H raised stone
- *   B building      R clutter         W water
- */
-export const URBAN_SQUARE: MapDef = {
-  name: 'Market Quarter',
-  width: 17,
-  height: 22,
-  image: '/maps/Urban_Environment.jpg',
-  tileSize: 42,
-  tiles: parseTiles([
-    'BBBBRRRRPPRRBBBRP', // 0
-    'BBBBPPPPPPPBBBBPP', // 1
-    'BBBBPPPPPPPBBBBPP', // 2
-    'BBBBBBBPPPPBBBBPP', // 3
-    'BBBBBBBPPPPPPRPPP', // 4
-    'BBBBBBBPPPPPPPPPP', // 5
-    'BBBBRRPPPPPPPPPBB', // 6
-    'RRRPPPPPPRRPPPRBB', // 7
-    'RRRPPPPPPPPPPPBBB', // 8
-    'PPPPPPPPPPPPPPBBB', // 9
-    'PPBBBBBPPPPPPPBBB', // 10
-    'PPBBBBBPPPPPPPPBB', // 11
-    'PPBBBBBBBBHPPPBBB', // 12
-    'PRBBBBBBBBHPPPBBB', // 13
-    'PPBBBBBBBBHPPPBBB', // 14
-    'BBBBBBBBBBHPPPBBB', // 15
-    'BBBBBBBBBBHPPPPBB', // 16
-    'BBBBBPPPPPHPPPPPP', // 17
-    'PBBBPPPPPPHPPPPPP', // 18
-    'PBBBPPPHHHHHHHHHH', // 19
-    'PPPPRPPHPPPPPPPPP', // 20
-    'PPPPPPPHPPPBBBBBB', // 21
-  ]),
-  playerSpawns: [
-    { x: 15, y: 18 }, { x: 15, y: 17 }, { x: 10, y: 19 }, { x: 3, y: 21 }, { x: 2, y: 21 },
-  ],
-  enemySpawns: [
-    { x: 15, y: 3 }, { x: 8, y: 0 }, { x: 1, y: 11 }, { x: 0, y: 10 }, { x: 6, y: 2 },
-  ],
-};
-
-export const MAPS: MapDef[] = [URBAN_SQUARE, RIVERSIDE];
+export const ENCOUNTERS: EncounterDef[] = [CURTAIN_CALL];

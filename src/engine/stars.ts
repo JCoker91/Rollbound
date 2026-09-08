@@ -74,7 +74,6 @@ export function applyStars(def: CharacterDef, progress: StarProgress): Character
   let maxHp = def.maxHp;
   let attack = def.attack;
   let defense = def.defense;
-  let move = def.move;
   const passives = [...(def.passives ?? [])];
   const abilities = def.abilities.map((a) => ({ ...a }));
 
@@ -89,9 +88,6 @@ export function applyStars(def: CharacterDef, progress: StarProgress): Character
           if (e.stat === 'defense') defense += Math.round((def.defense * e.percent) / 100);
           break;
         }
-        case 'move':
-          move += e.tiles;
-          break;
         case 'passive':
           passives.push(e.passive);
           break;
@@ -107,7 +103,7 @@ export function applyStars(def: CharacterDef, progress: StarProgress): Character
     }
   }
 
-  return { ...def, maxHp, attack, defense, move, passives, abilities };
+  return { ...def, maxHp, attack, defense, passives, abilities };
 }
 
 /** Rules text for one effect, generated from its own numbers. */
@@ -117,8 +113,6 @@ export function describeEffect(e: StarEffect): string {
       const label = e.stat === 'maxHp' ? 'max HP' : e.stat === 'attack' ? 'ATK' : 'DEF';
       return `+${e.percent}% ${label}`;
     }
-    case 'move':
-      return `+${e.tiles} movement`;
     case 'passive':
       return e.passive.kind;
     case 'ability': {

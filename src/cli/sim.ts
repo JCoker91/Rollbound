@@ -1,4 +1,4 @@
-import { ROSTER, ENEMIES, RIVERSIDE } from '../engine/content.ts';
+import { ROSTER, ENEMIES, CURTAIN_CALL } from '../engine/content.ts';
 import { simulateBattle } from '../engine/battle.ts';
 
 const N = Number(process.argv[2] ?? 500);
@@ -12,7 +12,7 @@ let playerActs = 0,
   playerPhases = 0;
 
 for (let seed = 1; seed <= N; seed++) {
-  const r = simulateBattle(RIVERSIDE, ROSTER, ENEMIES, seed);
+  const r = simulateBattle(CURTAIN_CALL, ROSTER, ENEMIES, seed);
   if (r.outcome === 'victory') wins++;
   if (r.outcome === 'draw') draws++;
   turns += r.turns;
@@ -27,7 +27,7 @@ for (let seed = 1; seed <= N; seed++) {
   }
 }
 
-console.log(`\n=== ${N} battles · ${RIVERSIDE.name} ===`);
+console.log(`\n=== ${N} battles · ${CURTAIN_CALL.name} ===`);
 console.log(`  player win rate : ${((wins / N) * 100).toFixed(1)}%   (draws ${((draws / N) * 100).toFixed(1)}%)`);
 console.log(`  avg turns       : ${(turns / N).toFixed(1)}`);
 console.log(`  avg survivors   : ${(survivors / N).toFixed(2)} / 5`);

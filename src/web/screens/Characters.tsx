@@ -173,7 +173,6 @@ function Detail({
             <Stat label="HP" base={def.maxHp} live={live.maxHp} />
             <Stat label="ATK" base={def.attack} live={live.attack} />
             <Stat label="DEF" base={def.defense} live={live.defense} />
-            <Stat label="MOV" base={def.move} live={live.move} />
           </div>
           <div className="dim copies">
             {copies} pulled · <strong>{available}</strong> spare

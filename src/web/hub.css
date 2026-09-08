@@ -28,6 +28,24 @@
   font-size: 14px;
 }
 
+/*
+ * The way into the dev tools, rendered only on the Vite dev server. Dashed and
+ * muted on purpose: it sits in the game's own header, so it has to be obviously
+ * not part of the game.
+ */
+.hub-top .dev-entry {
+  font-size: 11px;
+  padding: 3px 9px;
+  letter-spacing: 0.04em;
+  border-style: dashed;
+  opacity: 0.7;
+}
+
+.hub-top .dev-entry:hover {
+  opacity: 1;
+  border-color: var(--accent);
+}
+
 .wallet {
   margin-left: auto;
   display: flex;
@@ -145,15 +163,23 @@ button.big em {
 
 /* ---------- idle scene ---------- */
 
+/*
+ * The Cast waiting on the Grand Theater's main stage.
+ *
+ * Was a 6MB photograph of a city, left over from the tile-grid tactics build --
+ * wrong theme, and a quarter of the shipped bundle on its own. The stage plate
+ * is the same scenery the battle backdrop is drawn from, so the hub and a
+ * Performance now read as the same building.
+ */
 .scene {
   border-radius: 12px;
   overflow: hidden;
   border: 1px solid var(--line);
   background-color: #10131a;
   background-image:
-    linear-gradient(rgba(10, 12, 18, 0.55), rgba(10, 12, 18, 0.9)),
-    url("/maps/Urban_Environment.jpg");
-  background-position: center 28%;
+    linear-gradient(rgba(10, 12, 18, 0.35), rgba(10, 12, 18, 0.85)),
+    url("/background/screens/main_screen_stage.png");
+  background-position: center 42%;
   background-size: cover;
 }
 
@@ -199,10 +225,16 @@ button.big em {
   }
 }
 
-/* Slight stagger so the line-up reads as a group rather than a row of icons. */
-.party-member:nth-child(even) {
-  margin-bottom: 10px;
-}
+/*
+ * The party stands on ONE ground line.
+ *
+ * There was a `:nth-child(even) { margin-bottom: 10px }` stagger here, meant to
+ * make the line-up read as a group rather than a row of icons. It lifted every
+ * second character 10px, which reads as a sprite floating rather than as depth --
+ * and it is indistinguishable from a genuine art bug, so it kept drawing the eye
+ * as one. Depth, if it is wanted later, belongs in the scene layout (overlap,
+ * scale, a back row), not in a blanket offset keyed to sibling position.
+ */
 
 .dummy {
   position: relative;
@@ -592,4 +624,301 @@ button.big em {
 
 .event.daily {
   border-left: 3px solid #3f7ab0;
+}
+
+/* ---------- dev animation lab ---------- */
+
+.lab {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px;
+}
+
+.lab-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  align-items: flex-end;
+}
+
+.lab-controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--dim);
+}
+
+.lab-controls label.lab-check {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.lab-controls select,
+.lab-controls input[type='range'] {
+  min-width: 170px;
+}
+
+.lab-stage {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 48px;
+  min-height: 320px;
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #0c0e13;
+}
+
+/* Judging a clip against the ground it will actually stand on. */
+.lab-stage.backdrop {
+  background-image: url('/background/battle_screens/battle_screen_1.png');
+  background-size: cover;
+  background-position: center 60%;
+}
+
+.lab-stage figure {
+  position: relative;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/*
+ * Out of flow, deliberately.
+ *
+ * A caption in normal flow sets its figure's width when the text is wider than
+ * the art -- so changing the label shifted the sprite sideways. Absolute keeps
+ * the figure sized by the art alone, and `nowrap` stops a long label wrapping
+ * into the stage floor.
+ *
+ * It also sits over the backdrop, so it needs its own ground to stay readable.
+ */
+.lab-stage figcaption {
+  position: absolute;
+  bottom: -10px;
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgba(12, 14, 19, 0.75);
+}
+
+/* Reads out what is playing. Lives with the controls, where a text change
+   cannot move the art. */
+.lab-now {
+  align-self: center;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.lab-window {
+  display: block;
+  position: relative;
+  overflow: hidden;
+}
+
+.lab-saved {
+  font-size: 12px;
+  align-self: center;
+}
+
+.lab-frames {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.lab-frames button.on {
+  border-color: var(--accent);
+  background: #26374f;
+}
+
+.lab-note {
+  max-width: 70ch;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* ---------- placement ---------- */
+
+/*
+ * A figure-sized anchor the clip's box hangs off. The box is bigger than the
+ * character -- it holds their widest swing -- so if it sat in flow it would
+ * push the comparison still around and the two would never line up.
+ */
+.lab-anchor {
+  position: relative;
+  display: block;
+}
+
+.lab-anchor .lab-window {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+}
+
+/*
+ * The pose the clip takes over from, overlaid underneath it.
+ *
+ * Same geometry as the live window, so what you see is exactly where the
+ * incoming frame sits at the hand-off -- which is the only way to tell whether
+ * an ending's first frame actually continues from it.
+ */
+.lab-ghost-clip {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  overflow: hidden;
+  opacity: 0.32;
+  filter: grayscale(1);
+  pointer-events: none;
+}
+
+/* The still, underneath, to line the clip's stance up against. */
+.lab-ghost {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  transform: translateX(-50%);
+  opacity: 0.28;
+  filter: grayscale(1);
+  pointer-events: none;
+}
+
+.lab-place {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+}
+
+.lab-place label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--dim);
+}
+
+.lab-place input[type='range'] {
+  min-width: 220px;
+}
+
+/* ---------- per-frame tuning ---------- */
+
+.lab-tune {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.lab-tune-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* Frames read left to right like the strip does, and scroll rather than wrap so
+   a 12-frame clip stays one legible row. */
+.lab-tune-grid {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 6px;
+}
+
+.lab-tune-cell {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #12151c;
+}
+
+.lab-tune-cell.on {
+  border-color: var(--accent);
+  background: #1b2534;
+}
+
+.lab-tune-cell label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--dim);
+}
+
+.lab-tune-cell input {
+  width: 62px;
+  font-size: 12px;
+}
+
+/* Frame index sits between the two reorder arrows. */
+.lab-tune-top {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.lab-tune-idx {
+  min-width: 28px;
+  padding: 1px 6px;
+  font-size: 12px;
+  text-align: center;
+}
+
+.lab-tune-move {
+  padding: 1px 5px;
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.lab-tune-move:disabled {
+  opacity: 0.25;
+  cursor: default;
+}
+
+.lab-tune-off {
+  padding: 2px 6px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* A frame that exists in the image but is never played. */
+.lab-tune-cell.off {
+  opacity: 0.55;
+  border-style: dashed;
+  justify-content: center;
+}
+
+.lab-tune-out {
+  width: 100%;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  resize: vertical;
+  color: var(--fg);
+  background: #0c0e13;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px;
 }

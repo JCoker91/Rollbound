@@ -5,27 +5,30 @@ import { STRONG, WEAK, strongAgainst, weakTo } from './elements.ts';
 const cap = (s: string): string => s[0]!.toUpperCase() + s.slice(1);
 const pct = (n: number): string => `${Math.round(n * 100)}%`;
 
-const tiles = (n: number): string => `${n} tile${n === 1 ? '' : 's'}`;
+const slots = (n: number): string => `${n} slot${n === 1 ? '' : 's'}`;
 
-/** "up to 2 tiles away" or, for weapons with a dead zone, "2-3 tiles away". */
+/**
+ * How deep into the enemy line this reaches. Ranks are counted over those that
+ * still hold someone, so "the front rank" always means whoever is currently
+ * in front rather than a fixed column.
+ */
 function reachPhrase(a: Ability): string {
-  const min = a.minRange ?? 0;
-  if (min > 1) return `${min}-${a.range} tiles away`;
-  if (a.range === 1) return 'adjacent';
-  return `up to ${tiles(a.range)} away`;
+  if (a.range <= 1) return 'in the front rank';
+  if (a.range === 2) return 'in the first two ranks';
+  return 'anywhere in the enemy line';
 }
 
-/** "one enemy up to 2 tiles away" / "all allies within 2 tiles of the target". */
+/** "one enemy in the front rank" / "all allies within 1 slot of the target". */
 function targetPhrase(a: Ability): string {
   const radius = a.aoeRadius ?? 0;
-  const reach = reachPhrase(a);
-  const noun = a.kind === 'attack' ? 'enemy' : 'ally';
 
-  if (radius > 0) {
-    const plural = a.kind === 'attack' ? 'enemies' : 'allies';
-    return `all ${plural} within ${tiles(radius)} of a target ${reach}`;
+  if (a.kind !== 'attack') {
+    // Support reaches the whole party; depth never gates it.
+    return radius > 0 ? `all allies within ${slots(radius)} of a target` : 'one ally';
   }
-  return reach === 'adjacent' ? `one adjacent ${noun}` : `one ${noun} ${reach}`;
+  return radius > 0
+    ? `all enemies within ${slots(radius)} of a target ${reachPhrase(a)}`
+    : `one enemy ${reachPhrase(a)}`;
 }
 
 /**
@@ -34,16 +37,12 @@ function targetPhrase(a: Ability): string {
  */
 export function describeAbility(a: Ability): string {
   const element = cap(a.element);
-  // With a dash the sentence becomes imperative ("Move ..., then deal"), so the
-  // verb needs both forms rather than a lowercased splice.
-  const verb = (third: string, bare: string) =>
-    a.dash ? `Move up to ${tiles(a.dash)}, then ${bare}` : third;
 
   switch (a.kind) {
     case 'attack':
-      return `${verb('Deals', 'deal')} ${pct(a.power)} of ATK as ${element} damage to ${targetPhrase(a)}.`;
+      return `Deals ${pct(a.power)} of ATK as ${element} damage to ${targetPhrase(a)}.`;
     case 'heal':
-      return `${verb('Restores', 'restore')} ${pct(a.power)} of ATK as HP to ${targetPhrase(a)}.`;
+      return `Restores ${pct(a.power)} of ATK as HP to ${targetPhrase(a)}.`;
     case 'buff': {
       const stat = a.stat === 'defense' ? 'DEF' : 'ATK';
       return `Grants +${a.power} ${stat} to ${targetPhrase(a)}, decaying by ${BUFF_DECAY_PER_TURN} at the start of each of their turns.`;
@@ -78,8 +77,6 @@ export function describePassive(p: Passive): string {
       return `Deals ${p.percent}% more damage while below half HP.`;
     case 'lifesteal':
       return `Recovers ${p.percent}% of the damage it deals as HP.`;
-    case 'swift':
-      return `Moves ${p.percent} extra tiles.`;
   }
 }
 

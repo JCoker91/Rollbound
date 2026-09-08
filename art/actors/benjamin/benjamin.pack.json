@@ -1,0 +1,33 @@
+{
+  "clips": {
+    "attack": {
+      "anchorX": 0.619,
+      "aspect": 1.241071,
+      "footPad": 0.0,
+      "frames": 16,
+      "loops": false,
+      "normalised": 0.9866,
+      "restFill": 0.857143,
+      "settlesInto": "idle",
+      "size": 746018,
+      "src": "/sprites/benjamin/benjamin_attack.png",
+      "trimmed": 0
+    },
+    "idle": {
+      "anchorX": 0.619,
+      "aspect": 1.241071,
+      "footPad": 0.0,
+      "frames": 10,
+      "loops": true,
+      "normalised": 1.0,
+      "restFill": 0.857143,
+      "size": 463923,
+      "src": "/sprites/benjamin/benjamin_idle.png",
+      "trimmed": 2
+    }
+  },
+  "stamp": {
+    "mtime_ns": 1788909916348497100,
+    "size": 91658
+  }
+}

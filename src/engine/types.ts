@@ -1,4 +1,12 @@
-import type { Pos } from './grid.ts';
+/**
+ * A formation coordinate: `x` is the depth column, `y` the vertical stagger.
+ * Defined here rather than in formation.ts because formation.ts needs `Unit`
+ * and `Ability` from this file, and the two cannot import each other.
+ */
+export interface Pos {
+  x: number;
+  y: number;
+}
 
 export type Element = 'fire' | 'wind' | 'earth' | 'water' | 'light' | 'dark';
 
@@ -37,14 +45,14 @@ export interface Ability {
    */
   power: number;
   element: Element;
-  /** Max manhattan distance from the caster to the target tile. */
-  range: number;
   /**
-   * Min distance, for weapons that cannot be used point-blank. An archer with
-   * minRange 2 has to keep its distance, which is what makes closing on one a
-   * real play rather than a formality.
+   * How many enemy RANKS deep this reaches: 1 is the front line only, 2 the
+   * front two, and so on. Counted over ranks that still hold someone, so
+   * clearing the front line brings the next one into reach rather than locking
+   * a melee character out. Ignored by heals and buffs, which always reach the
+   * whole party.
    */
-  minRange?: number;
+  range: number;
   /** Which stat a buff raises. Defaults to attack. */
   stat?: 'attack' | 'defense';
   /**
@@ -61,14 +69,7 @@ export interface Ability {
    * the player gets a full turn to walk out of the marked tiles.
    */
   telegraph?: number;
-  /**
-   * Extra movement this ability carries, spent immediately before it resolves.
-   * Stacks on top of the character's normal move and works even after it has
-   * already moved this turn -- a gap-closer should still close a gap late in a
-   * turn. Like any move, it cannot pass through impassable terrain.
-   */
-  dash?: number;
-  /** 0 = single target. Otherwise a manhattan diamond around the target tile. */
+  /** 0 = single target. Otherwise a radius in formation slots around the target. */
   aoeRadius?: number;
   wildcard?: boolean;
 }
@@ -82,8 +83,7 @@ export type Passive =
   | { kind: 'thorns'; percent: number }
   | { kind: 'resilient'; percent: number }
   | { kind: 'frenzy'; percent: number }
-  | { kind: 'lifesteal'; percent: number }
-  | { kind: 'swift'; percent: number };
+  | { kind: 'lifesteal'; percent: number };
 
 /**
  * One pick on a character's star tree.
@@ -94,7 +94,6 @@ export type Passive =
  */
 export type StarEffect =
   | { kind: 'stat'; stat: 'maxHp' | 'attack' | 'defense'; percent: number }
-  | { kind: 'move'; tiles: number }
   | { kind: 'passive'; passive: Passive }
   | { kind: 'ability'; ability: string; power?: number; range?: number; cost?: number };
 
@@ -134,6 +133,33 @@ export interface SpriteSheet {
   /** width / height of the trimmed art. */
   aspect: number;
   anchorX: number;
+  /**
+   * True when the sheet is the style guide's 64px native grid, which the board
+   * draws 2-3x larger and so must scale by nearest-neighbour. False for the
+   * pre-guide high-resolution sheets, which are drawn SMALLER than their file
+   * and need smoothing -- nearest-neighbour downscaling throws pixels away and
+   * looks harsh. Set from whether the art has a native grid, never by hand.
+   */
+  pixelated?: boolean;
+  /**
+   * A packed idle strip: `frames` frames side by side, every one cropped to the
+   * same box so only the intended parts move, and looped -- the pack step trims
+   * a sheet to whole cycles so it never snaps from the last frame to the first.
+   *
+   * That box is shared with every OTHER clip the character owns, so it is as
+   * tall as their highest jump and as wide as their widest swing. It is not the
+   * character: `restFill` is the fraction of it the resting figure fills, and
+   * `footPad` how far the feet sit above its bottom. Size by the figure, not
+   * the box, or the same character comes out a different height in every clip.
+   */
+  idle?: {
+    src: string;
+    frames: number;
+    aspect: number;
+    anchorX: number;
+    restFill: number;
+    footPad: number;
+  };
   /** Height on the board as a multiple of one tile. */
   scale: number;
 }
@@ -156,8 +182,6 @@ export interface CharacterDef {
   maxHp: number;
   attack: number;
   defense: number;
-  /** Movement budget in terrain cost, spent freely each turn -- never costs dice. */
-  move: number;
   abilities: Ability[];
   passives?: Passive[];
   /** Player characters only: three tiers, bought in order during a battle. */
@@ -183,15 +207,9 @@ export interface Unit {
   atkBuff: number;
   defBuff: number;
   side: Side;
+  /** Fixed for the whole battle -- the slot this character was deployed into. */
   pos: Pos;
-  /**
-   * A character may reposition once per turn WITHOUT ending its turn, and can
-   * still use an ability afterwards -- a bad roll should never also cost you the
-   * ability to walk. Using an ability, by contrast, ends the character's turn
-   * outright: it spends the action and forfeits any unused movement.
-   * Both reset at the start of the owner's phase.
-   */
-  hasMoved: boolean;
+  /** Spent by acting, reset at the start of the owner's phase. */
   hasActed: boolean;
   /** How many upgrade tiers this character has bought this battle (0-3). */
   upgrades: number;
@@ -203,7 +221,7 @@ export interface Unit {
 
 export interface PendingCast {
   ability: Ability;
-  /** Locked in when announced, so walking out of it actually works. */
+  /** The slot it was aimed at when announced. */
   target: Pos;
   turnsLeft: number;
 }

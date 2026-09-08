@@ -30,29 +30,181 @@ body {
 }
 
 /* The board fills the window and is panned by dragging any open space. */
-.viewport {
+/* ---------- side-view stage ---------- */
+
+/*
+ * The battlefield is one backdrop image with everyone placed on it by percentage,
+ * so the whole scene scales with the window and needs no camera. `container-type`
+ * is what lets a sprite size itself against the STAGE rather than the viewport --
+ * `cqh` below is a percentage of stage height.
+ */
+.battle .stage {
   position: absolute;
   inset: 0;
-  cursor: grab;
-  overflow: hidden;
+  display: grid;
+  place-items: center;
   background: #0c0e13;
+  overflow: hidden;
 }
 
-.viewport:active {
-  cursor: grabbing;
+/*
+ * A box with the backdrop's own aspect ratio, letterboxed inside the window.
+ *
+ * Slots are placed as a percentage of THIS, not of the viewport. Positioning
+ * them against the window put everyone in the wrong place the moment the window
+ * was not 16:9, because the artwork was centred inside it with bars either side
+ * -- the floor a character is meant to stand on had moved but the percentage
+ * had not. `container-type` also makes `cqh` mean "percent of stage height".
+ */
+.battle .stage-frame {
+  position: relative;
+  aspect-ratio: 1672 / 941;
+  /* Height-led, width derived. Setting width first and clamping height instead
+     let the frame run taller than the window and pushed the dice tray off the
+     bottom of the screen. */
+  height: 100%;
+  width: auto;
+  max-width: 100%;
+  container-type: size;
+  background-image: inherit;
+  background-size: 100% 100%;
+  background-repeat: no-repeat;
 }
 
-.world {
+.stage-slot {
   position: absolute;
-  top: 0;
-  left: 0;
-  will-change: transform;
+  /* left/top are the slot's point on the floor, so the sprite hangs above it and
+     is centred on it -- feet land on the mark rather than the box doing. */
+  transform: translate(-50%, -100%) translateX(var(--px, 0));
+  transition: transform 220ms cubic-bezier(0.33, 1, 0.68, 1);
+  cursor: pointer;
 }
 
-/* Easing only for camera jumps. Dragging and key-panning turn it off, otherwise
-   each input frame animates over the last and the map trails the cursor. */
-.world.smooth {
-  transition: transform 320ms cubic-bezier(0.33, 1, 0.68, 1);
+.stage-slot.selected .unit {
+  filter: drop-shadow(0 0 6px var(--accent));
+}
+
+/* A legal target for the ability in hand. */
+.stage-slot.targetable::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -6px;
+  width: 46cqh;
+  height: 14cqh;
+  transform: translateX(-50%);
+  border: 2px solid var(--reach-edge);
+  border-radius: 50%;
+  background: var(--reach-fill);
+  pointer-events: none;
+}
+
+/* Caught by the splash of whatever is currently hovered. */
+.stage-slot.splash .unit {
+  filter: drop-shadow(0 0 7px #ffb14a);
+}
+
+.stage-slot.danger .unit {
+  animation: slot-danger-pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes slot-danger-pulse {
+  0%,
+  100% {
+    filter: drop-shadow(0 0 3px #ff6a5c);
+  }
+  50% {
+    filter: drop-shadow(0 0 11px #ff6a5c);
+  }
+}
+
+.stage-slot .casting {
+  position: absolute;
+  top: -8cqh;
+  left: 50%;
+  transform: translateX(-50%);
+  font-weight: 800;
+  color: #ff6a5c;
+  text-shadow: 0 0 4px #000;
+}
+
+/* Sprites are sized in stage-height units so the scene scales as one piece.
+   Width must be auto: the shared `.unit` rule pins a tile-sized box, which
+   squashed every sprite to 62px wide regardless of its aspect. */
+.battle .sprite-unit {
+  position: relative;
+  display: block;
+  width: auto;
+  height: auto;
+  border: 0;
+  background: none;
+  border-radius: 0;
+}
+
+.battle .sprite-unit .sprite {
+  position: static;
+  display: block;
+}
+
+/*
+ * Animation: a clip window onto a strip of frames, which slides by exactly one
+ * frame per step.
+ *
+ * The keyframes themselves are NOT here. They are generated per clip in
+ * `clipAnimation.ts`, because each one bakes in that clip's own per-frame holds
+ * and offsets -- a single shared rule could only ever play frames on a fixed
+ * clock at the position they were drawn.
+ */
+.anim-clip {
+  display: block;
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.anim-strip {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  /* The strip is many times wider than its window; without this the shared
+     `img { max-width: 100% }` reset would squash all 12 frames into one. */
+  max-width: none;
+  animation-iteration-count: infinite;
+  /* name / duration / delay come from the component: the rule is per clip, and
+     each character gets its own phase offset so the party does not breathe in
+     lockstep. No `animation-name` default -- a strip with nothing set should sit
+     still, which is what the lab's paused mode relies on. */
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .anim-strip {
+    animation: none;
+  }
+}
+
+.battle .unit.striking {
+  animation: stage-strike 340ms ease-out;
+}
+
+@keyframes stage-strike {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  40% {
+    transform: translateX(var(--px, 0));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stage-slot,
+  .battle .unit.striking,
+  .stage-slot.danger .unit {
+    transition: none;
+    animation: none;
+  }
 }
 
 /* HUD layers float over the map. The wrapper ignores the mouse so drags pass
@@ -200,17 +352,6 @@ body {
   white-space: pre-wrap;
 }
 
-.editor-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 50;
-  overflow: auto;
-  padding: 18px;
-  background: var(--bg);
-}
-
-
-
 .meta {
   display: flex;
   gap: 16px;
@@ -231,61 +372,6 @@ body {
   color: #5d6678;
 }
 
-
-
-/* ---------- board ---------- */
-
-.grid {
-  position: relative;
-  display: grid;
-  gap: 0;
-  background: var(--line);
-  padding: 0;
-  border-radius: 6px;
-  width: max-content;
-}
-
-/* Units sit above the tiles in their own layer so moving one animates rather
-   than re-parenting between cells. Clicks pass through to the tiles below. */
-.units {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-}
-
-.unit-slot {
-  position: absolute;
-  top: 0;
-  left: 0;
-  display: grid;
-  place-items: center;
-  transition: transform 260ms cubic-bezier(0.33, 1, 0.68, 1);
-  will-change: transform;
-}
-
-/* While walking a route the transform advances one tile at a time, so each hop
-   is linear and timed to match the step interval -- easing every tile would
-   make the character stutter at every corner. */
-.unit-slot.walking {
-  transition: transform var(--step, 110ms) linear;
-}
-
-.unit-slot.striking .unit {
-  animation: strike 340ms ease-out;
-}
-
-@keyframes strike {
-  0% {
-    transform: translate(0, 0) scale(1);
-  }
-  35% {
-    transform: translate(var(--px), var(--py)) scale(1.16);
-  }
-  100% {
-    transform: translate(0, 0) scale(1);
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
   .unit-slot {
     transition: none;
@@ -293,112 +379,6 @@ body {
   .unit-slot.striking .unit {
     animation: none;
   }
-}
-
-.tile {
-  width: var(--tile);
-  height: var(--tile);
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  /* Inherit the viewport's grab cursor: most of the board is draggable space.
-     Only tiles a click would actually act on switch to a pointer. */
-  cursor: inherit;
-  transition: filter 0.08s;
-}
-
-.tile.occupied,
-.tile.reach,
-.tile.in-range,
-.tile.target,
-.tile.marked {
-  cursor: pointer;
-}
-
-.tile {
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
-}
-
-.tile.plain {
-  background: #2c3340;
-}
-.tile.forest {
-  background: #24422f;
-}
-.tile.hill {
-  background: #43392c;
-}
-.tile.water {
-  background: #1d3550;
-}
-
-.tile:hover {
-  filter: brightness(1.25);
-}
-
-/* Movement range. A pale wash vanished against the light stone plaza, so the
-   fill is a dark navy while the border stays bright -- the dark fill reads on
-   light ground, the bright edge reads on the map's shadowed corners. Tune the
-   two vars above rather than this rule. */
-.tile.reach::after {
-  content: '';
-  position: absolute;
-  inset: 2px;
-  border: 2px solid var(--reach-edge);
-  background: var(--reach-fill);
-  border-radius: 4px;
-  pointer-events: none;
-}
-
-.tile.target {
-  outline: 2px solid #ff7a5c;
-  outline-offset: -2px;
-}
-
-/* Drawn as an overlay rather than a background-image: the imaged-grid rules
-   reset `background`, which silently erased this on any map with art. */
-.tile.splash::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  z-index: 1;
-  background: repeating-linear-gradient(
-    45deg,
-    var(--splash-tint) 0 7px,
-    transparent 7px 14px
-  );
-  box-shadow: inset 0 0 0 1px var(--splash-edge);
-}
-
-/* Tinted by what the ability actually does, so a guard buff never previews in
-   attack red. */
-.tile.splash {
-  --splash-tint: rgba(255, 110, 80, 0.42);
-  --splash-edge: rgba(255, 140, 110, 0.55);
-}
-
-.tile.splash-heal {
-  --splash-tint: rgba(80, 230, 150, 0.42);
-  --splash-edge: rgba(130, 245, 180, 0.6);
-}
-
-.tile.splash-buff {
-  --splash-tint: rgba(110, 180, 255, 0.42);
-  --splash-edge: rgba(150, 205, 255, 0.6);
-}
-
-.tile.selected {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-}
-
-.ghost {
-  position: absolute;
-  inset: 12px;
-  border: 2px dashed rgba(107, 164, 255, 0.9);
-  border-radius: 50%;
 }
 
 .unit {
@@ -554,6 +534,20 @@ button.primary {
 .error {
   color: #ff8a72;
   font-size: 13px;
+}
+
+/* The result plus its one action, stacked and centred over the board. */
+.outcome-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+
+/* No pointer-events override needed: .hud is click-through but `.hud > *` turns
+   it back on, and .outcome-card is a direct child. */
+.outcome-card button {
+  justify-content: center;
 }
 
 .outcome {
@@ -889,8 +883,6 @@ button.wait:hover {
   gap: 9px;
 }
 
-
-
 .turn-state {
   display: flex;
   gap: 8px;
@@ -913,57 +905,6 @@ button.wait:hover {
   color: #5d6678;
 }
 
-/* ---------- map art ---------- */
-
-.grid.imaged {
-  gap: 0;
-  padding: 0;
-  background-repeat: no-repeat;
-  background-position: center;
-}
-
-/* Over artwork the flat terrain fills would hide the map, so tiles go
-   transparent and only impassable ground keeps a marker. */
-.grid.imaged .tile,
-.grid.imaged .tile.plain,
-.grid.imaged .tile.forest,
-.grid.imaged .tile.hill,
-.grid.imaged .tile.water,
-.grid.imaged .tile.building,
-.grid.imaged .tile.rubble {
-  background: transparent;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.07);
-}
-
-.grid.imaged .tile.blocked {
-  background-image: repeating-linear-gradient(
-    45deg,
-    rgba(0, 0, 0, 0.34) 0 5px,
-    rgba(0, 0, 0, 0.06) 5px 10px
-  );
-}
-
-.grid.imaged .tile:hover {
-  filter: none;
-  box-shadow: inset 0 0 0 2px rgba(107, 164, 255, 0.6);
-}
-
-.tile.building {
-  background: #3a2b33;
-}
-
-.tile.rubble {
-  background: #3b3446;
-}
-
-/* ---------- header tools ---------- */
-
-.tools {
-  margin-left: auto;
-  display: flex;
-  gap: 8px;
-}
-
 select {
   font: inherit;
   background: var(--panel-2);
@@ -973,179 +914,8 @@ select {
   padding: 6px 10px;
 }
 
-/* ---------- terrain editor ---------- */
-
-.editor {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.editor-bar {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-}
-
-.editor-bar button {
-  margin-left: auto;
-}
-
-.palette {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.swatch {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 6px 10px;
-  font-size: 12px;
-}
-
-.swatch.on {
-  border-color: var(--accent);
-  background: #23324a;
-}
-
-.swatch .chip {
-  width: 13px;
-  height: 13px;
-  border-radius: 3px;
-  border: 1px solid rgba(255, 255, 255, 0.3);
-}
-
-.swatch .chip.spawn-p {
-  background: #2f7a4d;
-}
-
-.swatch .chip.spawn-e {
-  background: #9c3535;
-}
-
-.swatch em {
-  font-style: normal;
-  color: var(--dim);
-  font-size: 11px;
-}
-
-.tile.edit {
-  cursor: crosshair;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
-}
-
-.tile.edit:hover {
-  box-shadow: inset 0 0 0 2px #fff;
-  filter: none;
-}
-
-.spawn {
-  font-size: 12px;
-  font-weight: 700;
-  color: #fff;
-  text-shadow: 0 0 4px #000;
-  border-radius: 4px;
-  padding: 0 4px;
-}
-
-.spawn.player {
-  background: #2f7a4d;
-}
-
-.spawn.enemy {
-  background: #9c3535;
-}
-
-.editor-out {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  align-items: flex-start;
-}
-
-.editor-out pre {
-  width: 100%;
-  max-height: 240px;
-  overflow: auto;
-  background: #10131a;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 10px;
-  font-size: 11px;
-  line-height: 1.5;
-  color: var(--dim);
-}
-
-.editor-out code {
-  color: #9fc6ff;
-}
-
-/* In range but behind cover — shown so the player knows to reposition rather
-   than assuming the ability is broken. */
-.tile.noLos {
-  outline: 2px dashed rgba(255, 122, 92, 0.55);
-  outline-offset: -2px;
-}
-
-.tile.noLos::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.35);
-  pointer-events: none;
-}
-
 .hint.warn {
   color: #e6b06a;
-}
-
-.swatch .los {
-  color: #ff8a72;
-  font-size: 9px;
-}
-
-/* ---------- tile inspector ---------- */
-
-.readout {
-  display: flex;
-  gap: 12px;
-  align-items: baseline;
-  margin-top: 12px;
-  padding: 7px 11px;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  font-size: 12px;
-  color: var(--dim);
-  font-variant-numeric: tabular-nums;
-}
-
-.readout strong {
-  color: var(--accent);
-  font-size: 14px;
-}
-
-.readout .warn {
-  color: #e6b06a;
-}
-
-.tile.marked {
-  outline: 3px solid #ffd24a;
-  outline-offset: -3px;
-}
-
-.tile.marked {
-  box-shadow: inset 0 0 0 100px rgba(255, 210, 74, 0.22);
-}
-
-.marked-panel {
-  margin-top: 10px;
-  padding: 10px;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 6px;
 }
 
 .marked-head {
@@ -1160,42 +930,6 @@ select {
   font-size: 13px;
 }
 
-.marked-panel pre {
-  margin: 0;
-  max-height: 180px;
-  overflow: auto;
-  font-size: 11px;
-  line-height: 1.6;
-  color: var(--dim);
-}
-
-
-/* ---------- ability range ---------- */
-
-/* Deliberately amber, never the movement blue -- the two mean different things
-   and get shown at the same time. */
-.tile.in-range::after {
-  content: '';
-  position: absolute;
-  inset: 2px;
-  background: rgba(214, 138, 20, 0.26);
-  border: 1px solid rgba(255, 190, 90, 0.5);
-  border-radius: 3px;
-  pointer-events: none;
-}
-
-/* When a tile is both walkable and in range, movement wins the fill. */
-.tile.reach.in-range::after {
-  background: var(--reach-fill);
-  border-color: var(--reach-edge);
-}
-
-.tile.aimed {
-  outline: 3px solid #ffd24a;
-  outline-offset: -3px;
-  z-index: 2;
-}
-
 .narration {
   margin-top: 10px;
   padding: 7px 12px;
@@ -1204,25 +938,6 @@ select {
   border-radius: 6px;
   color: #ffb0a0;
   font-size: 13px;
-}
-
-/* ---------- telegraphed attacks ---------- */
-
-/* A boss ability announced this turn that lands next turn. Deliberately loud --
-   the whole mechanic depends on the player noticing it in time to walk out. */
-.tile.danger {
-  box-shadow: inset 0 0 0 3px rgba(255, 70, 70, 0.9);
-  animation: danger-pulse 1.1s ease-in-out infinite;
-  z-index: 1;
-}
-
-@keyframes danger-pulse {
-  0%, 100% {
-    background-color: rgba(220, 30, 40, 0.24);
-  }
-  50% {
-    background-color: rgba(255, 70, 70, 0.46);
-  }
 }
 
 .casting {
@@ -1297,25 +1012,6 @@ select {
   border-radius: 5px;
   color: #ff9a86;
   font-size: 12px;
-}
-
-
-/* ---------- map edge ---------- */
-
-/*
- * Softens the board's hard rectangular cut into the surrounding void. Scaled
- * with the world, so the fade stays a constant number of tiles at any zoom, and
- * layered under the unit overlay so nobody standing on the border gets dimmed.
- */
-.edge-fade {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background:
-    linear-gradient(to right, #0c0e13 0, rgba(12, 14, 19, 0) 56px),
-    linear-gradient(to left, #0c0e13 0, rgba(12, 14, 19, 0) 56px),
-    linear-gradient(to bottom, #0c0e13 0, rgba(12, 14, 19, 0) 56px),
-    linear-gradient(to top, #0c0e13 0, rgba(12, 14, 19, 0) 56px);
 }
 
 /* ---------- dice roll ---------- */
@@ -1452,12 +1148,22 @@ select {
 
 /* ---------- character sprites ---------- */
 
+/*
+ * Native-grid art is drawn LARGER than its file, so nearest-neighbour keeps every
+ * art pixel a clean block; smoothing a 42px sheet turns deliberate pixel art into
+ * mush. Pre-guide high-res sheets are drawn SMALLER than their file and get the
+ * opposite treatment -- nearest-neighbour downscaling drops pixels and looks
+ * harsh. The flag comes from whether the art has a native grid.
+ */
+.sprite.pixel,
+.figure img.pixel {
+  image-rendering: pixelated;
+}
+
 .sprite {
   display: block;
   position: absolute;
   z-index: 1;
-  /* Board art is high-res illustration, so let it scale smoothly. */
-  image-rendering: auto;
   user-select: none;
 }
 

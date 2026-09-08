@@ -1,8 +1,8 @@
-import { ROSTER, ENEMIES, RIVERSIDE } from '../engine/content.ts';
+import { ROSTER, ENEMIES, CURTAIN_CALL } from '../engine/content.ts';
 import { simulateBattle } from '../engine/battle.ts';
 
 const seed = Number(process.argv[2] ?? 12345);
-const result = simulateBattle(RIVERSIDE, ROSTER, ENEMIES, seed);
+const result = simulateBattle(CURTAIN_CALL, ROSTER, ENEMIES, seed);
 
 const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
 const bold = (s: string) => `\x1b[1m${s}\x1b[0m`;
@@ -11,7 +11,7 @@ const green = (s: string) => `\x1b[32m${s}\x1b[0m`;
 const yellow = (s: string) => `\x1b[33m${s}\x1b[0m`;
 const cyan = (s: string) => `\x1b[36m${s}\x1b[0m`;
 
-console.log(bold(`\n  ROLLBOUND  ${dim(`${RIVERSIDE.name} · seed ${seed}`)}\n`));
+console.log(bold(`\n  ROLLBOUND  ${dim(`${CURTAIN_CALL.name} · seed ${seed}`)}\n`));
 console.log(dim('  (both sides on AI — this is the auto-battle used for idle stages)\n'));
 
 for (const e of result.log) {
@@ -21,9 +21,6 @@ for (const e of result.log) {
         `\n${bold(`── Turn ${e.turn} · ${e.side === 'player' ? 'YOUR PHASE' : 'ENEMY PHASE'}`)}  ` +
           cyan(`[ ${e.dice.join(' ')} ]`),
       );
-      break;
-    case 'move':
-      console.log(dim(`  ${e.unit} moves (${e.from.x},${e.from.y}) → (${e.to.x},${e.to.y})`));
       break;
     case 'act':
       console.log(`  ${e.actor} → ${bold(e.ability)} ${dim(`(${e.dice.join('+')})`)}`);

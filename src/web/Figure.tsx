@@ -34,19 +34,26 @@ export function Figure({
     );
   }
 
-  const w = height * sheet.aspect;
+  // `height` is the reference a one-tile-tall character would get; the sheet's
+  // own scale is applied on top, exactly as the battle board does it. Without
+  // this every character rendered at a flat `height` outside battle, so the
+  // roster's statures existed on the board and nowhere else -- a child cleric
+  // stood eye to eye with an armoured knight on the idle screen.
+  const h = height * sheet.scale;
+  const w = h * sheet.aspect;
   return (
     <span
       className={`figure ${striking ? 'striking' : ''} ${className}`}
-      style={{ width: w, height } as CSSProperties}
+      style={{ width: w, height: h } as CSSProperties}
     >
       <img
+        className={sheet.pixelated ? 'pixel' : ''}
         src={sheet.src}
         alt=""
         draggable={false}
         style={{
           width: w,
-          height,
+          height: h,
           // Mirror about the feet so a flipped character keeps its footing.
           transform: `scaleX(${facing})`,
           transformOrigin: `${w * sheet.anchorX}px bottom`,
