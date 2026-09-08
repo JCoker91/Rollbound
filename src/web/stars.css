@@ -1,0 +1,226 @@
+/* ---------- star tree ---------- */
+
+.pips {
+  display: inline-flex;
+  gap: 1px;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.pip {
+  color: #39415a;
+}
+
+.pip.on {
+  color: #f0d878;
+  text-shadow: 0 0 5px rgba(240, 216, 120, 0.6);
+}
+
+/* Corner marker on a roster card whose owner can afford their next star. */
+.ready-dot {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #f0d878;
+  box-shadow: 0 0 7px rgba(240, 216, 120, 0.9);
+}
+
+.roster-card {
+  position: relative;
+}
+
+.star-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.rung {
+  position: relative;
+  padding: 10px 0 10px 78px;
+}
+
+/* The spine connecting the rungs, so the branch/converge shape is visible. */
+.rung::before {
+  content: '';
+  position: absolute;
+  left: 30px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--line);
+}
+
+.rung:first-child::before {
+  top: 50%;
+}
+
+.rung:last-child::before {
+  bottom: 50%;
+}
+
+.rung.taken::before {
+  background: #b99a3a;
+}
+
+.rung-label {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 66px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  font-size: 10px;
+}
+
+.rung-star {
+  position: relative;
+  z-index: 1;
+  width: 34px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 11px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--dim);
+}
+
+.rung.taken .rung-star {
+  background: #3a3016;
+  border-color: #b99a3a;
+  color: #f0d878;
+}
+
+.rung.active .rung-star {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.rung-nodes {
+  display: grid;
+  gap: 8px;
+}
+
+.rung.branch .rung-nodes {
+  grid-template-columns: 1fr 1fr;
+}
+
+.node {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 9px 11px;
+  text-align: left;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.node .effects {
+  font-size: 11px;
+  color: var(--dim);
+  text-transform: capitalize;
+}
+
+/* Taken: the branch this character actually walked. */
+.node.chosen {
+  border-color: #b99a3a;
+  background: #2a2618;
+}
+
+/* The road not taken stays visible but clearly out of reach. */
+.node.passed {
+  opacity: 0.4;
+  filter: grayscale(1);
+}
+
+.node.locked {
+  opacity: 0.45;
+}
+
+.node.open {
+  border-style: dashed;
+}
+
+.node.can {
+  border-color: var(--accent);
+  border-style: solid;
+  cursor: pointer;
+}
+
+.node.can:hover {
+  background: #23324a;
+}
+
+.stat-row .gain {
+  color: #6ee79a;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.kit .cost.boosted {
+  background: #6b5a2a;
+  box-shadow: 0 0 8px rgba(240, 216, 120, 0.4);
+}
+
+.kit strong + .tag {
+  margin-left: 7px;
+}
+
+/* ---------- levelling ---------- */
+
+.coin.xp {
+  background: radial-gradient(circle at 35% 30%, #c8ffd0, #3aa86a 70%);
+  box-shadow: 0 0 6px rgba(90, 220, 140, 0.45);
+  border-radius: 4px;
+}
+
+.roster-card .lvl {
+  font-size: 11px;
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.tag.lvl-tag {
+  background: #24402f;
+  border-color: #3c6b4c;
+  color: #a8f0c4;
+  font-variant-numeric: tabular-nums;
+}
+
+.level-panel {
+  margin: 14px 0 4px;
+  padding: 11px 13px;
+  border-radius: 9px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+}
+
+.level-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.level-bar strong {
+  font-size: 15px;
+}
+
+.level-bar button {
+  margin-left: auto;
+}
+
+.level-panel p {
+  margin: 7px 0 0;
+  font-size: 12px;
+}

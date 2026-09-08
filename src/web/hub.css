@@ -1,0 +1,595 @@
+/* ============================================================
+   HUB — home, characters, summon, inventory, events
+   The battle screen keeps its own styles in styles.css.
+   ============================================================ */
+
+.hub {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  background:
+    radial-gradient(1200px 600px at 50% -10%, #1d2635 0%, transparent 70%),
+    var(--bg);
+}
+
+.hub-top {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(16, 19, 26, 0.9);
+}
+
+.hub-top .title {
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 14px;
+}
+
+.wallet {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.coin {
+  width: 15px;
+  height: 15px;
+  display: inline-block;
+  flex: none;
+  border-radius: 50%;
+}
+
+.coin.gold {
+  background: radial-gradient(circle at 35% 30%, #ffe28a, #c9962a 70%);
+  box-shadow: 0 0 6px rgba(255, 200, 80, 0.45);
+}
+
+.coin.shard {
+  background: radial-gradient(circle at 35% 30%, #bfe4ff, #4a7fd6 70%);
+  box-shadow: 0 0 6px rgba(120, 180, 255, 0.45);
+  border-radius: 3px;
+  transform: rotate(45deg);
+}
+
+/*
+ * Named `quiet`, not `ghost`: the battle stylesheet already owns `.ghost` for
+ * the dashed movement-preview circle, which is absolutely positioned with a 50%
+ * radius. Reusing the name turned this button into a screen-sized ellipse.
+ */
+button.quiet {
+  background: transparent;
+  color: var(--dim);
+  border-color: transparent;
+}
+
+button.quiet:hover {
+  color: var(--text);
+  border-color: var(--line);
+}
+
+.hub-body {
+  overflow-y: auto;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 1100px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.hub-nav {
+  display: flex;
+  border-top: 1px solid var(--line);
+  background: rgba(16, 19, 26, 0.95);
+}
+
+.hub-nav button {
+  flex: 1;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--dim);
+  padding: 11px 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  border-top: 2px solid transparent;
+}
+
+.hub-nav button.on {
+  color: var(--text);
+  border-top-color: var(--accent);
+  background: rgba(107, 164, 255, 0.08);
+}
+
+.nav-icon {
+  font-size: 17px;
+  line-height: 1;
+}
+
+button.big {
+  padding: 12px 20px;
+  font-size: 15px;
+  font-weight: 700;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+button.big em {
+  font-style: normal;
+  font-size: 11px;
+  font-weight: 400;
+  opacity: 0.8;
+}
+
+.home,
+.characters,
+.summon,
+.inventory,
+.events {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* ---------- idle scene ---------- */
+
+.scene {
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background-color: #10131a;
+  background-image:
+    linear-gradient(rgba(10, 12, 18, 0.55), rgba(10, 12, 18, 0.9)),
+    url("/maps/Urban_Environment.jpg");
+  background-position: center 28%;
+  background-size: cover;
+}
+
+.scene-art {
+  position: relative;
+  height: 210px;
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  padding: 0 26px 22px;
+}
+
+.figure {
+  position: relative;
+  display: block;
+  flex: none;
+  filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.8));
+}
+
+.figure img {
+  display: block;
+}
+
+.figure.badge {
+  display: grid;
+  place-items: end center;
+}
+
+/* A short lunge, reused for the idle scene's endless skirmish. */
+.figure.striking {
+  animation: scene-strike 420ms ease-out;
+}
+
+@keyframes scene-strike {
+  0% {
+    transform: translateX(0);
+  }
+  40% {
+    transform: translateX(14px) scale(1.05);
+  }
+  100% {
+    transform: translateX(0);
+  }
+}
+
+/* Slight stagger so the line-up reads as a group rather than a row of icons. */
+.party-member:nth-child(even) {
+  margin-bottom: 10px;
+}
+
+.dummy {
+  position: relative;
+  margin-left: auto;
+}
+
+.scene-hit {
+  position: absolute;
+  top: 10%;
+  font-weight: 800;
+  font-size: 15px;
+  color: #ff6a5c;
+  text-shadow:
+    0 0 3px #000,
+    0 1px 2px #000;
+  animation: float-up 0.9s ease-out forwards;
+  pointer-events: none;
+}
+
+.scene-caption {
+  padding: 9px 14px;
+  border-top: 1px solid var(--line);
+  background: rgba(12, 14, 19, 0.75);
+  font-size: 12px;
+  color: var(--dim);
+}
+
+/* ---------- idle rewards ---------- */
+
+.claim-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.claim-body {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+}
+
+.reward {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 19px;
+  font-variant-numeric: tabular-nums;
+}
+
+.claim-body button {
+  margin-left: auto;
+}
+
+.quick {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
+}
+
+.quick p {
+  margin: 0;
+  max-width: 460px;
+  font-size: 12px;
+}
+
+/* ---------- characters ---------- */
+
+.roster-grid,
+.collection {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 10px;
+}
+
+.roster-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 11px 6px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+}
+
+.roster-card.on {
+  border-color: var(--accent);
+  background: #23324a;
+}
+
+.roster-card.locked {
+  opacity: 0.4;
+  filter: grayscale(1);
+}
+
+.roster-card .nm {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.char-hero {
+  display: flex;
+  gap: 20px;
+  align-items: flex-end;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 12px;
+}
+
+.char-head h2 {
+  margin: 0 0 6px;
+  font-size: 22px;
+}
+
+.char-tags {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.tag {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  text-transform: capitalize;
+}
+
+.tag.new {
+  background: #2f5c3f;
+  border-color: #46895f;
+  color: #a8f0c4;
+}
+
+.copies {
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.char-detail h3 {
+  margin: 16px 0 8px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--dim);
+}
+
+.kit {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.kit li {
+  display: flex;
+  gap: 11px;
+  align-items: flex-start;
+}
+
+.kit .cost {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: #33405a;
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+}
+
+.kit .cost.up {
+  background: #6b5a2a;
+}
+
+.kit p {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--dim);
+}
+
+.kit .sub {
+  color: #5d6678;
+  font-size: 11px;
+}
+
+/* ---------- summon ---------- */
+
+.banner {
+  display: flex;
+  gap: 24px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.banner h2 {
+  margin: 0 0 6px;
+  font-size: 20px;
+}
+
+.banner p {
+  margin: 0 0 10px;
+  max-width: 460px;
+  font-size: 12px;
+}
+
+.rates {
+  display: flex;
+  gap: 10px;
+}
+
+.rate {
+  font-size: 12px;
+  padding: 3px 9px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  font-variant-numeric: tabular-nums;
+}
+
+.rate.r3 {
+  color: #f0d878;
+  border-color: #6b5a2a;
+}
+
+.rate.r2 {
+  color: #a8d8ff;
+  border-color: #2a4a6b;
+}
+
+.rate.r1 {
+  color: var(--dim);
+}
+
+.pull-buttons {
+  margin-left: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: stretch;
+  text-align: center;
+}
+
+.pulls-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.pull-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+  gap: 10px;
+}
+
+.pull {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 6px;
+  border-radius: 9px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+}
+
+.pull.r3 {
+  border-color: #b99a3a;
+  box-shadow: 0 0 14px rgba(240, 216, 120, 0.25);
+}
+
+.pull.r2 {
+  border-color: #3f7ab0;
+}
+
+.pull .nm {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.pull .tag.dupe {
+  color: var(--dim);
+}
+
+.slot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 9px 5px;
+  border-radius: 8px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  font-size: 11px;
+}
+
+.slot.locked {
+  opacity: 0.35;
+  filter: grayscale(1);
+}
+
+/* ---------- inventory and events ---------- */
+
+.currency-grid,
+.item-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.currency-grid {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.currency {
+  display: flex;
+  gap: 11px;
+  align-items: center;
+  padding: 11px;
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+
+.currency strong {
+  font-size: 19px;
+  font-variant-numeric: tabular-nums;
+}
+
+.currency p,
+.item p {
+  margin: 2px 0 0;
+  font-size: 11px;
+}
+
+.item {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 11px;
+  border-radius: 8px;
+  border: 1px dashed var(--line);
+}
+
+.item.empty {
+  opacity: 0.72;
+}
+
+.item-icon {
+  font-size: 20px;
+  width: 30px;
+  text-align: center;
+}
+
+.item .tag {
+  margin-left: auto;
+}
+
+.event-head,
+.event-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.event-foot {
+  margin-top: 10px;
+}
+
+.event p {
+  margin: 6px 0 0;
+  font-size: 12px;
+}
+
+.event.raid {
+  border-left: 3px solid #b0434a;
+}
+
+.event.banner {
+  border-left: 3px solid #b99a3a;
+}
+
+.event.daily {
+  border-left: 3px solid #3f7ab0;
+}
