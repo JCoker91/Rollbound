@@ -704,6 +704,43 @@ aside {
   opacity: 0.4;
 }
 
+/*
+ * Dice gate every action, so an ability sits in one of three states and each
+ * has to look different -- otherwise the panel is a wall of grey and the player
+ * cannot tell "wrong dice" from "impossible this turn".
+ *
+ *   .locked            no subset of this roll can pay: dimmest, hopeless
+ *   disabled, plain    payable this roll, but not by the dice held right now
+ *   .ready             the dice in hand cover it -- the only clickable state
+ */
+.ability[disabled]:not(.locked),
+.upgrade-btn[disabled]:not(.locked) {
+  opacity: 0.72;
+}
+
+/*
+ * Gold, not the blue of .active, because they are different claims -- blue is
+ * "this is the ability you chose", gold is "your dice buy this". Both can be
+ * true at once, so .ready.active is declared after and wins the border.
+ */
+.ability.ready,
+.upgrade-btn.ready {
+  border-color: #d9b34a;
+  background: #2a2617;
+  box-shadow: 0 0 10px rgba(240, 216, 120, 0.16);
+}
+
+.ability.ready .cost,
+.upgrade-btn.ready .cost {
+  background: #f0d878;
+  color: #1a1f2a;
+}
+
+.ability.ready.active {
+  border-color: var(--accent);
+  background: #23324a;
+}
+
 .ability .cost {
   flex: none;
   width: 26px;
@@ -1565,14 +1602,6 @@ select {
   .floater {
     animation: float-up 1s linear forwards;
   }
-}
-
-/* Auto-filled suggestion: dashed, so it reads as "we picked this for you" and
-   not as a deliberate choice. Clicking any die replaces the whole suggestion. */
-.die.suggested {
-  border-style: dashed;
-  border-color: var(--accent);
-  background: #1e2a3c;
 }
 
 .hint strong {

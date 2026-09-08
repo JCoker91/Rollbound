@@ -10,11 +10,19 @@ import { newProfile, type Profile } from './idle.ts';
  * supplies `now` and recomputes accrual itself rather than trusting a claim.
  */
 
-const KEY = 'dice-legends:profile:v1';
+const KEY = 'rollbound:profile:v1';
+/**
+ * The key the game shipped under before it was renamed to Rollbound. Read as a
+ * fallback so the rename does not silently wipe every existing save; the next
+ * `save()` writes to the new key and the old one is simply abandoned.
+ *
+ * Safe to delete once nobody is carrying a pre-rename profile.
+ */
+const LEGACY_KEY = 'dice-legends:profile:v1';
 
 export function load(nowMs: number, starters: string[]): Profile {
   try {
-    const raw = localStorage.getItem(KEY);
+    const raw = localStorage.getItem(KEY) ?? localStorage.getItem(LEGACY_KEY);
     if (!raw) return newProfile(nowMs, starters);
 
     const parsed = JSON.parse(raw) as Partial<Profile>;
@@ -49,6 +57,9 @@ export function save(profile: Profile): void {
 export function wipe(): void {
   try {
     localStorage.removeItem(KEY);
+    // Both, or Reset would leave the pre-rename save behind for `load` to find
+    // and the wiped progress would reappear on the next visit.
+    localStorage.removeItem(LEGACY_KEY);
   } catch {
     /* ignore */
   }

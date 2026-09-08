@@ -63,16 +63,13 @@ interface Selection {
   unit: Unit | null;
   /** Where the unit will stand when it acts. Movement is free. */
   movePos: Pos | null;
+  /**
+   * Only ever set to an ability the current `dice` pay for exactly. Dice are
+   * the gate: you choose what to spend, then choose what to spend it on.
+   */
   ability: Ability | null;
   /** Indices into battle.dice. */
   dice: number[];
-  /**
-   * True while `dice` is the suggestion filled in on picking an ability, rather
-   * than dice the player chose. The first click on a die then REPLACES the
-   * suggestion instead of toggling against it -- otherwise swapping a suggested
-   * 2+4 for your own 5+1 means four clicks of undoing.
-   */
-  autoDice: boolean;
 }
 
 const NO_SELECTION: Selection = {
@@ -80,7 +77,6 @@ const NO_SELECTION: Selection = {
   movePos: null,
   ability: null,
   dice: [],
-  autoDice: false,
 };
 
 interface Floater {
@@ -319,6 +315,37 @@ export function BattleScreen({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sel.unit, rev, battle.turn, battle.phase]);
 
+  /**
+   * Abilities the dice you are currently holding pay for EXACTLY.
+   *
+   * Dice are the only way to reach an ability: nothing is clickable until the
+   * selection covers its cost. This answers a different question from
+   * `affordable`, which asks whether SOME subset of the roll could pay. The two
+   * together give three distinct states, and the panel shows all three --
+   * impossible this roll, possible but not currently covered, and payable now.
+   */
+  const matched = useMemo(() => {
+    const out = new Set<string>();
+    if (!sel.unit || sel.unit.side !== 'player' || sel.dice.length === 0) return out;
+
+    const sum = sel.dice.reduce((n, i) => n + (battle.dice[i] ?? 0), 0);
+    for (const a of sel.unit.def.abilities) {
+      // Guarded by `affordable` so nothing can be enabled that the engine would
+      // reject -- selecting unspent dice already implies it, but the invariant
+      // is worth holding explicitly.
+      if (!(affordable.get(a.name) ?? false)) continue;
+      // A wildcard eats any ONE die whatever its face; everything else needs the
+      // subset to total its cost.
+      if (a.wildcard ? sel.dice.length === 1 : sum === a.cost) out.add(a.name);
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sel.unit, sel.dice, affordable, rev, battle.turn, battle.phase]);
+
+  /** Does the current selection pay for `cost`? The rule the upgrade shares. */
+  const diceCover = (cost: number): boolean =>
+    sel.dice.length > 0 && sel.dice.reduce((n, i) => n + (battle.dice[i] ?? 0), 0) === cost;
+
   const actingFrom = sel.movePos ?? sel.unit?.pos ?? null;
 
   const reachable = useMemo(() => {
@@ -416,7 +443,7 @@ export function BattleScreen({
   }, [sel.ability, focus, targets]);
 
   function selectUnit(u: Unit) {
-    setSel({ unit: u, movePos: null, ability: null, dice: [], autoDice: false });
+    setSel({ unit: u, movePos: null, ability: null, dice: [] });
     setAim(null);
     setError(null);
   }
@@ -764,32 +791,36 @@ export function BattleScreen({
   function chooseAbility(a: Ability) {
     // Clicking the selected ability again clears it.
     if (sel.ability?.name === a.name) {
-      setSel((s) => ({ ...s, ability: null, dice: [], autoDice: false }));
+      setSel((s) => ({ ...s, ability: null, dice: [] }));
       setAim(null);
       return;
     }
-    const masks = masksFor(a);
-    if (masks.length === 0) return;
-    // Pre-fill with the fewest dice that pay, so a click is usually enough.
-    const best = masks.reduce((x, y) => (bits(x) <= bits(y) ? x : y));
-    const dice: number[] = [];
-    for (let i = 0; i < battle.dice.length; i++) if (best & (1 << i)) dice.push(i);
-    setSel((s) => ({ ...s, ability: a, dice, autoDice: true }));
+    // Dice are the gate. An ability the current selection does not cover is not
+    // reachable -- the button is disabled, and this guard means no other caller
+    // can slip past it either. Nothing here touches `dice`: what you picked is
+    // what gets spent.
+    if (!matched.has(a.name)) return;
+
+    setSel((s) => ({ ...s, ability: a }));
     setAim(null);
     setError(null);
   }
 
   function toggleDie(i: number) {
     if (battle.diceSpent[i]) return;
-    setSel((s) => {
-      // Touching the dice for the first time discards the suggestion and starts
-      // your own selection from that die.
-      if (s.autoDice) return { ...s, dice: [i], autoDice: false };
-      return {
-        ...s,
-        dice: s.dice.includes(i) ? s.dice.filter((d) => d !== i) : [...s.dice, i],
-      };
-    });
+    // Updater form, not a read of `sel`: several toggles can land in one React
+    // batch, and reading the closed-over selection would make all but the first
+    // compute from stale dice.
+    setSel((s) => ({
+      ...s,
+      dice: s.dice.includes(i) ? s.dice.filter((d) => d !== i) : [...s.dice, i],
+      // A chosen ability can never survive a die toggle, so this is unconditional
+      // rather than a re-check: every die is 1-6, so adding or removing one always
+      // shifts the total, and a wildcard needs exactly one die so it always moves
+      // off that count too. Dropping it beats leaving a half-funded action staged.
+      ability: null,
+    }));
+    setAim(null);
     setError(null);
   }
 
@@ -864,7 +895,7 @@ export function BattleScreen({
     // cost you the character selection.
     if (sel.unit) {
       if (sel.ability && rangeTiles.has(k)) {
-        setSel((cur) => ({ ...cur, ability: null, dice: [], autoDice: false }));
+        setSel((cur) => ({ ...cur, ability: null, dice: [] }));
       } else {
         setSel(NO_SELECTION);
       }
@@ -886,7 +917,7 @@ export function BattleScreen({
     if (err) setError(err);
     else {
       glide(mover.def.id, origin, mover.pos);
-      setSel((s) => ({ ...s, movePos: null, ability: null, dice: [], autoDice: false }));
+      setSel((s) => ({ ...s, movePos: null, ability: null, dice: [] }));
       setError(null);
       bump();
     }
@@ -948,12 +979,21 @@ export function BattleScreen({
   }
 
   const diceSum = sel.dice.reduce((a, i) => a + battle.dice[i]!, 0);
-  /** Whether the current dice actually pay for the chosen ability. */
-  const dicePaid = sel.ability
-    ? sel.ability.wildcard
-      ? sel.dice.length === 1
-      : diceSum === sel.ability.cost
-    : false;
+  /**
+   * The hero whose dice-first selection is in progress: one is selected, still
+   * has its action, and the player has picked dice but not yet an ability.
+   * Carried as the unit rather than a boolean so the hint can name it.
+   */
+  const diceOnly =
+    !sel.ability && sel.dice.length > 0 && sel.unit?.side === 'player' && !sel.unit.hasActed
+      ? sel.unit
+      : null;
+  /**
+   * A hero is up but no dice are picked, so every ability is greyed out. Without
+   * a prompt the panel just looks broken, so say what unlocks it.
+   */
+  const awaitingDice =
+    !over && sel.dice.length === 0 && sel.unit?.side === 'player' && !sel.unit.hasActed;
   /** Rules text follows the hovered ability, falling back to the chosen one. */
   const shownAbility = preview ?? sel.ability;
   const staged = sel.unit != null && sel.movePos != null && !samePos(sel.movePos, sel.unit.pos);
@@ -963,23 +1003,17 @@ export function BattleScreen({
       ? (sel.unit.def.upgrades ?? [])[sel.unit.upgrades]
       : undefined;
   const upgradeMasks = nextTier ? masksFor({ cost: nextTier.cost } as Ability) : [];
+  /** The dice in hand cover the next upgrade tier -- same gate as an ability. */
+  const upgradeReady = nextTier != null && upgradeMasks.length > 0 && diceCover(nextTier.cost);
 
   function handleUpgrade() {
     if (!sel.unit || !nextTier || upgradeMasks.length === 0) return;
+    // An upgrade spends dice and the character's action exactly like casting
+    // does, so it obeys the same gate: the dice you picked are the dice it
+    // spends, and it is unreachable until they cover the tier.
+    if (!diceCover(nextTier.cost)) return;
 
-    // Honour dice the player picked themselves; otherwise spend the fewest that
-    // pay, so an upgrade never eats more of the pool than it has to.
-    const chosen = sel.dice.reduce((n, i) => n + battle.dice[i]!, 0);
-    let indices: number[];
-    if (!sel.autoDice && sel.dice.length > 0 && chosen === nextTier.cost) {
-      indices = sel.dice;
-    } else {
-      const best = upgradeMasks.reduce((x, y) => (bits(x) <= bits(y) ? x : y));
-      indices = [];
-      for (let i = 0; i < battle.dice.length; i++) if (best & (1 << i)) indices.push(i);
-    }
-
-    const err = commitUpgrade(battle, sel.unit, indices);
+    const err = commitUpgrade(battle, sel.unit, sel.dice);
     if (err) setError(err);
     else {
       setSel(NO_SELECTION);
@@ -1124,7 +1158,7 @@ export function BattleScreen({
 
       <div className="hud hud-top">
         <div className="panel bar">
-          <strong className="title">Dice Legends</strong>
+          <strong className="title">Rollbound</strong>
           <span className="dim">{map.name}</span>
           <span className={battle.phase === 'player' ? 'phase you' : 'phase foe'}>
             {battle.phase === 'player' ? 'Your phase' : 'Enemy phase'}
@@ -1231,8 +1265,13 @@ export function BattleScreen({
             {sel.unit.side === 'player' && !sel.unit.hasActed && !over && (
               <ul className="abilities">
                 {sel.unit.def.abilities.map((a) => {
+                  // Three states. `locked` is hopeless: no subset of this roll
+                  // can pay for it at all. `ready` means the dice in hand cover
+                  // it right now. Plain-but-disabled is the middle -- payable
+                  // this roll, just not by what is currently selected.
                   const ok = affordable.get(a.name) ?? false;
                   const active = sel.ability?.name === a.name;
+                  const ready = matched.has(a.name);
                   return (
                     // Hover lives on the <li>: disabled buttons swallow mouse events.
                     <li
@@ -1241,9 +1280,20 @@ export function BattleScreen({
                       onMouseLeave={() => setPreview(null)}
                     >
                       <button
-                        className={`ability ${ok ? '' : 'locked'} ${active ? 'active' : ''}`}
+                        className={`ability ${ok ? '' : 'locked'} ${active ? 'active' : ''} ${
+                          ready ? 'ready' : ''
+                        }`}
                         onClick={() => chooseAbility(a)}
-                        disabled={!ok}
+                        disabled={!ready}
+                        title={
+                          !ok
+                            ? `No dice in this roll can total ${a.cost}`
+                            : !ready
+                              ? a.wildcard
+                                ? 'Select any single die'
+                                : `Select dice totalling ${a.cost}`
+                              : undefined
+                        }
                       >
                         <span className="cost">{a.wildcard ? '✳' : a.cost}</span>
                         <span className="body">
@@ -1287,13 +1337,17 @@ export function BattleScreen({
 
                 {nextTier ? (
                   <button
-                    className="upgrade-btn"
+                    className={`upgrade-btn ${upgradeReady ? 'ready' : ''} ${
+                      upgradeMasks.length === 0 ? 'locked' : ''
+                    }`}
                     onClick={handleUpgrade}
-                    disabled={sel.unit.hasActed || upgradeMasks.length === 0}
+                    disabled={sel.unit.hasActed || !upgradeReady}
                     title={
                       upgradeMasks.length === 0
                         ? `No dice combination totals ${nextTier.cost}`
-                        : undefined
+                        : !upgradeReady
+                          ? `Select dice totalling ${nextTier.cost}`
+                          : undefined
                     }
                   >
                     <span className="cost">{nextTier.cost}</span>
@@ -1362,7 +1416,6 @@ export function BattleScreen({
               dice={battle.dice}
               spent={battle.diceSpent}
               selected={sel.dice}
-              suggested={sel.autoDice}
               onToggle={toggleDie}
               disabled={over}
               roll={roll}
@@ -1384,20 +1437,37 @@ export function BattleScreen({
             <button onClick={() => restart(Math.floor(Math.random() * 100000))}>New seed</button>
           </div>
 
-          {(sel.ability || staged || error) && (
+          {(sel.ability || staged || error || diceOnly || awaitingDice) && (
             <div className="hints">
+              {/* Nothing picked yet: say what unlocks the panel. */}
+              {awaitingDice && (
+                <span className="hint">
+                  Pick dice to choose an ability — an ability unlocks when your dice cover its cost
+                </span>
+              )}
+              {/* Dice held, no ability chosen: the total, and whether anything takes it.
+                  The upgrade counts -- it spends dice and the action just like a cast,
+                  so reporting "nothing costs 6" while the 6-cost upgrade sits lit
+                  would be plainly wrong. */}
+              {diceOnly && (
+                <span className={`hint ${matched.size > 0 || upgradeReady ? 'ok' : 'warn'}`}>
+                  <strong>{diceSum}</strong>
+                  {matched.size > 0
+                    ? ` — ${matched.size} ${matched.size === 1 ? 'ability' : 'abilities'} ready${
+                        upgradeReady && nextTier ? `, plus the ${nextTier.name} upgrade` : ''
+                      }`
+                    : upgradeReady && nextTier
+                      ? ` — pays for the ${nextTier.name} upgrade`
+                      : ` — ${diceOnly.def.name} has nothing costing ${diceSum}`}
+                </span>
+              )}
+              {/* An ability can only be chosen once its dice cover it, so this is always paid. */}
               {sel.ability ? (
-                <span className={`hint ${dicePaid ? 'ok' : 'warn'}`}>
+                <span className="hint ok">
                   <strong>
-                    {sel.ability.wildcard
-                      ? `${sel.dice.length} / 1 die`
-                      : `${diceSum} / ${sel.ability.cost}`}
+                    {sel.ability.wildcard ? '1 die' : `${diceSum} / ${sel.ability.cost}`}
                   </strong>
-                  {dicePaid
-                    ? aim
-                      ? ' — click that target again to fire'
-                      : ' — click a target to aim, or click dice to swap'
-                    : ' — click dice to choose which to spend'}
+                  {aim ? ' — click that target again to fire' : ' — click a target to aim'}
                 </span>
               ) : null}
               {sel.ability && blocked.size > 0 && (
@@ -1613,7 +1683,6 @@ function DiceTray({
   dice,
   spent,
   selected,
-  suggested,
   onToggle,
   disabled,
   roll,
@@ -1622,7 +1691,6 @@ function DiceTray({
   spent: boolean[];
   selected: number[];
   /** True while `selected` is an auto-filled suggestion rather than your choice. */
-  suggested: boolean;
   onToggle: (i: number) => void;
   disabled: boolean;
   roll: { phase: 'pending' | 'tumbling' | 'settled'; face: number }[] | null;
@@ -1638,7 +1706,7 @@ function DiceTray({
           <button
             key={i}
             className={`die ${spent[i] ? 'spent' : ''} ${
-              selected.includes(i) ? (suggested ? 'suggested' : 'picked') : ''
+              selected.includes(i) ? 'picked' : ''
             } ${anim ? anim.phase : ''}`}
             onClick={() => onToggle(i)}
             disabled={disabled || spent[i] || locked}

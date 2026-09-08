@@ -11,7 +11,7 @@ const green = (s: string) => `\x1b[32m${s}\x1b[0m`;
 const yellow = (s: string) => `\x1b[33m${s}\x1b[0m`;
 const cyan = (s: string) => `\x1b[36m${s}\x1b[0m`;
 
-console.log(bold(`\n  DICE LEGENDS  ${dim(`${RIVERSIDE.name} · seed ${seed}`)}\n`));
+console.log(bold(`\n  ROLLBOUND  ${dim(`${RIVERSIDE.name} · seed ${seed}`)}\n`));
 console.log(dim('  (both sides on AI — this is the auto-battle used for idle stages)\n'));
 
 for (const e of result.log) {

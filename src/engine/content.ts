@@ -10,11 +10,16 @@ import { parseTiles, type MapDef, type Terrain } from './grid.ts';
  * Roster note: the ability COSTS are the real balance lever, not the stats.
  * Simulation over all 7776 rolls of 5d6 showed teams whose costs collide starve
  * each other for dice (3.2 of 5 acting) while spread costs reach ~4.3 of 5.
- * That is what lets a 1-star earn a seat next to two 3-stars -- Cairn's 1/3/6
- * spread means it acts on turns nobody else can.
+ * That is what earns a character a seat as surely as raw stats do -- Rebar's
+ * 2/6/11 barely overlaps anyone, so it acts on turns nobody else can.
  *
  * Costs 4-6 are the reliable band (87-97% payable with 5d6). Costs 1-2 are
  * deliberately unreliable (60-70%) and used as a drawback on otherwise strong kits.
+ *
+ * Current spread, one entry per paid ability:
+ *   2: Kael, Rebar   3: Dart          4: Kael, Tide, Vesper   5: Dart, Vesper
+ *   6: Tide, Rebar   7: Kael          8: Vesper               9: Dart
+ *  10: Tide         11: Rebar
  */
 
 /**
@@ -124,32 +129,64 @@ export const ROSTER: CharacterDef[] = [
     ),
   },
   {
-    id: 'cairn', name: 'Cairn', rarity: 1, element: 'earth', role: 'shield',
-    maxHp: 980, attack: 62, defense: 66, move: 3,
+    id: 'rebar', name: 'Rebar', rarity: 2, element: 'light', role: 'shield',
+    // The roster's only tank, and its only light unit. Where the stone wall he
+    // replaced held one tile, Rebar is a guardian who RELOCATES: Ironpaw Charge
+    // stacks a 3-tile dash on his own move, so a move-3 body threatens six tiles
+    // and can put itself between the enemy and whoever is about to die.
+    // Attack is deliberately low -- his heals scale off ATK, so the ceiling on
+    // Sanctuary is the same knob that keeps his damage honest.
+    maxHp: 1040, attack: 70, defense: 68, move: 3,
+    sprite: {
+      src: '/sprites/rebar/rebar.png',
+      icon: '/sprites/rebar/rebar_icon.png',
+      // Square art, unlike the human sheets: he is on all fours, so he is as
+      // wide as he is tall and the anchor sits dead centre between four paws.
+      aspect: 320 / 320,
+      anchorX: 0.509,
+      scale: 1.25,
+    },
     abilities: [
-      { name: 'Brace', cost: 0, wildcard: true, kind: 'buff', power: 20, element: 'earth', range: 1, stat: 'defense' },
-      // A 1-cost is the least reliable in the game (59.8%) -- the tradeoff for being cheap.
-      { name: 'Shield Bash', cost: 1, kind: 'attack', power: 0.7, element: 'earth', range: 1 },
-      { name: 'Bulwark', cost: 3, kind: 'heal', power: 1.2, element: 'earth', range: 2 },
-      { name: 'Stoneskin', cost: 6, kind: 'buff', power: 30, element: 'earth', range: 2, aoeRadius: 2, stat: 'defense' },
+      { name: 'Maul', cost: 0, wildcard: true, kind: 'attack', power: 0.9, element: 'light', range: 1 },
+      // Cost 2 is in the unreliable band (~70%), which is the price of a
+      // gap-closer this long on a unit this durable -- you cannot plan around it.
+      { name: 'Ironpaw Charge', cost: 2, kind: 'attack', power: 1.1, element: 'light', range: 1, dash: 3 },
+      // His signature, and parked on 6 on purpose: the most reliable cost in the
+      // game (97.4%), because a guard buff is worthless if it arrives a turn late.
+      { name: 'Aegis', cost: 6, kind: 'buff', power: 35, element: 'light', range: 3, aoeRadius: 2, stat: 'defense' },
+      // The roster's only AoE heal. 11 is uncontested by every other kit and
+      // eats 2-3 dice, so a full-team heal benches one or two teammates to cast.
+      //
+      // Radius 1, not 2, after a sweep: at radius 2 it caught the whole party
+      // regardless of formation and became the most-used ability in the GAME
+      // (11.5% of all player actions, out-scoring every nuke) -- absurd for an
+      // 11-cost. Radius 1 puts it at 7.3% and makes it a reward for clustering,
+      // which the Seraph's radius-2 Judgment is there to punish.
+      { name: 'Sanctuary', cost: 11, kind: 'heal', power: 1.5, element: 'light', range: 2, aoeRadius: 1 },
     ],
     upgrades: [
-      { name: 'Set Stance', cost: 6, passive: { kind: 'resilient', percent: 14 } },
-      { name: 'Jagged Guard', cost: 8, passive: { kind: 'thorns', percent: 28 } },
-      { name: 'Mountainheart', cost: 12, passive: { kind: 'regen', percent: 7 } },
+      { name: 'Warded Plate', cost: 6, passive: { kind: 'resilient', percent: 16 } },
+      { name: 'Bristling Barding', cost: 8, passive: { kind: 'thorns', percent: 30 } },
+      { name: 'Ursine Endurance', cost: 12, passive: { kind: 'regen', percent: 8 } },
     ],
     starTree: starTree(
       [
-        node('cairn-wall', 'Living Wall', [{ kind: 'stat', stat: 'maxHp', percent: 12 }]),
-        node('cairn-plate', 'Deep Plate', [{ kind: 'stat', stat: 'defense', percent: 14 }]),
+        node('rebar-pelt', 'Thick Pelt', [{ kind: 'stat', stat: 'maxHp', percent: 12 }]),
+        node('rebar-plate', 'Gilded Plate', [{ kind: 'stat', stat: 'defense', percent: 14 }]),
       ],
+      // The identity rung: soak the hit, or make taking it hurt.
       [
-        node('cairn-regen', 'Slow Erosion', [{ kind: 'passive', passive: { kind: 'regen', percent: 4 } }]),
-        node('cairn-tough', 'Unyielding', [{ kind: 'passive', passive: { kind: 'resilient', percent: 12 } }]),
+        node('rebar-ward', 'Sanctified Ward', [{ kind: 'passive', passive: { kind: 'resilient', percent: 12 } }]),
+        node('rebar-barbs', 'Spiked Barding', [{ kind: 'passive', passive: { kind: 'thorns', percent: 24 } }]),
       ],
+      // ...and the payoff rung follows the same split: lean further into keeping
+      // the team alive, or into being the thing that arrives and hits.
       [
-        node('cairn-bulwark', 'Greater Bulwark', [{ kind: 'ability', ability: 'Bulwark', power: 0.4 }]),
-        node('cairn-stone', 'Broader Stoneskin', [{ kind: 'ability', ability: 'Stoneskin', range: 1 }]),
+        node('rebar-sanctuary', 'Greater Sanctuary', [{ kind: 'ability', ability: 'Sanctuary', power: 0.4 }]),
+        node('rebar-charge', 'Thundering Charge', [
+          { kind: 'ability', ability: 'Ironpaw Charge', power: 0.4 },
+          { kind: 'move', tiles: 1 },
+        ]),
       ],
     ),
   },

@@ -1,4 +1,4 @@
-# Dice Legends
+# Rollbound
 
 A web-based idle gacha game with a Fire Emblem–style tactical battle system driven by dice.
 
@@ -47,6 +47,7 @@ npm run dev          # dev server, usually http://localhost:5173
 | `npm run play [seed]` | Watch one full AI-vs-AI battle in the terminal |
 | `npm run sim [n]` | Balance report over N simulated battles |
 | `python scripts/pack_sprites.py` | Process raw character art into board sprites |
+| `python scripts/make_favicon.py` | Regenerate the site icon (SVG + ICO + apple-touch) |
 
 `npm run sim` is the most useful tool in the repo. It has caught every balance and AI bug so far.
 
@@ -86,10 +87,15 @@ src/
     sim.ts         Balance simulator
 scripts/
   pack_sprites.py  Art pipeline
+  make_favicon.py  Site icon: gold d6 showing the five face
 public/
+  favicon.svg      GENERATED, do not hand-edit -- see make_favicon.py
+  favicon.ico      GENERATED (16/32/48)
+  apple-touch-icon.png  GENERATED (180)
   maps/            Battle map artwork
   sprites/<name>/  PROCESSED character art (what the game loads)
-  spites/<name>/   RAW source art (note: folder name is a typo, kept to avoid churn)
+art/
+  <name>/          RAW source art. Outside public/ on purpose -- see below.
 ```
 
 ---
@@ -132,8 +138,9 @@ Five d6 into a shared pool each turn. Abilities cost an exact sum; wildcards tak
   *both* directions. Costs 4–6 are the safe band; 1–2 and 13+ are fragile edges to be used as
   deliberate drawbacks.
 - **Cost collision is the real balance lever.** Teams whose ability costs overlap starve each other
-  for dice (3.2 of 5 acting); teams with spread costs reach 4.3 of 5. This is *why a 1-star can earn
-  a seat next to two 3-stars* — Cairn's 1/3/6 spread means it acts on turns nobody else can.
+  for dice (3.2 of 5 acting); teams with spread costs reach 4.3 of 5. This is *why cost spread earns
+  a seat as surely as raw stats do* — Rebar's 2/6/11 barely overlaps anyone, so it acts on turns
+  nobody else can.
 
 **Every character has a wildcard "basic"** costing any single die. This removed dead rolls entirely
 (dice utilisation is now 4.99/5) without removing the tension: measured over 955 full-strength
@@ -256,13 +263,17 @@ role), stats (maxHp, attack, defense, move), 3–4 abilities including one `wild
 **When designing a kit, check cost coverage across the whole roster.** Current spread:
 
 ```
-1: Cairn    2: Kael    3: Dart, Cairn    4: Kael, Tide, Vesper    5: Dart, Vesper
-6: Cairn, Tide    7: Kael    8: Vesper    9: Dart    10: Tide
+2: Kael, Rebar    3: Dart    4: Kael, Tide, Vesper    5: Dart, Vesper
+6: Tide, Rebar    7: Kael    8: Vesper    9: Dart    10: Tide    11: Rebar
 ```
+
+Nothing occupies cost 1 since Cairn was replaced. That is fine — 1 is the least reliable cost in
+the game (59.8%) and the wildcard basics already soak lone dice — but it is free real estate for
+the next kit that wants a deliberately unreliable option.
 
 ### Art pipeline
 
-Raw art goes in `public/spites/<name>/`; run `python scripts/pack_sprites.py` to produce
+Raw art goes in `art/<name>/`; run `python scripts/pack_sprites.py` to produce
 `public/sprites/<name>/`. The script trims to content, downscales (1.1MB → ~95KB), keys out solid
 backgrounds by **flood-filling from the corners** (a colour key would punch holes through dark
 armour), and computes the foot anchor. It prints the exact block to paste into `content.ts` and
@@ -292,8 +303,8 @@ Riverside Crossing (10×8)  W54  L0  D6   avg 21.9 turns
 been added on top of enemies that were tuned before any of them existed. An enemy difficulty pass is
 the most overdue piece of work in the project.
 
-**Roster:** Dart (3★ fire blade, sprite), Kael (2★ wind blade, sprite), Cairn (1★ earth shield),
-Tide (2★ water staff), Vesper (1★ dark dagger).
+**Roster:** Dart (3★ fire blade, sprite), Kael (2★ wind blade, sprite), Rebar (2★ light shield,
+sprite), Tide (2★ water staff), Vesper (1★ dark dagger).
 **Enemies:** Ash Husk, Bog Wisp, Crag Golem, Pale Shade, Fallen Seraph (boss, telegraphs Judgment).
 **Maps:** Market Quarter, Riverside Crossing.
 
@@ -306,6 +317,12 @@ everything disabled and labelled "Not implemented").
 ## 9. Known issues and open items
 
 - **Enemies are far too weak** — see above. Start here.
+- **The 1★ summon pool is a single character.** Rebar replaced Cairn at 2★, so Vesper is the only
+  1★ left and 70% of all pulls are now the same unit. Not a code bug — the rate table is fine, the
+  content behind it is thin. The fix is more 1★ characters, not a rate change.
+- **No earth character.** Replacing Cairn broke the fire→wind→earth→water wheel on the player side,
+  so nothing counters water enemies like the Bog Wisp. Rebar took light instead, which is the roster's
+  first, and does counter the Pale Shade. Worth filling with the next earth unit.
 - **Stage progression does not exist.** `profile.stage` is always 1; winning a battle does not
   advance it or grant rewards. The battle and the idle layer are not yet connected.
 - **Party is the first five owned characters**, in roster order. No lineup management UI. The order
@@ -316,8 +333,11 @@ everything disabled and labelled "Not implemented").
   concept of retreating from a cul-de-sac.
 - **Save is client-side localStorage.** Trivially editable, and the clock is the player's own.
   Acceptable for a friends-only project; see roadmap.
-- **`public/spites/` is a typo** for `sprites`. Kept deliberately — renaming means touching the pack
-  script config and re-running it. Low priority, but do not "fix" it accidentally.
+- **Raw art must stay out of `public/`.** Vite copies `public/` into `dist/` wholesale, so source
+  art parked there ships to production. This already happened: Rebar's raws under `public/spites/`
+  plus a stray `Dart_HQ.png` sitting in the *processed* folder put ~1.9MB of never-requested
+  megapixel PNGs into every build. Both now live in `art/`, which is outside the served tree.
+  (This also retired the old `public/spites/` folder, whose name was a typo for `sprites`.)
 - **Two global CSS namespaces** (`styles.css` for battle, `hub.css` for the hub) already caused one
   collision: a `.ghost` class meant a hub button inherited the battle's absolutely-positioned
   movement-preview circle and rendered as a screen-sized ellipse. CSS modules or a prefix convention

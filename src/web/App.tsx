@@ -65,7 +65,7 @@ export function App() {
   return (
     <div className="hub">
       <header className="hub-top">
-        <strong className="title">Dice Legends</strong>
+        <strong className="title">Rollbound</strong>
         <div className="wallet">
           <span className="coin gold" />
           <span>{short(profile.gold)}</span>
