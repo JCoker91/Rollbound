@@ -18,17 +18,15 @@ function reachPhrase(a: Ability): string {
   return 'anywhere in the enemy line';
 }
 
-/** "one enemy in the front rank" / "all allies within 1 slot of the target". */
+/** "one enemy in the front rank" / "the whole party" / "the caster". */
 function targetPhrase(a: Ability): string {
-  const radius = a.aoeRadius ?? 0;
-
+  const scope = a.scope ?? 'one';
+  if (scope === 'self') return 'the caster';
   if (a.kind !== 'attack') {
-    // Support reaches the whole party; depth never gates it.
-    return radius > 0 ? `all allies within ${slots(radius)} of a target` : 'one ally';
+    // Support reaches any ally; depth never gates it.
+    return scope === 'all' ? 'the whole party' : 'one ally';
   }
-  return radius > 0
-    ? `all enemies within ${slots(radius)} of a target ${reachPhrase(a)}`
-    : `one enemy ${reachPhrase(a)}`;
+  return scope === 'all' ? 'the entire enemy line' : `one enemy ${reachPhrase(a)}`;
 }
 
 /**

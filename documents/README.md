@@ -165,7 +165,7 @@ art/               THE ONLY PLACE ART IS UPLOADED
                    <name>.pack.json (generated), <name>.anim.json (authored)
   background/      Scenery, mirrored verbatim into public/background/
   objects/         Props (not yet consumed)
-  enemies/         Antagonists (not yet consumed)
+  enemies/creatures/  One flat 128px PNG per enemy — packed like a v2 actor
 public/            ENTIRELY GENERATED — see below
 documents/
   README.md                    This file
@@ -188,6 +188,11 @@ That split is enforced, not just documented:
 - The fingerprint is a **guard against regenerating over uploaded art**. This pipeline once read and
   wrote the same folder, and a run destroyed a freshly uploaded sprite by regenerating it from stale
   sources. Comparing mtimes cannot catch that — after any normal run the output is always newer.
+- **The fingerprint is a content hash, not a timestamp.** It was `mtime_ns` once, and git does not
+  preserve mtime: after any clone, checkout or branch switch every output looked foreign, and the
+  guard silently skipped the *entire roster* on every run — sizes matching to the byte the whole
+  time. A hash costs one read of a file already being written and also catches an edit that kept the
+  size. Manifests written before the change are re-adopted on size once and immediately re-stamped.
 - A complete run **prunes** `public/sprites/` and `public/background/` of anything it did not
   produce. Pruning is skipped when an actor was skipped unexpectedly, so a partial run cannot
   delete a skipped actor's output. A run deliberately scoped with `--only` still prunes *those*
@@ -242,7 +247,7 @@ see ordinary numbers. Order matters: levels first, so a star's percentage is of 
 rather than the base sheet.
 
 **3. Rules text is generated from ability data, never hand-written.** `describe.ts` turns
-`{ power: 1.4, range: 3, aoeRadius: 2 }` into prose. Retune a number and the text follows. An
+`{ power: 1.4, range: 3, scope: 'all' }` into prose. Retune a number and the text follows. An
 ability can never claim something it does not do.
 
 A fourth, learned the hard way: **measurements about art are generated, never hand-copied.** A
@@ -253,12 +258,13 @@ replaced Kael sheet once kept the old aspect ratio in `content.ts` and rendered 
 
 ## 5. Systems
 
-> **The battle systems below (§5.1–§5.4) describe the CURRENT implementation, which is being
-> replaced.** See `BATTLE_DESIGN.md` for the target: damage types, symbols and chains, a planned
-> resolution queue, revealed enemy intent, and status effects. The dice economy in §5.1 survives
-> into the new design and is worth reading; the rest is context for what is being torn out.
+> **The battle layer is mid-rebuild toward `BATTLE_DESIGN.md`.** The turn loop (§5.2) and enemy
+> intent (§5.3) are BUILT and current. Still to come: damage types with split defenses, status
+> effects, and symbols/chains — until those land, §5.4's upgrade tiers and the ability data model
+> are the older system and will move.
 >
-> §5.5–§5.7 (stars, levels, idle, summoning) are unaffected.
+> The dice economy in §5.1 survives the rebuild unchanged; it is the game's identity and is
+> format-independent. §5.5–§5.7 (stars, levels, idle, summoning) are unaffected throughout.
 
 ### 5.1 The dice economy
 
@@ -314,26 +320,97 @@ formation worth arranging: a boss behind two ranks of adds cannot be touched by 
 the adds are gone. Support abilities are exempt; the party is two columns deep and gating heals on
 depth would add fiddle without adding a decision.
 
-**`aoeRadius`** is manhattan distance in formation slots. Radius 1 catches a target and its
-immediate neighbours; radius 2 reaches most of a formation and belongs only on the biggest abilities.
+**Target scope is one of three shapes**, and deliberately only three:
 
-- **Elements**: fire → wind → earth → water → fire, plus light ↔ dark (mutual). 1.5× strong,
-  0.75× resisted.
+| `scope` | reaches | `range` applies? |
+| --- | --- | --- |
+| `one` (default) | a single unit | yes, for attacks |
+| `self` | the caster, and nothing else | no |
+| `all` | every living unit on the affected side | no |
+
+This replaced an `aoeRadius` measured in formation slots, where a blast splashed onto its target's
+*neighbours*. That asked the player to hold the enemy's grid layout in their head to work out what an
+ability would catch, and it barely had a middle ground to offer in return — the formation is three
+columns wide, so radius 2 already caught nearly everything. Single, self, or everyone reads at a
+glance and needs no diagram.
+
+Two consequences worth knowing. **AoE got strictly stronger** — what used to hit ~3 now always hits
+5 — so the costs on the seven converted abilities are understated until the kit redesign. And
+`range` on an `all` ability is vestigial: it no longer gates anything, though `thornsDamage` still
+reads `range > 1` as its melee test.
+
+- **Elements**: a five-element cycle, **fire → wind → earth → lightning → water → fire**, plus
+  light ↔ dark as a mutual pair outside it. 1.5× strong, 0.75× resisted. Every element in the cycle
+  beats exactly one and loses to exactly one, so a five-enemy encounter built from it has no dead
+  matchups. Lightning was added with the elemental Understudies and only moved one existing edge:
+  earth used to beat water and now grounds lightning, with lightning conducting into water. Both
+  read without explanation, which is the test a matchup wheel has to pass.
 - **Damage**: `ATK × power × (100 / (100 + DEF)) × element`, then passive modifiers.
+
+### 5.2a The turn loop
+
+One round, in order:
+
+1. **Roll** the shared pool. The dice are visible before anything is planned.
+2. **Enemies declare** — every living enemy picks an ability and a target, and both are shown.
+3. **The player plans**, queueing actions into a resolution order. Dice are reserved as each is
+   queued, so the tray always shows what is genuinely left.
+4. **Commit.** The queue resolves top to bottom, one action at a time.
+5. **Enemies act**, carrying out what they declared in step 2.
+
+| function | does |
+| --- | --- |
+| `planAction` / `planUpgrade` | queue an action, reserving its dice |
+| `unplan` / `clearPlan` | take it back, returning the dice |
+| `movePlanned` | reorder — this is the strategy |
+| `commitNext` | resolve the front of the queue, return what happened |
+| `commitPlan` | drain it, for headless use |
+
+**Planning and resolving are separate on purpose.** If actions landed as they were clicked,
+ordering would be a probe — cast the cheap thing, look, then decide the rest — and the order would
+stop being a decision. Building the whole turn before any of it happens is what makes "which of
+these goes first" a real question.
+
+> **Nothing is re-validated at resolution.** An action whose target died earlier in the same queue
+> **fizzles, and its dice are gone.** That is the cost of ordering badly, and refunding it would
+> delete the decision. Verified: two attacks queued at a 1 HP enemy produce one kill, one
+> `fizzle`, and two spent dice.
+
+`commitNext` is stepped rather than all-at-once so the UI can animate one action, let it land, then
+run the next. Resolving a whole turn in one frame would collapse an ordered plan into a single
+indistinguishable flash, throwing away the readability the ordering was meant to buy. `commitPlan`
+is verified to reach identical state.
 
 ### 5.3 Enemies are NOT built like player characters
 
 This is the single most important content distinction.
 
-- **Enemies roll no dice.** Every enemy acts every turn. They pick the highest-priority ability that
-  is off cooldown and has a target. Deliberately predictable — you should be able to look at the
-  stage and know what is coming.
-- Because they act every phase instead of ~3.6 of 5, their per-hit numbers are **roughly half** a
-  player character's.
+- **Enemies roll no dice.** Every enemy acts every turn. Because they act every phase instead of
+  ~3.6 of 5, their per-hit numbers are **roughly half** a player character's.
+- **They declare in advance.** At the top of the player's phase each living enemy commits to an
+  ability and a target, and the player sees both. `chooseIntents` runs then rather than when the
+  enemy acts, because a declaration made at the moment of acting is too late to plan against.
+- **Which ability is chosen by weight** (`Ability.weight`, default 1, so an unweighted kit is
+  uniform). **The odds are never shown** — the player sees the choice, not the distribution. That is
+  what keeps this round solvable and the next one uncertain; published odds would make every fight
+  arithmetic, hidden choices would make planning a guess.
+- **The target is picked uniformly at random** among legal ones. Targeting is not where the interest
+  lives, and a deterministic "always hits the weakest" would make the reveal redundant — you would
+  know it without reading it.
+- **The declared action is what happens.** The enemy phase executes the intent rather than
+  re-choosing; re-choosing would break the promise the reveal makes. The only fallback is when the
+  named target has since died, which is itself a legitimate answer to the reveal.
 - **Trash mobs** get one ability and usually no passive. **Elites** get passives. **Bosses** get
-  several abilities on cooldowns with priorities, plus multiple passives.
+  several, with hidden activation odds.
 - **Telegraphed attacks**: an ability with `telegraph: 1` announces its target area this turn and
-  lands at the start of its next phase. The danger zone pulses during your turn.
+  lands at the start of its next phase. Distinct from an intent — a telegraph is a wind-up you have
+  a whole turn to answer, an intent is what happens at the end of this one.
+- Enemies resolve **sequentially inside one uninterruptible phase**, not strictly simultaneously.
+  The player cannot act between them, which is the property that matters for burst, but a kill by
+  the first does change what the third finds. Logged as open in `BATTLE_DESIGN.md`.
+
+`Ability.priority` is the older selector and is now vestigial; the current kits still carry it and
+are about to be rebuilt anyway.
 
 Passives available: `regen`, `thorns`, `resilient`, `frenzy`, `lifesteal`, `swift`.
 
@@ -379,9 +456,13 @@ investing in.
 - `accrued()` and `claim()` are **pure and take `now` as an argument** — they never read the clock.
   Deliberate, so the same code can move server-side, where the timestamp is the one thing a client
   must never own.
-- Summon rates: **4% / 26% / 70%** for 3★/2★/1★. 30 shards per pull, 270 for ten. The rate table is
+- Summon rates: **4% / 26% / 70%** for 5★/4★/3★. 30 shards per pull, 270 for ten. The rate table is
   printed on the page from the same constants the roll uses, so displayed odds cannot drift from
-  applied odds.
+  applied odds — but see §9 for the empty-tier caveat that currently defeats that.
+- **Rarity runs 3–5, with 5 rarest.** It was 1–3 with 3 rarest; the renumbering is a hazard rather
+  than a rename, because `rarity: 3` stayed valid while coming to mean the opposite. The compiler
+  flags every 1 and 2 and silently accepts every 3, so each character was re-assigned deliberately.
+  All five starters are 3★ — they are tutorial unlocks.
 
 ---
 
@@ -400,6 +481,12 @@ Non-obvious choices, each made to fix a real observed problem.
 | Damage reactions diff HP rather than parse the log | Catches direct hits, AoE splash, thorns, lifesteal and regen in one place, with exact amounts, and needs no name matching. |
 | Spent characters are **darkened**, not faded | Transparency let the backdrop show through and they became hard to find. |
 | Sprite sizing derives from the 64px native grid | The grid is the one measurement the whole roster shares, so the art itself encodes relative stature and one global factor scales everyone. |
+| The turn is queued and committed, not clicked and resolved | Immediate resolution turns ordering into a probe: cast the cheap thing, look at the result, then decide. The order stops being a decision. |
+| A queued action whose target dies **fizzles**, dice spent | Refunding it would remove the cost of ordering badly, which is the only thing making the order matter. |
+| Enemy intent reveals the TARGET, not just the ability | "Judgment → whole party" supports shielding, pre-healing, or racing the caster. "Judgment" alone supports nothing. |
+| Enemy activation odds are hidden, the choice is shown | Published odds make a fight arithmetic; hidden choices make planning a guess. Showing the pick keeps this round solvable and the next one uncertain. |
+| Target scope is one / self / all, with no radius | A radius over formation slots made the player hold the enemy's grid in their head, and had almost no middle ground to offer — three columns wide means radius 2 caught nearly everything. |
+| Output fingerprints are content hashes, not mtimes | Git does not preserve mtime, so an mtime fingerprint reported every file as foreign after any checkout and the guard silently skipped the whole roster. |
 
 ---
 
@@ -452,6 +539,13 @@ Size and pixels stay separate questions: how big a character is comes from their
 pixels get drawn comes from the best available render. Stature is the **ratio** `nativePx /
 nativeCanvas`, and both travel together into `sprites.generated.ts` — measuring a 128px actor
 against a hard-coded 64 would draw them at twice everyone else's height.
+
+**Enemies.** One flat `art/enemies/creatures/<name>.png` per creature, authored to the same v2 spec
+as a Performer — 128px canvas, green screen, binary alpha. A creature is that spec minus everything
+a Performer needs on top: no 64px master to reconcile, no portrait crop, no animation set, so it is
+a file rather than a folder. It packs through the same key, outline and crop, and outputs to
+`public/sprites/<name>/` like everyone else, which is what lets the metrics scan, the prune and the
+stamp guard treat it identically instead of needing a parallel tree.
 
 **Animations.** Sheets go in `art/actors/<name>/animations/<name>_<clip>.png`. The frame grid is
 inferred from the image's own dimensions — gcd of width and height, read row-major — so `7680×640`
@@ -532,6 +626,24 @@ reporting the pipeline's own deliberate pixel as art drift is how a lint teaches
 
 > **Only the OUTER silhouette.** An internal separation — an arm against a torso, the gap under a
 > scarf — is not on the alpha boundary, so it cannot be derived and still has to be drawn.
+
+**Stature is audited against a declared scale class**, not one band for everybody. `SCALE_CLASS` in
+`pack_sprites.py` maps a sprite to `small` (58–72), `standard` (82–92) or `large` (92–104) from the
+guide's §4; anything undeclared is audited as Standard. It records INTENT and changes no rendering —
+a sprite declared `small` and drawn large is reported, never silently shrunk, because stature still
+comes from the measured art. Without it the lint can only say "not Standard", which is noise for a
+character that was never meant to be, and noise is how a lint teaches you to stop reading it.
+
+The measured height **discounts the outline the pipeline itself drew**, for the same reason the
+margin check does: the guide's bands are about the art. It is a uniform 2px on every v2 sprite (one
+row top and bottom), so it shifts every reading equally and changes no relative stature.
+
+> **A caveat the guide states and the pipeline cannot honour.** §3 says to scale a character by the
+> BODY, not the total bounding box — hats, plumes and weapons must not shrink the body. `nativePx`
+> is measured from the content box, so it is the total silhouette: Maxine's 106 includes her hat and
+> the Understudies' 93 includes a feather plume. Separating the two automatically is the same
+> unreliable problem as internal outlines — a wide hat brim is indistinguishable from shoulders by
+> pixel width alone. Until something better exists, keep silhouettes comparable in the art.
 
 **Pixel art is drawn at whole-number scale.** Nearest-neighbour is only faithful at integer factors;
 at the 1.208× the stage's proportions happened to ask for, some source pixels are one screen pixel
@@ -625,6 +737,11 @@ rewrite a file that also describes Benjamin.
 Offsets are percentages, so corrections hold at any render size. `hold` is a **weight**, not a
 duration, so `stepMs` still means "how long a plain frame lasts."
 
+The lab's **Preview size** slider is the one control that is deliberately NOT saved — it zooms the
+lab so a clip can be judged at more than one size, and is labelled as such. A character's size in
+battle comes from how tall they are drawn on their native canvas (`nativePx / nativeCanvas`), so
+making one bigger means redrawing them taller, not turning a knob.
+
 `stepMs` is per clip because a bounce idle and a celebration are not the same tempo, and the sheets
 they come from are not drawn at a common frame rate either. It was the one lab control that had no
 authored home: the slider lived in React state, `save()` never sent it, and the battle used a
@@ -637,8 +754,10 @@ hard-coded constant — so it moved the lab preview and nothing else.
 
 **The animation lab** (`?dev=1#anim`, or the **▶ Dev** button) is where all of this is judged and
 edited: swap character and clip, scrub frames by hand, play a one-shot into whatever it settles
-into, ghost the still behind the clip to line up the stance, reorder and disable frames, tune
-placement and timing live, download a single frame as PNG — and **Save**, which writes the JSON
+into, ghost the still behind the clip — or the **incoming frame**, the last frame of whatever clip
+settles into this one, which is the pose an ending actually has to continue from — reorder and
+disable frames, tune placement and timing live, download a single frame as PNG — and **Save**,
+which writes the JSON
 through a dev-only endpoint (`vite.config.ts`). A browser cannot write to the repo and the
 alternatives are both bad: downloading leaves you to move the file by hand, and copy-paste makes
 every small nudge a chore. The endpoint is `apply: 'serve'` so it never exists in a build, and it
@@ -667,9 +786,10 @@ healed 315 for two dice, so a single Performer spending two of five dice cancell
 `BATTLE_DESIGN.md` addresses this structurally, via simultaneous enemy phases that cannot be healed
 through mid-burst, rather than by raising enemy numbers into a sustain cliff.
 
-**Cast** (all five have sprites): Benjamin (3★ fire blade), Kael (2★ wind blade), Rebar (2★ light
-shield), Maxine (3★ water staff, artillery), Aethis (1★ earth staff, healer). **All five kits are
-being redesigned** against `BATTLE_DESIGN.md` — treat the current abilities as disposable.
+**Cast** — all five have sprites and idle animations, and **all five are 3★**, the common tier, as
+tutorial unlocks: Benjamin (fire blade), Kael (wind blade), Rebar (light shield), Maxine (water
+staff, artillery), Aethis (earth staff, healer). **All five kits are being redesigned** against
+`BATTLE_DESIGN.md` — treat the current abilities as disposable.
 
 **Art migration to style guide v2 (128px) is in progress:**
 
@@ -685,10 +805,16 @@ The remaining three are to be rebuilt at 128px with **a single idle each**. The 
 which spec an actor is on from their files, so migrating one is just dropping the new files in — see
 [`art/` in, `public/` out](#art-in-public-out) for the full contract and the pre-flight list.
 
-**Enemies:** Ash Husk, Bog Wisp, Crag Golem, Pale Shade, Fallen Seraph (boss, telegraphs Judgment).
-All still render as SVG role badges — **no enemy art exists yet**; `art/enemies/` is empty.
+**Enemies:** five elemental **Understudies** — Red (fire), Yellow (lightning), Blue (water),
+Orange (earth), Green (wind) — one per element in the cycle, identical in every other respect so
+any difference in outcome is the matchup and nothing else. **All five have art.** The older
+five-enemy lineup is kept as `BESTIARY` for reference, not deployed.
 
-**Encounters:** Curtain Call.
+**Encounters:** Curtain Call, fielding five `Understudy` — one creature repeated, with two abilities
+weighted 75 / 25. Deliberately one creature: the thing being exercised is the selector and the
+reveal, and five different kits would make a bug in the machinery indistinguishable from a quirk of
+one enemy's abilities. The old five-enemy lineup is kept as `BESTIARY` for reference, not deployed.
+Numbers are placeholders, not a balance pass.
 
 **Hub screens:** Home (idle scene + claim), Characters (roster, stars, levels), Summon (working
 gacha), Inventory (currencies real, items labelled placeholders), Events (real countdowns,
@@ -714,15 +840,27 @@ everything disabled and labelled "Not implemented").
   grant rewards. The battle and idle layers are not yet connected. **Unaffected by the battle
   redesign — safe to build now.**
 - **Party is the first five owned characters**, in roster order. No lineup management UI.
-- **The 1★ summon pool is a single character.** Aethis is the only 1★, so 70% of pulls are the same
-  unit. If she is ever promoted the tier empties, and `summon()` falls back to rolling the whole
-  roster for that tier — 70% of pulls would then ignore rarity entirely. Fix with more 1★ content.
+- **The summon screen advertises rates it cannot deliver.** Rarity runs **3–5**, and all five
+  starters are 3★, so the 4★ and 5★ tiers are empty. `summon()` falls back to the whole pool for an
+  empty tier, which means the screen shows 4% / 26% / 70% and hands out 3★ characters 100% of the
+  time. Not a code bug — the rate table and the disclosure are still the same value, which is the
+  property that matters — but it breaks the "displayed odds cannot drift from applied odds"
+  guarantee until 4★ and 5★ content exists. Either add that content or have the screen show only
+  tiers with characters in them.
+  *(This replaces the old "the 1★ pool is a single character, so 70% of pulls are Aethis" issue,
+  which the 3–5 renumbering resolved: every starter now sits in one tier and pulls spread evenly
+  across all five.)*
 - **No dark character**, so nothing on the roster is strong against the Fallen Seraph.
 
 **Art**
 
-- **No enemy art.** The largest visible gap now that the Cast is done. `art/enemies/` is empty and
-  every enemy renders as an SVG role badge.
+- **The cast has no agreed scale, and the mobs inherit the problem.** Body heights, with the
+  pipeline's own outline discounted: Rebar 80, Benjamin 83, Kael 90, Understudies 91–93, Aethis 95,
+  Maxine 106. That is a 32% spread with no stated intent, so "the mobs are too tall" has no fixed
+  reference — they are taller than three Performers and shorter than two.
+  The Understudies are **declared `small`** in `SCALE_CLASS` and drawn at 91–93, so the audit
+  reports the gap every run. Drawing them at **~65** would put them clearly below every Performer
+  and read as trash. Settling the Performers' own classes is the larger, and more useful, decision.
 - **Maxine is 108 native px**, past the guide's Standard band (82–92) *and* Large (92–104). She sits
   at 0.84 of her canvas while everyone else is 0.58–0.66, so she reads as the tallest of the cast by
   a wide margin. Either bring her to ~86–90 with the rest or make the deviation deliberate — the
@@ -739,10 +877,13 @@ everything disabled and labelled "Not implemented").
 
 - **Save is client-side localStorage.** Trivially editable, and the clock is the player's own.
   Acceptable for a friends-only project; see roadmap.
-- **Two global CSS namespaces** (`styles.css` for battle, `hub.css` for the hub) already caused one
-  collision — a `.ghost` class made a hub button inherit an absolutely-positioned battle overlay and
-  render as a screen-sized ellipse. A keyframe collision (`danger-pulse`) was caught the same way.
-  CSS modules or a prefix convention would prevent the whole category.
+- **Two global CSS namespaces** (`styles.css` for battle, `hub.css` for the hub) have now caused
+  three collisions: a `.ghost` class made a hub button inherit an absolutely-positioned battle
+  overlay and render as a screen-sized ellipse; a `danger-pulse` keyframe was caught the same way;
+  and `.unit.enemy { background }` silently beat `.battle .sprite-unit { background: none }` on
+  **identical specificity**, painting a dark box behind every enemy that had art. That last one was
+  invisible for months because nothing sets a background for player units, so it only appeared the
+  day enemies got sprites. CSS modules or a prefix convention would prevent the whole category.
 
 ---
 
@@ -752,8 +893,9 @@ everything disabled and labelled "Not implemented").
 
 1. **Rebuild the art at 128px** — Kael, Rebar and Aethis, each with a single idle. Benjamin and
    Maxine are done. The pipeline is ready; see the pre-flight list in §3.
-2. **Build the new battle system** — `BATTLE_DESIGN.md`, largest first: turn loop and resolution
-   queue, damage types, statuses, symbols and chains, revealed enemy intent.
+2. **Build the new battle system** — `BATTLE_DESIGN.md`. **Enemy intent and the turn loop are done**
+   (plan → commit → ordered resolution → enemy phase); remaining, largest first: damage types and
+   split defenses, statuses, symbols and chains.
 3. **Redesign every Performer's kit** against that document. Damage types, symbols and costs
    authored deliberately against the payability table. The current kits are disposable.
 4. **Enemy kits** — mobs currently have one 1.0-power attack each, which is why party actions were

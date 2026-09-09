@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ROSTER, ENEMIES } from '../../engine/content.ts';
+import { ROSTER, BESTIARY } from '../../engine/content.ts';
 import { accrued, claim, duration, ratesFor, short, type Profile } from '../../engine/idle.ts';
 import { Figure } from '../Figure.tsx';
 
@@ -30,7 +30,10 @@ export function Home({
   onBattle: () => void;
 }) {
   const party = ROSTER.filter((d) => (profile.owned[d.id] ?? 0) > 0).slice(0, 5);
-  const dummy = ENEMIES.find((e) => e.id === 'golem') ?? ENEMIES[0]!;
+  // A sparring dummy for the idle scene, from the bestiary rather than the
+  // deployed lineup -- the hub should show a creature, not whatever the
+  // current test encounter happens to field.
+  const dummy = BESTIARY.find((e) => e.id === 'golem') ?? BESTIARY[0]!;
 
   const [striker, setStriker] = useState(-1);
   const [hits, setHits] = useState<Hit[]>([]);

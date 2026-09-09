@@ -395,8 +395,14 @@ export function AnimationLab() {
           />
         </label>
 
+        {/* Preview only, and labelled as such. It zooms the lab so a clip can be
+            judged at more than one size; it is not saved and does not reach the
+            game. A character's size in battle comes from how tall they are drawn
+            on their native canvas -- `nativePx / nativeCanvas` in
+            sprites.generated.ts -- so making one bigger means redrawing them
+            taller, not turning a knob here. */}
         <label>
-          Size <span className="dim">{Math.round(height)}px</span>
+          Preview size <span className="dim">{Math.round(height)}px · not saved</span>
           <input
             type="range"
             min={80}

@@ -1,8 +1,16 @@
 # Battle Design — the target system
 
-**Status: designed, not built.** This document specifies the battle the game is being rebuilt
-towards. `src/engine/battle.ts` currently implements an older system (see README §5) and does not
-match anything here yet.
+**Status: in build.** This document specifies the battle the game is being rebuilt towards.
+`src/engine/battle.ts` still implements the older system (see README §5) except where noted below.
+
+| § | piece | state |
+| --- | --- | --- |
+| 5 | Enemy intent — weighted pick, revealed target | **built** |
+| 2 | Turn loop — planning queue, commit-and-lock, ordered resolution | **built** |
+| 2 | Enemy phase strictly simultaneous (currently sequential within one phase) | not built |
+| 3 | Damage types, split defenses | not built |
+| 6 | Status effects | not built |
+| 4 | Symbols and chains | not built |
 
 Read this before touching battle code. Read **§1** before touching anything at all, because every
 other decision in this document follows from it and a change that violates it breaks the game's
@@ -47,7 +55,7 @@ satisfied by arithmetic, not by good intentions.
 
 ---
 
-## 2. Turn structure
+## 2. Turn structure — MOSTLY BUILT
 
 One round, in order:
 
@@ -59,6 +67,21 @@ One round, in order:
 5. **Player abilities resolve** one at a time, in the assigned order.
 6. **Enemies act simultaneously**, using the intents revealed in step 2.
 7. Statuses expire, durations tick. Next round.
+
+> **As implemented.** `planAction` / `planUpgrade` queue an action and reserve its dice
+> immediately, so the tray shows what is genuinely left to spend; `unplan` gives them back.
+> `movePlanned` reorders. `commitNext` resolves the front of the queue and returns what happened,
+> so the UI can animate one action at a time — resolving the whole turn in a frame would collapse
+> an ordered plan into one indistinguishable flash. `commitPlan` drains it for headless use, and
+> the two are verified to reach identical state.
+>
+> **Nothing is re-validated at resolution.** An action whose target died earlier in the same queue
+> fizzles and its dice are gone. That is the cost of ordering badly, and removing it would remove
+> the decision.
+>
+> Still sequential rather than strictly simultaneous on the enemy side: enemies resolve one after
+> another inside a single uninterruptible phase. The player cannot act between them, which is the
+> property that matters for burst, but a kill by the first enemy does change what the third finds.
 
 ### Why commit-and-lock matters
 
@@ -236,10 +259,22 @@ an existing effect's odds. Examples of the intended range:
 
 ---
 
-## 5. Enemy intent
+## 5. Enemy intent — BUILT
 
 Every living enemy shows, during the player's planning phase, **which ability it will use and on
 whom**.
+
+> **As implemented.** `chooseIntents` runs at the top of the player's phase, so the declaration
+> exists before the player plans — choosing at the top of the *enemy* phase would be too late to be
+> worth showing. Ability choice is weighted by `Ability.weight` (default 1, so an unweighted kit is
+> uniform); targets are picked uniformly among legal ones, because targeting is not where the
+> interest lives and "always hits the weakest" would make the reveal redundant. The enemy phase
+> executes the declared intent rather than re-choosing — re-choosing would break the promise the
+> reveal makes — falling back to a fresh choice only when the named target has since died, which is
+> itself a legitimate player answer.
+>
+> Verified against the `Understudy` test encounter: 2,000 declarations came out 76.3% / 23.8%
+> against an authored 75 / 25, and declared-versus-performed matched exactly.
 
 Enemies have **1 ability (weak mobs) to 4 (bosses)**, each with a **hidden** activation chance — a
 boss might sit at 20% / 30% / 30% / 20%. The player sees the *choice that was made*, never the
@@ -308,7 +343,7 @@ A failed burn is a small loss. A failed paralyze is a lost round.
 **status power**. The effect lands or it does not, and the player can see which *before* committing.
 The trigger example survives — "raise burn chance 50% → 75%" becomes "+25 status power" — and it
 becomes a composition axis with teeth, because a resistant boss then *requires* a Performer who can
-push through. That is exactly the kind of demand that earns a 1★ a roster slot.
+push through. That is exactly the kind of demand that earns a 3★ a roster slot.
 
 ---
 

@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import {
   createBattle,
-  commitAction,
+  planAction,
+  planUpgrade,
+  commitNext,
+  movePlanned,
+  unplan,
+  isPlanned,
+  type PlannedAction,
   commitUpgrade,
   startEnemyPhase,
   finishEnemyPhase,
@@ -58,6 +64,7 @@ const ELEMENT_COLOR: Record<Element, string> = {
   fire: '#ff7a5c',
   wind: '#7ce8a4',
   earth: '#c8a06a',
+  lightning: '#ffd42a',
   water: '#4aa6ef',
   light: '#f0d878',
   dark: '#a77fd6',
@@ -163,6 +170,9 @@ export function BattleScreen({
   const rollTimeouts = useRef<number[]>([]);
   const rollInterval = useRef<number | null>(null);
   const enemyTimer = useRef<number | null>(null);
+  /** Separate from the enemy timer: the two phases run back to back and a
+     single ref would have the hand-over cancel its own successor. */
+  const playerTimer = useRef<number | null>(null);
 
   // The engine mutates state in place, so a revision counter is what re-renders.
   const [, bump] = useReducer((n: number) => n + 1, 0);
@@ -175,6 +185,7 @@ export function BattleScreen({
   useEffect(
     () => () => {
       if (enemyTimer.current !== null) window.clearTimeout(enemyTimer.current);
+      if (playerTimer.current !== null) window.clearTimeout(playerTimer.current);
       rollTimeouts.current.forEach(window.clearTimeout);
       if (rollInterval.current !== null) window.clearInterval(rollInterval.current);
     },
@@ -183,6 +194,7 @@ export function BattleScreen({
 
   function restart(nextSeed: number, nextEncounter = encounterIndex) {
     if (enemyTimer.current !== null) window.clearTimeout(enemyTimer.current);
+    if (playerTimer.current !== null) window.clearTimeout(playerTimer.current);
     stopDiceRoll();
     setBusy(false);
     setNarration(null);
@@ -262,6 +274,37 @@ export function BattleScreen({
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sel.unit, sel.ability, hover, targets]);
+
+  /**
+   * Who the enemies have declared they will hit this round, and with what.
+   *
+   * Separate from `danger`, which is a telegraph landing NEXT round. Both are
+   * "something named this slot", but they ask for different answers -- a
+   * telegraph can be walked away from over a whole turn, an intent has to be
+   * answered inside this one.
+   */
+  const threat = useMemo(() => {
+    const slots = new Set<string>();
+    const byEnemy = new Map<string, { ability: string; targets: Set<string> }>();
+    for (const u of battle.units) {
+      if (!alive(u) || u.side !== 'enemy' || !u.intent) continue;
+      const hit = unitsHit(u.intent.ability, u.intent.target, livingOf(battle, 'player'));
+      const targets = new Set(hit.map((t) => pk(t.pos)));
+      for (const k of targets) slots.add(k);
+      byEnemy.set(u.def.id, { ability: u.intent.ability.name, targets });
+    }
+    return { slots, byEnemy };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [battle.turn, battle.phase, battle.units]);
+
+  /** Which enemy the cursor is over, so its intent can be picked out. */
+  const hoveredEnemyId = useMemo(() => {
+    if (!hover) return null;
+    const u = battle.units.find(
+      (t) => alive(t) && t.side === 'enemy' && t.pos.x === hover.x && t.pos.y === hover.y,
+    );
+    return u?.def.id ?? null;
+  }, [hover, battle.units]);
 
   /** Slots a telegraphed enemy ability has already named. */
   const danger = useMemo(() => {
@@ -414,29 +457,31 @@ export function BattleScreen({
     setError(null);
   }
 
-  /** Fire the chosen ability at a unit. Discrete targets, so one click is enough. */
+  /**
+   * Queue the chosen ability against a unit. Discrete targets, so one click is
+   * enough.
+   *
+   * Nothing resolves here any more -- no damage, no animation. The turn is
+   * built first and played out on commit, which is what makes the order the
+   * player put things in a decision rather than a running commentary.
+   */
   function fireAt(target: Unit) {
     if (!sel.unit || !sel.ability || busy || over) return;
     if (!targets.has(pk(target.pos))) return;
 
-    const actor = sel.unit;
-    const ability = sel.ability;
-    withHitReactions(() => {
-      const err = commitAction(battle, actor, ability, sel.dice, target.pos);
-      if (err) setError(err);
-      else {
-        lunge(actor.def.id, actor.side);
-        setSel(NO_SELECTION);
-        setError(null);
-      }
-    });
+    const err = planAction(battle, sel.unit, sel.ability, sel.dice, target.pos);
+    if (err) setError(err);
+    else {
+      setSel(NO_SELECTION);
+      setError(null);
+    }
     bump();
   }
 
   function handleUpgrade() {
     if (!sel.unit || !nextTier || upgradeMasks.length === 0) return;
     if (!diceCover(nextTier.cost)) return;
-    const err = commitUpgrade(battle, sel.unit, sel.dice);
+    const err = planUpgrade(battle, sel.unit, sel.dice);
     if (err) setError(err);
     else {
       setSel(NO_SELECTION);
@@ -450,14 +495,40 @@ export function BattleScreen({
    * you can follow what each of them decided. Resolving it all at once made it
    * impossible to tell what had happened.
    */
+  /**
+   * Lock the turn in and play it out: the queue first, in order, then the
+   * enemies. One button, because from the player's side these are one
+   * commitment -- there is no point between them where anything can be changed.
+   */
   function handleEndPhase() {
     if (busy || over) return;
     setSel(NO_SELECTION);
     setError(null);
-    startEnemyPhase(battle);
     setBusy(true);
     bump();
-    enemyTimer.current = window.setTimeout(stepEnemy, 420);
+    playerTimer.current = window.setTimeout(stepPlan, 220);
+  }
+
+  /** Resolve one queued action, then the next, then hand over to the enemies. */
+  function stepPlan() {
+    const held: { step: PlannedAction | null } = { step: null };
+    withHitReactions(() => {
+      held.step = commitNext(battle);
+    });
+    const step = held.step;
+
+    if (!step) {
+      startEnemyPhase(battle);
+      setNarration(null);
+      bump();
+      enemyTimer.current = window.setTimeout(stepEnemy, 420);
+      return;
+    }
+
+    lunge(step.unit.def.id, step.unit.side);
+    setNarration(`${step.unit.def.name} — ${step.ability?.name ?? 'upgrades'}`);
+    bump();
+    playerTimer.current = window.setTimeout(stepPlan, 620);
   }
 
   function stepEnemy() {
@@ -519,6 +590,11 @@ export function BattleScreen({
             isTarget ? 'targetable' : '',
             splash.has(key) ? 'splash' : '',
             danger.has(key) ? 'danger' : '',
+            threat.slots.has(key) ? 'threatened' : '',
+            // Hovering an enemy picks its own targets out of everyone else's --
+            // five enemies all declaring at once marks most of the party, and
+            // the useful question is which of them THIS one named.
+            hover && threat.byEnemy.get(hoveredEnemyId ?? '')?.targets.has(key) ? 'aimed' : '',
           ]
             .filter(Boolean)
             .join(' ');
@@ -544,12 +620,19 @@ export function BattleScreen({
                 unit={u}
                 phase={battle.phase}
                 slotH={SLOT_H}
+                queued={u.side === 'player' && isPlanned(battle, u)}
                 depth={depthScale(slot.yPct)}
                 facing={u.side === 'player' ? 1 : -1}
                 hit={hits[u.def.id] ?? 0}
                 striking={pulse?.id === u.def.id}
               />
               {u.pending && <span className="casting">!</span>}
+              {/* The reveal. Shown on the enemy rather than in a side panel so
+                  the declaration sits next to the thing that made it, and reads
+                  in the same glance as the formation it has to reach through. */}
+              {u.intent && !u.pending && battle.phase === 'player' && (
+                <span className="intent">{u.intent.ability.name}</span>
+              )}
             </div>
           );
         })}
@@ -673,8 +756,7 @@ export function BattleScreen({
                         <span className="body">
                           <strong>{a.name}</strong>
                           <em>
-                            {a.kind} · {rangeLabel(a)}
-                            {a.aoeRadius ? ` · aoe ${a.aoeRadius}` : ''} ·{' '}
+                            {a.kind} · {rangeLabel(a)} ·{' '}
                             <span style={{ color: ELEMENT_COLOR[a.element] }}>{a.element}</span>
                           </em>
                         </span>
@@ -784,12 +866,70 @@ export function BattleScreen({
               roll={roll}
             />
           ) : (
-            <div className="dice-placeholder">Enemies do not roll — they act on a fixed pattern.</div>
+            <div className="dice-placeholder">
+              {/* The tray is hidden for two different reasons and they used to
+                  share one message, so committing your own turn announced that
+                  enemies do not roll dice. */}
+              {battle.phase === 'enemy'
+                ? 'Enemies do not roll — they act on a fixed pattern.'
+                : 'Playing out your turn…'}
+            </div>
+          )}
+
+          {/* The turn as built so far. Numbered because the number IS the
+              mechanic -- these resolve top to bottom and an attack queued behind
+              a kill it caused will fizzle with its dice already spent. */}
+          {battle.plan.length > 0 && !busy && (
+            <ol className="queue">
+              {battle.plan.map((entry, i) => (
+                <li key={`${entry.unit.def.id}-${i}`}>
+                  <span className="ord">{i + 1}</span>
+                  <span className="who">{entry.unit.def.name}</span>
+                  <span className="what">{entry.ability?.name ?? 'Upgrade'}</span>
+                  <button
+                    className="quiet"
+                    title="Resolve earlier"
+                    disabled={i === 0}
+                    onClick={() => {
+                      movePlanned(battle, i, i - 1);
+                      bump();
+                    }}
+                  >
+                    ▲
+                  </button>
+                  <button
+                    className="quiet"
+                    title="Resolve later"
+                    disabled={i === battle.plan.length - 1}
+                    onClick={() => {
+                      movePlanned(battle, i, i + 1);
+                      bump();
+                    }}
+                  >
+                    ▼
+                  </button>
+                  <button
+                    className="quiet"
+                    title="Take out of the turn and get the dice back"
+                    onClick={() => {
+                      unplan(battle, i);
+                      bump();
+                    }}
+                  >
+                    ×
+                  </button>
+                </li>
+              ))}
+            </ol>
           )}
 
           <div className="controls">
             <button className="primary" onClick={handleEndPhase} disabled={over || busy}>
-              {busy ? 'Enemy phase…' : 'End phase'}
+              {busy
+                ? 'Resolving…'
+                : battle.plan.length > 0
+                  ? `Commit ${battle.plan.length} action${battle.plan.length === 1 ? '' : 's'}`
+                  : 'End phase'}
             </button>
           </div>
 
@@ -869,8 +1009,19 @@ function rankLabel(u: Unit, battle: BattleState): string {
   return rank === 1 ? 'front rank' : `rank ${rank}`;
 }
 
-const rangeLabel = (a: Ability): string =>
-  a.kind !== 'attack' ? 'any ally' : a.range <= 1 ? 'front rank' : a.range === 2 ? 'first 2 ranks' : 'any rank';
+/**
+ * The one-line "who does this reach" tag under an ability.
+ *
+ * Scope is checked before range, because for `all` and `self` the range is
+ * vestigial -- printing "any rank · all" invites the reader to work out how the
+ * two interact when they do not.
+ */
+const rangeLabel = (a: Ability): string => {
+  if (a.scope === 'self') return 'self';
+  if (a.scope === 'all') return a.kind === 'attack' ? 'all enemies' : 'whole party';
+  if (a.kind !== 'attack') return 'any ally';
+  return a.range <= 1 ? 'front rank' : a.range === 2 ? 'first 2 ranks' : 'any rank';
+};
 
 /** Headshot for panels, where the full figure would be too small to read. */
 function SpritePortrait({ sheet, height }: { sheet: SpriteSheet; height: number }) {
@@ -893,9 +1044,12 @@ function UnitChip({
   facing,
   hit,
   striking,
+  queued = false,
 }: {
   unit: Unit;
   phase: Unit['side'];
+  /** Has an action waiting in the turn queue, not yet resolved. */
+  queued?: boolean;
   /** Slot height as a fraction of the stage; the sprite scales off this. */
   slotH: number;
   depth: number;
@@ -905,7 +1059,9 @@ function UnitChip({
 }) {
   const pct = (unit.hp / unitMaxHp(unit)) * 100;
   // Only grey out the side whose turn it is; the idle side's flags are stale.
-  const spent = unit.side !== phase ? '' : unit.hasActed ? 'acted' : '';
+  // `queued` is distinct from `acted`: one is a promise the player can still take
+  // back, the other has already happened.
+  const spent = unit.side !== phase ? '' : unit.hasActed ? 'acted' : queued ? 'queued' : '';
   const sheet = unit.def.sprite;
   const title = `${unit.def.name} · ${unit.hp}/${unitMaxHp(unit)} hp · def ${effectiveDefense(unit)}`;
   const hp = (

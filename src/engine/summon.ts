@@ -14,11 +14,20 @@ export const SUMMON_COST = 30;
 export const MULTI_COUNT = 10;
 export const MULTI_COST = SUMMON_COST * 9;
 
+/**
+ * Pull rates, rarest first. Keyed by rarity, so the 3-5 scale is explicit here
+ * and a mis-keyed table cannot quietly leave the common tier at 4%.
+ */
 export const RATES: Record<Rarity, number> = {
-  3: 0.04,
-  2: 0.26,
-  1: 0.7,
+  5: 0.04,
+  4: 0.26,
+  3: 0.7,
 };
+
+/** Every rarity, rarest first. The one place tier order is written down. */
+export const RARITIES = (Object.keys(RATES) as unknown as string[])
+  .map(Number)
+  .sort((a, b) => b - a) as Rarity[];
 
 export interface PullResult {
   def: CharacterDef;
@@ -29,9 +38,9 @@ export interface PullResult {
 }
 
 function pickRarity(roll: number): Rarity {
-  if (roll < RATES[3]) return 3;
-  if (roll < RATES[3] + RATES[2]) return 2;
-  return 1;
+  if (roll < RATES[5]) return 5;
+  if (roll < RATES[5] + RATES[4]) return 4;
+  return 3;
 }
 
 /**

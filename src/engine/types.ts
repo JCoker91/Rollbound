@@ -8,7 +8,14 @@ export interface Pos {
   y: number;
 }
 
-export type Element = 'fire' | 'wind' | 'earth' | 'water' | 'light' | 'dark';
+export type Element =
+  | 'fire'
+  | 'wind'
+  | 'earth'
+  | 'lightning'
+  | 'water'
+  | 'light'
+  | 'dark';
 
 /**
  * Combat role. Declared rather than inferred from the kit, because it drives the
@@ -25,8 +32,36 @@ export const ROLE_LABEL: Record<Role, string> = {
   bow: 'Ranger',
   banner: 'Herald',
 };
-export type Rarity = 1 | 2 | 3;
+/**
+ * How rare a Performer is. **3 is the floor, 5 is the ceiling** -- the scale
+ * runs 3-5, not 1-3, so a "3-star" in this game is a common starter.
+ *
+ * It was 1|2|3 with 3 as the RAREST, and the renumbering is a genuine hazard
+ * rather than a rename: `rarity: 3` stayed valid while coming to mean the exact
+ * opposite, so the compiler could flag every 1 and 2 and silently accept every
+ * 3. Each character was re-assigned deliberately, not mapped.
+ */
+export type Rarity = 3 | 4 | 5;
 export type AbilityKind = 'attack' | 'heal' | 'buff';
+
+/**
+ * Who an ability reaches. Three shapes, and deliberately only three.
+ *
+ *   one    a single unit. `range` gates how deep into the enemy line it may be
+ *          aimed; support always reaches any ally.
+ *   self   the caster, and nothing else. No target to choose.
+ *   all    every living unit on the affected side -- the whole enemy line for an
+ *          attack, the whole party for a heal or buff. `range` does not apply.
+ *
+ * This replaced a radius measured in formation slots, where an ability splashed
+ * onto its target's NEIGHBOURS. That model asked the player to hold the enemy's
+ * grid layout in their head to work out what a blast would catch, and the
+ * geometry was fiddly to author against for what it gave back -- the formation
+ * is three columns wide, so a radius of 2 already caught nearly everything and
+ * the interesting middle ground barely existed. Single, self, or everyone reads
+ * at a glance and needs no diagram.
+ */
+export type TargetScope = 'one' | 'self' | 'all';
 
 /**
  * Cost is paid with a subset of the turn's dice summing to exactly `cost`.
@@ -56,9 +91,21 @@ export interface Ability {
   /** Which stat a buff raises. Defaults to attack. */
   stat?: 'attack' | 'defense';
   /**
-   * Enemy-only fields. Enemies do not roll dice -- they pick the highest-priority
-   * ability that is off cooldown and has a target, which makes them predictable
-   * enough to plan around. Ignored on player characters.
+   * Enemy-only. Relative chance this ability is the one chosen for the round,
+   * among those currently usable. Defaults to 1, so an enemy with no weights
+   * set picks uniformly.
+   *
+   * The odds are deliberately NOT shown to the player: they see the choice that
+   * was made (the intent), never the distribution behind it. That is what keeps
+   * the current round plannable and the next one uncertain, which is the whole
+   * tension -- published odds would turn every fight into arithmetic, and hidden
+   * choices would make planning a guess.
+   */
+  weight?: number;
+  /**
+   * Enemy-only, legacy. The older selector took the highest-priority usable
+   * ability; weighted intent has replaced it. Kept because the current kits are
+   * still authored with it and are about to be rebuilt anyway.
    */
   priority?: number;
   /** Turns before this can be used again. 0/undefined means every turn. */
@@ -69,8 +116,8 @@ export interface Ability {
    * the player gets a full turn to walk out of the marked tiles.
    */
   telegraph?: number;
-  /** 0 = single target. Otherwise a radius in formation slots around the target. */
-  aoeRadius?: number;
+  /** Who this reaches. Defaults to `one`. */
+  scope?: TargetScope;
   wildcard?: boolean;
 }
 
@@ -233,6 +280,25 @@ export interface Unit {
   cooldowns: Record<string, number>;
   /** A telegraphed ability that has been announced but has not landed yet. */
   pending: PendingCast | null;
+  /**
+   * What this unit will do when its phase comes, decided and shown in advance.
+   *
+   * Enemies commit to an ability and a target at the start of the round, before
+   * the player plans, and the player can see both. That is what turns a turn
+   * into a puzzle with a knowable answer instead of a gamble: you can shield the
+   * named target, pre-heal them, or race to kill the caster before it lands.
+   *
+   * Null for player units, who are planned by the player, and for anything with
+   * nothing legal to do.
+   */
+  intent: Intent | null;
+}
+
+/** An enemy's declared action for the coming round. */
+export interface Intent {
+  ability: Ability;
+  /** The slot it is aimed at. Shown to the player, not just the ability name. */
+  target: Pos;
 }
 
 export interface PendingCast {

@@ -1,7 +1,7 @@
 import type { Ability, Passive, Pos, Unit } from './types.ts';
 import { alive, UPGRADE_STAT_BONUS } from './types.ts';
 import { elementMultiplier } from './elements.ts';
-import { manhattan, withinReach } from './formation.ts';
+import { samePos, withinReach } from './formation.ts';
 
 /** Attack buffs lose this much per turn; see battle.ts. */
 export const BUFF_DECAY_PER_TURN = 10;
@@ -66,27 +66,31 @@ export function thornsDamage(target: Unit, ability: Ability, dealt: number): num
 }
 
 /**
- * Everyone an ability centred on `centre` would hit, given its AoE shape.
+ * Everyone an ability would hit.
  *
- * Radius is measured in formation slots, so it splashes onto the target's
- * neighbours in the enemy block rather than across a map. Note the radii wanted
- * here are SMALL -- the whole enemy formation is three columns wide, so a radius
- * of 2 reaches most of it.
+ * `candidates` is already the affected side -- foes for an attack, allies for
+ * support -- so this only has to resolve the shape. A `self` ability is aimed at
+ * its own caster, which makes it a `one` whose centre happens to be the caster;
+ * the restriction that it CAN only be aimed there lives in `canTarget`.
  */
 export function unitsHit(ability: Ability, centre: Pos, candidates: Unit[]): Unit[] {
-  const radius = ability.aoeRadius ?? 0;
-  return candidates.filter((u) => alive(u) && manhattan(u.pos, centre) <= radius);
+  const living = candidates.filter(alive);
+  if ((ability.scope ?? 'one') === 'all') return living;
+  return living.filter((u) => samePos(u.pos, centre));
 }
 
 /**
- * Full targeting rule: is the target rank deep enough into the formation for
- * this ability to reach? See `withinReach` in formation.ts.
+ * Where an ability may be AIMED.
  *
- * This gates where an ability may be AIMED. Splash from an AoE still hits
- * everything in its radius, so a blast aimed at the front rank can still catch
- * something behind it -- deliberate, and what makes AoE worth its dice.
+ * Only `one` is gated by depth. `all` hits the whole side regardless, so every
+ * slot on it is a legal aim point and the choice is a formality -- the click
+ * confirms the cast rather than selecting a victim. `self` has exactly one legal
+ * point, which is what stops a self-buff being pointed at a teammate.
  */
 export function canTarget(ability: Ability, from: Unit, centre: Pos, units: Unit[]): boolean {
+  const scope = ability.scope ?? 'one';
+  if (scope === 'self') return samePos(centre, from.pos);
+  if (scope === 'all') return true;
   return withinReach(ability, from, centre, units);
 }
 

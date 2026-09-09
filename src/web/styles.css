@@ -118,6 +118,107 @@ body {
   }
 }
 
+/*
+ * A declared enemy action, shown during the player's phase.
+ *
+ * Sits above the creature that declared it. Deliberately quieter than the
+ * telegraph marker beside it: a telegraph is a wind-up you have a whole turn to
+ * answer, an intent is what happens at the end of this one, and if both shouted
+ * equally the rarer, bigger threat would stop standing out.
+ */
+/*
+ * The turn as queued, in resolution order.
+ *
+ * Numbered rather than merely listed: the order is the mechanic, so the index
+ * has to be as readable as the name beside it.
+ */
+.queue {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+  max-height: 132px;
+  overflow-y: auto;
+}
+
+.queue li {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 12px;
+}
+
+.queue .ord {
+  min-width: 15px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.queue .who {
+  font-weight: 600;
+}
+
+.queue .what {
+  color: var(--dim);
+  margin-right: auto;
+}
+
+.queue button {
+  padding: 0 5px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+/* Committed to the turn, but not yet resolved -- distinct from `acted`, which
+   has. Still bright, because it can be taken back; just clearly claimed. */
+.stage-slot .unit.queued {
+  outline: 1px solid rgba(122, 176, 255, 0.55);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.stage-slot .intent {
+  position: absolute;
+  bottom: calc(100% + 2cqh);
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  font-size: 10px;
+  letter-spacing: 0.03em;
+  padding: 1px 6px;
+  border-radius: 8px;
+  color: #ffd9a0;
+  background: rgba(12, 14, 19, 0.82);
+  border: 1px solid #6b4a2a;
+  pointer-events: none;
+}
+
+/*
+ * A party slot some enemy has named this round.
+ *
+ * `filter` replaces rather than adds, so the grounding shadow has to be
+ * restated -- setting only the glow silently lifted threatened characters off
+ * the stage floor while everyone else stayed planted.
+ */
+.stage-slot.threatened .unit {
+  filter: drop-shadow(0 3px 4px rgba(0, 0, 0, 0.8)) drop-shadow(0 0 7px rgba(255, 120, 70, 0.95));
+}
+
+/* ...and the ones named by the enemy currently under the cursor, picked out of
+   everyone else's. Doubled rather than widened: a second tight pass reads as
+   brighter without blooming into the neighbouring slot. */
+.stage-slot.aimed .unit {
+  filter: drop-shadow(0 3px 4px rgba(0, 0, 0, 0.8)) drop-shadow(0 0 6px #ff7a46)
+    drop-shadow(0 0 10px #ff7a46);
+}
+
 .stage-slot .casting {
   position: absolute;
   top: -8cqh;
@@ -395,7 +496,15 @@ body {
   z-index: 1;
 }
 
-.unit.enemy {
+/*
+ * The dark token behind a badge enemy. Scoped to badges explicitly: it and
+ * `.battle .sprite-unit { background: none }` have IDENTICAL specificity, so
+ * whichever is written later wins, and this one is — which painted a box behind
+ * every enemy that had real art. Players never showed it only because nothing
+ * sets a background for them, so the bug was invisible until enemies got
+ * sprites.
+ */
+.unit.enemy:not(.sprite-unit) {
   background: #2a1a1e;
 }
 

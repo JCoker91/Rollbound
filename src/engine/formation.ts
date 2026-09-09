@@ -21,8 +21,9 @@ import { alive } from './types.ts';
 
 export const samePos = (a: Pos, b: Pos): boolean => a.x === b.x && a.y === b.y;
 
-export const manhattan = (a: Pos, b: Pos): number =>
-  Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+// `manhattan` lived here to measure an AoE radius across formation slots. Target
+// scope is now one / self / all, so no ability measures a distance any more and
+// the formation's only remaining spatial question is depth (`columnRank`).
 
 export interface Slot {
   /** Depth column. Party occupies the low columns, enemies the high ones. */

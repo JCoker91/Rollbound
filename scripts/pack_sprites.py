@@ -53,6 +53,7 @@ single factor, which keeps the artist's proportions intact.
 Run:  python scripts/pack_sprites.py
 """
 
+import hashlib
 import json
 
 from math import ceil
@@ -116,6 +117,39 @@ POCKET_TOLERANCE = 6
 #
 # Only the OUTER silhouette. An internal separation -- an arm against a torso --
 # is not on the alpha boundary and still has to be drawn.
+# Scale classes from the style guide (§4), as native-pixel body bands.
+#
+# A sprite is audited against the class it is DECLARED to be, not against one
+# band for everybody. Without this the lint can only say "not Standard", which
+# is noise for a character that was never meant to be -- and noise is how a lint
+# teaches you to stop reading it. Declaring the class turns "this is wrong" into
+# "this does not match what you said it was", which is the only version worth
+# acting on.
+#
+# It records intent; it does not change rendering. Stature still comes from the
+# measured art, so a sprite declared Small that is drawn Large is reported, not
+# silently shrunk.
+SCALE_CLASSES = {
+    'small': (58, 72),
+    'standard': (82, 92),
+    'large': (92, 104),
+}
+SCALE_CLASS: dict[str, str] = {
+    # Trash mobs. Currently drawn at 91-93, which is Large -- they stand taller
+    # than three of the five Performers, and the audit says so on every run.
+    'understudy_red': 'small',
+    'understudy_yellow': 'small',
+    'understudy_blue': 'small',
+    'understudy_orange': 'small',
+    'understudy_green': 'small',
+}
+
+
+def scale_band(name: str) -> tuple[int, int]:
+    declared = SCALE_CLASS.get(name)
+    return SCALE_CLASSES[declared] if declared else SPECS[spec_of(name)]['height']
+
+
 OUTLINE: dict[str, int] = {}
 # Width for art with nothing set, per spec revision. On by default for v2, since
 # the ring is what the current look depends on and a new upload should not have
@@ -137,6 +171,7 @@ IMAGE_SUFFIXES = {'.png', '.jpg', '.jpeg', '.webp'}
 
 ART = Path('art')
 ACTORS = ART / 'actors'
+CREATURES = ART / 'enemies' / 'creatures'
 SCENERY = ART / 'background'
 OUT_ROOT = Path('public/sprites')
 OUT_SCENERY = Path('public/background')
@@ -186,6 +221,9 @@ def spec_of(name: str) -> int:
     public/ -- so the presence of `<name>_LQ.png` is what distinguishes them,
     and it is checked first.
     """
+    # Creatures are only ever authored against v2; there is no legacy enemy art.
+    if is_creature(name):
+        return 2
     d = ACTORS / name
     # v2 wins whenever its finished asset is present, even if the v1 files are
     # still lying beside it. Migrating an actor means dropping in <name>.png, and
@@ -234,14 +272,46 @@ def reference(name: str) -> Image.Image:
     `key_flat_background` returns art that already has real transparency
     untouched, so this costs the v1 sheets nothing.
     """
-    d = ACTORS / name
-    src = d / f'{name}_LQ.png' if spec_of(name) == 1 else d / f'{name}.png'
+    src = source_image(name)
+    if src is None:
+        raise FileNotFoundError(f'no source art for {name}')
     keyed = key_flat_background(Image.open(src).convert('RGBA'))
     return add_outline(keyed, outline_width(name))
 
 
 def upscale(name: str) -> int:
     return UPSCALE if spec_of(name) == 1 else 1
+
+
+def creatures() -> list[str]:
+    """
+    Every enemy in art/enemies/creatures/.
+
+    One flat PNG each rather than a folder, because a creature is the v2 spec
+    minus everything a Performer needs on top -- no 64px master to reconcile, no
+    portrait crop, no animation set. Giving each a folder would be four empty
+    directories per enemy for a bestiary that wants dozens of them.
+    """
+    if not CREATURES.is_dir():
+        return []
+    return sorted(
+        f.stem for f in CREATURES.glob('*.png') if not f.stem.endswith(DEPRECATED_CLIPS)
+    )
+
+
+def is_creature(name: str) -> bool:
+    return (CREATURES / f'{name}.png').exists() and not (ACTORS / name).is_dir()
+
+
+def source_image(name: str) -> Path | None:
+    """The file every measurement for `name` is taken from, actor or creature."""
+    if is_creature(name):
+        return CREATURES / f'{name}.png'
+    d = ACTORS / name
+    for candidate in (d / f'{name}.png', d / f'{name}_LQ.png'):
+        if candidate.exists():
+            return candidate
+    return None
 
 
 def characters() -> list[str]:
@@ -256,6 +326,10 @@ def characters() -> list[str]:
 
 
 def manifest_path(name: str) -> Path:
+    # Beside the art either way, so a folder (or a file and its manifest) stays
+    # the complete portable unit.
+    if is_creature(name):
+        return CREATURES / f'{name}.pack.json'
     return ACTORS / name / f'{name}.pack.json'
 
 
@@ -288,6 +362,8 @@ def publish_scenery() -> list[str]:
 def expected_outputs() -> list[str]:
     """Every file public/ should contain, according to art/."""
     out = []
+    for name in creatures():
+        out.append((OUT_ROOT / name / f'{name}.png').as_posix())
     for name in characters():
         folder = OUT_ROOT / name
         out.append((folder / f'{name}.png').as_posix())
@@ -415,10 +491,16 @@ def audit(name: str, ref: Image.Image, native: Image.Image | None) -> list[str]:
     if feet != want:
         notes.append(f'feet at y={feet}, guide ground line is y={want} ({(feet - want) / k:+.2f} native px)')
 
-    h_native = (box[3] - box[1]) / k
-    lo, hi = s['height']
+    # Less the ring this script drew, for the same reason the margin check
+    # discounts it: the guide's band is about the ART, and reporting the
+    # pipeline's own deliberate pixels as drift teaches you to ignore the lint.
+    # Uniform across every sprite (one row top and bottom), so it shifts every
+    # reading by the same 2px and changes no relative stature.
+    h_native = (box[3] - box[1] - 2 * outline_width(name)) / k
+    lo, hi = scale_band(name)
     if not lo <= h_native <= hi:
-        notes.append(f'height {h_native:.0f} native px is outside the guide range {lo}-{hi}')
+        klass = SCALE_CLASS.get(name, 'standard')
+        notes.append(f'body {h_native:.0f} native px is outside the {klass} band ({lo}-{hi})')
 
     if native is not None:
         if native.size != (NATIVE, NATIVE):
@@ -1200,8 +1282,23 @@ def build_animations(name: str) -> dict:
 
 
 def stamp_of(path: Path) -> dict:
-    st = path.stat()
-    return {'mtime_ns': st.st_mtime_ns, 'size': st.st_size}
+    """
+    Fingerprint an output file by its CONTENT.
+
+    Deliberately not the modification time. Timestamps do not survive version
+    control -- git records content, not mtime, and sets it to checkout time --
+    so an mtime fingerprint reports every file as foreign after any clone,
+    checkout or branch switch. That is exactly what happened: all five actors
+    fingerprinted by mtime came back "not written by this script" with their
+    sizes matching to the byte, and the guard below then skipped the entire
+    roster on every run.
+
+    A hash costs one read of a file already being written and is strictly
+    stronger: it detects an edit that preserved the size, which mtime and size
+    both miss.
+    """
+    data = path.read_bytes()
+    return {'sha256': hashlib.sha256(data).hexdigest(), 'size': len(data)}
 
 
 def is_ours(name: str, board_out: Path) -> bool:
@@ -1210,12 +1307,45 @@ def is_ours(name: str, board_out: Path) -> bool:
 
     public/ is supposed to be derived, but art has been dropped straight into
     public/sprites/<name>/ before, and a later run happily regenerated over it
-    from stale sources. Comparing mtimes cannot catch that, because after any
-    normal run the output is always newer than the input. The fingerprint
-    recorded at write time can.
+    from stale sources -- destroying the upload. Comparing mtimes cannot catch
+    that, because after any normal run the output is always newer than the
+    input. The fingerprint recorded at write time can.
     """
     prev = load_manifest(name).get('stamp')
-    return bool(prev) and stamp_of(board_out) == prev
+    if not prev:
+        return False
+    if 'sha256' in prev:
+        return prev['sha256'] == stamp_of(board_out)['sha256']
+    # An mtime-era stamp, from before the format changed. Its timestamp is
+    # meaningless after a checkout, so fall back to the one field that does
+    # survive. Size alone is weak evidence, but it is only ever consulted once:
+    # this run re-stamps with a hash.
+    return prev.get('size') == board_out.stat().st_size
+
+
+def prepare_creature(name: str) -> tuple[int, list[str]]:
+    """
+    Pack one enemy.
+
+    Shares the actor path's measuring and trimming -- same green-screen key,
+    same generated outline, same content-box crop -- but skips what a creature
+    does not have. Output goes to public/sprites/<name>/ like everyone else so
+    the metrics scan, the prune and the stamp guard all treat it identically;
+    the alternative was a parallel enemies/ tree and three near-copies of code
+    that already exists.
+    """
+    out = OUT_ROOT / name
+    out.mkdir(parents=True, exist_ok=True)
+
+    ref = reference(name)
+    notes = audit(name, ref, None)
+    box = content_box(ref)
+    board = ref.crop(box)
+
+    board_path = out / f'{name}.png'
+    board.save(board_path)
+    save_manifest(name, stamp=stamp_of(board_path))
+    return box[3] - box[1], notes
 
 
 def prepare(name: str) -> tuple[int, list[str]]:
@@ -1343,9 +1473,7 @@ def write_metrics() -> None:
         # it: stature is the RATIO of the two, and reading a 128px actor's height
         # against the 64px grid would draw them at twice everyone else's size.
         # Null for pre-guide art with no native basis.
-        if (ACTORS / name).is_dir() and any(
-            (ACTORS / name / f'{name}{s}.png').exists() for s in ('_LQ', '')
-        ):
+        if source_image(name) is not None:
             b = content_box(reference(name))
             fields.append(f'nativePx: {round((b[3] - b[1]) / upscale(name))}')
             fields.append(f'nativeCanvas: {spec(name)["native"]}')
@@ -1498,6 +1626,23 @@ if __name__ == '__main__':
         share = {n: h / SPECS[spec_of(n)]['native'] for n, h in heights.items()}
         for n, s in sorted(share.items(), key=lambda kv: -kv[1]):
             print(f'  {n:10} {heights[n]:>3}/{SPECS[spec_of(n)]["native"]}  {"#" * round(s * 60)}')
+
+    for name in creatures():
+        if ONLY and name != ONLY:
+            complete = False
+            continue
+        out = OUT_ROOT / name / f'{name}.png'
+        if out.exists() and not is_ours(name, out):
+            print(f'{name}: SKIPPED -- {out.as_posix()} was not written by this script.')
+            complete = False
+            continue
+        h, notes = prepare_creature(name)
+        print(f'{name}:')
+        img = Image.open(out)
+        print(f'  enemy {out.as_posix()} {img.width}x{img.height} '
+              f'({out.stat().st_size // 1024} KB)  = {h} native px tall')
+        for n in notes:
+            print(f'  ! {n}')
 
     for path in publish_scenery():
         print(f'scenery {path}')

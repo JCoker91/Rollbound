@@ -23,6 +23,10 @@ const PALETTE: Record<Element, Palette> = {
   fire: { light: '#ff8a5c', deep: '#5e1a10', rim: '#ffb98a' },
   wind: { light: '#5fd0a0', deep: '#0f3a2b', rim: '#a8f0d0' },
   earth: { light: '#d4a75f', deep: '#453016', rim: '#f2d69e' },
+  // Vivid and electric against `light`'s muted gold. The two are the closest
+  // pair in the set, and they get away with it because they are never in the
+  // same cycle -- within fire/wind/earth/water, yellow is unclaimed.
+  lightning: { light: '#ffd42a', deep: '#4a3a05', rim: '#fff3a8' },
   water: { light: '#4aa6ef', deep: '#0f3358', rim: '#a8d8ff' },
   light: { light: '#f5dc7a', deep: '#544413', rim: '#fff6c4' },
   dark: { light: '#a77fd6', deep: '#2e1548', rim: '#ddc6f5' },

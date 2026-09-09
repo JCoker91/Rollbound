@@ -1,5 +1,8 @@
 import type {
   CharacterDef,
+  // Imported explicitly: unqualified `Element` resolves to the DOM global, and
+  // the resulting errors point at the assignment rather than the shadowing.
+  Element,
   SpriteSheet,
   StarEffect,
   StarNode,
@@ -110,7 +113,7 @@ export const ROSTER: CharacterDef[] = [
       { name: 'Quick Cut', cost: 0, wildcard: true, kind: 'attack', power: 0.8, element: 'fire', range: 1 },
       { name: 'Riposte', cost: 3, kind: 'attack', power: 1.0, element: 'fire', range: 1 },
       { name: 'Crimson Arc', cost: 5, kind: 'attack', power: 1.5, element: 'fire', range: 2 },
-      { name: 'Scarlet Tempest', cost: 9, kind: 'attack', power: 1.4, element: 'fire', range: 3, aoeRadius: 2 },
+      { name: 'Scarlet Tempest', cost: 9, kind: 'attack', power: 1.4, element: 'fire', range: 3, scope: 'all' },
     ],
     upgrades: [
       { name: 'Bloodletter', cost: 6, passive: { kind: 'lifesteal', percent: 12 } },
@@ -133,7 +136,7 @@ export const ROSTER: CharacterDef[] = [
     ),
   },
   {
-    id: 'kael', name: 'Kael', rarity: 2, element: 'wind', role: 'blade',
+    id: 'kael', name: 'Kael', rarity: 3, element: 'wind', role: 'blade',
     // Heavier and slower than the support he replaces: an axe bruiser who wants
     // to be in the middle of things, not circling the edges.
     maxHp: 860, attack: 102, defense: 52,
@@ -143,8 +146,8 @@ export const ROSTER: CharacterDef[] = [
       { name: 'Hookstrike', cost: 2, kind: 'attack', power: 1.05, element: 'wind', range: 1 },
       // The team's only attack buff. Kept when Gale was replaced, or the atkBuff
       // mechanic would have vanished from the roster entirely.
-      { name: 'War Cry', cost: 4, kind: 'buff', power: 25, element: 'wind', range: 2, aoeRadius: 1 },
-      { name: 'Tempest Fall', cost: 7, kind: 'attack', power: 1.75, element: 'wind', range: 1, aoeRadius: 1 },
+      { name: 'War Cry', cost: 4, kind: 'buff', power: 25, element: 'wind', range: 2, scope: 'all' },
+      { name: 'Tempest Fall', cost: 7, kind: 'attack', power: 1.75, element: 'wind', range: 1, scope: 'all' },
     ],
     upgrades: [
       { name: 'Ironhide', cost: 6, passive: { kind: 'resilient', percent: 14 } },
@@ -167,7 +170,7 @@ export const ROSTER: CharacterDef[] = [
     ),
   },
   {
-    id: 'rebar', name: 'Rebar', rarity: 2, element: 'light', role: 'shield',
+    id: 'rebar', name: 'Rebar', rarity: 3, element: 'light', role: 'shield',
     // The roster's only tank, and its only light unit. Where the stone wall he
     // replaced held one tile, Rebar is a guardian who RELOCATES: Ironpaw Charge
     // stacks a 3-tile dash on his own move, so a move-3 body threatens six tiles
@@ -186,7 +189,7 @@ export const ROSTER: CharacterDef[] = [
       { name: 'Ironpaw Charge', cost: 2, kind: 'attack', power: 1.1, element: 'light', range: 1 },
       // His signature, and parked on 6 on purpose: the most reliable cost in the
       // game (97.4%), because a guard buff is worthless if it arrives a turn late.
-      { name: 'Aegis', cost: 6, kind: 'buff', power: 35, element: 'light', range: 3, aoeRadius: 2, stat: 'defense' },
+      { name: 'Aegis', cost: 6, kind: 'buff', power: 35, element: 'light', range: 3, scope: 'all', stat: 'defense' },
       // The roster's only AoE heal. 11 is uncontested by every other kit and
       // eats 2-3 dice, so a full-team heal benches one or two teammates to cast.
       //
@@ -195,7 +198,7 @@ export const ROSTER: CharacterDef[] = [
       // (11.5% of all player actions, out-scoring every nuke) -- absurd for an
       // 11-cost. Radius 1 puts it at 7.3% and makes it a reward for clustering,
       // which the Seraph's radius-2 Judgment is there to punish.
-      { name: 'Sanctuary', cost: 11, kind: 'heal', power: 1.5, element: 'light', range: 2, aoeRadius: 1 },
+      { name: 'Sanctuary', cost: 11, kind: 'heal', power: 1.5, element: 'light', range: 2, scope: 'all' },
     ],
     upgrades: [
       { name: 'Warded Plate', cost: 6, passive: { kind: 'resilient', percent: 16 } },
@@ -242,7 +245,7 @@ export const ROSTER: CharacterDef[] = [
       // Her identity. Costs 7 and outranges the whole board.
       { name: 'Glacial Lance', cost: 7, kind: 'attack', power: 2.0, element: 'water', range: 5 },
       // Inherits the 10 slot the healer vacated -- uncontested by every other kit.
-      { name: 'Absolute Zero', cost: 10, kind: 'attack', power: 1.5, element: 'water', range: 4, aoeRadius: 2 },
+      { name: 'Absolute Zero', cost: 10, kind: 'attack', power: 1.5, element: 'water', range: 4, scope: 'all' },
     ],
     upgrades: [
       // Ordered against her weakness: survive first, then push damage. A caster
@@ -273,7 +276,7 @@ export const ROSTER: CharacterDef[] = [
     ),
   },
   {
-    id: 'aethis', name: 'Aethis', rarity: 1, element: 'earth', role: 'staff',
+    id: 'aethis', name: 'Aethis', rarity: 3, element: 'earth', role: 'staff',
     // The roster's dedicated healer, and its only earth unit -- the wheel has had
     // a hole in it since Cairn, so nothing countered water until she arrived.
     //
@@ -297,7 +300,7 @@ export const ROSTER: CharacterDef[] = [
       // Radius 1, not 2 -- the same lesson Sanctuary taught. A radius-2 team heal
       // catches the whole party regardless of formation and swamps every other
       // option in the AI's scoring. She gets reach instead: range 3 to Rebar's 2.
-      { name: 'Hallowed Grove', cost: 8, kind: 'heal', power: 1.15, element: 'earth', range: 3, aoeRadius: 1 },
+      { name: 'Hallowed Grove', cost: 8, kind: 'heal', power: 1.15, element: 'earth', range: 3, scope: 'all' },
     ],
     upgrades: [
       { name: 'Herbalist', cost: 6, passive: { kind: 'regen', percent: 6 } },
@@ -335,23 +338,31 @@ export const ROSTER: CharacterDef[] = [
  * Because they act every phase instead of ~2 of 5, their per-hit numbers are
  * roughly half a player character's.
  */
-export const ENEMIES: CharacterDef[] = [
+/**
+ * The enemies the older battle system was authored against.
+ *
+ * Kept as reference while the rebuild runs -- their kits are the shape a real
+ * bestiary needs (trash with one ability, an elite with a passive, a boss with
+ * cooldowns and a telegraph) and are worth re-reading when authoring against
+ * BATTLE_DESIGN.md. Not deployed: `ENEMIES` below is what a Performance uses.
+ */
+export const BESTIARY: CharacterDef[] = [
   {
-    id: 'husk', icon: 'husk', name: 'Ash Husk', rarity: 1, element: 'fire', role: 'blade',
+    id: 'husk', icon: 'husk', name: 'Ash Husk', rarity: 3, element: 'fire', role: 'blade',
     maxHp: 520, attack: 72, defense: 30,
     abilities: [
       { name: 'Claw', cost: 0, kind: 'attack', power: 0.85, element: 'fire', range: 1, priority: 1 },
     ],
   },
   {
-    id: 'wisp', icon: 'wisp', name: 'Bog Wisp', rarity: 1, element: 'water', role: 'bow',
+    id: 'wisp', icon: 'wisp', name: 'Bog Wisp', rarity: 3, element: 'water', role: 'bow',
     maxHp: 460, attack: 66, defense: 24,
     abilities: [
       { name: 'Spit', cost: 0, kind: 'attack', power: 0.9, element: 'water', range: 3, priority: 1 },
     ],
   },
   {
-    id: 'golem', icon: 'golem', name: 'Crag Golem', rarity: 2, element: 'earth', role: 'shield',
+    id: 'golem', icon: 'golem', name: 'Crag Golem', rarity: 4, element: 'earth', role: 'shield',
     maxHp: 1100, attack: 76, defense: 70,
     abilities: [
       { name: 'Slam', cost: 0, kind: 'attack', power: 1.0, element: 'earth', range: 1, priority: 1 },
@@ -362,7 +373,7 @@ export const ENEMIES: CharacterDef[] = [
     ],
   },
   {
-    id: 'shade', icon: 'shade', name: 'Pale Shade', rarity: 1, element: 'dark', role: 'dagger',
+    id: 'shade', icon: 'shade', name: 'Pale Shade', rarity: 3, element: 'dark', role: 'dagger',
     maxHp: 430, attack: 76, defense: 20,
     abilities: [
       { name: 'Rend', cost: 0, kind: 'attack', power: 0.95, element: 'dark', range: 1, priority: 1 },
@@ -370,14 +381,14 @@ export const ENEMIES: CharacterDef[] = [
     passives: [{ kind: 'frenzy', percent: 35 }],
   },
   {
-    id: 'seraph', icon: 'seraph', name: 'Fallen Seraph', rarity: 3, element: 'light', role: 'staff',
+    id: 'seraph', icon: 'seraph', name: 'Fallen Seraph', rarity: 5, element: 'light', role: 'staff',
     maxHp: 950, attack: 84, defense: 48, boss: true,
     abilities: [
       // Priority order decides the turn: Judgment whenever it is off cooldown,
       // Rebuke to punish anyone adjacent, Radiance as the filler.
       {
         name: 'Judgment', cost: 0, kind: 'attack', power: 2.2, element: 'light',
-        range: 4, aoeRadius: 2, priority: 3, cooldown: 3, telegraph: 1,
+        range: 4, scope: 'all', priority: 3, cooldown: 3, telegraph: 1,
       },
       { name: 'Rebuke', cost: 0, kind: 'attack', power: 1.35, element: 'light', range: 1, priority: 2, cooldown: 2 },
       { name: 'Radiance', cost: 0, kind: 'attack', power: 1.0, element: 'light', range: 2, priority: 1 },
@@ -402,6 +413,92 @@ export const ENEMIES: CharacterDef[] = [
  * facing the party, while a seven-enemy one fills all three ranks -- and putting
  * a boss last places it at the back, behind its own adds.
  */
+/**
+ * The creature the battle rebuild is tested against.
+ *
+ * Deliberately one creature repeated five times. The thing being exercised is
+ * the machinery -- weighted ability selection, revealed intent, and resolution
+ * -- and five different kits would make it impossible to tell a bug in the
+ * selector from a quirk of one enemy's abilities. With five identical creatures
+ * any spread in what they choose is the weighting, and nothing else.
+ *
+ * The two abilities differ on more than power so the reveal has something worth
+ * reading: `range` 1 reaches only the party's front column, `range` 2 reaches
+ * everyone, so the intent tells you both what is coming and who can be hit.
+ *
+ * NOT a balance pass. Numbers here are placeholders chosen to make the systems
+ * observable, and the whole bestiary is authored properly once the mechanics
+ * are in.
+ */
+/**
+ * The creature the battle rebuild is tested against, in five elemental colours.
+ *
+ * One creature repeated is what makes the machinery observable -- weighted
+ * selection, revealed intent, ordered resolution. Five DIFFERENT elements on
+ * that one creature is what makes the matchup wheel observable too, without
+ * adding a second variable: the kits are identical, so any difference in what a
+ * Performer does to one versus another is the element and nothing else.
+ *
+ * They cover the whole five-element cycle (`elements.ts`), so every one of them
+ * is strong against exactly one sibling and weak to exactly one other. A party
+ * has a right answer against each, and no answer that is right against all.
+ *
+ * NOT a balance pass. The numbers are placeholders chosen to make the systems
+ * legible; the real bestiary is authored once the mechanics are in.
+ */
+interface UnderstudyVariant {
+  colour: string;
+  element: Element;
+}
+
+const UNDERSTUDIES: UnderstudyVariant[] = [
+  { colour: 'red', element: 'fire' },
+  { colour: 'yellow', element: 'lightning' },
+  { colour: 'blue', element: 'water' },
+  { colour: 'orange', element: 'earth' },
+  { colour: 'green', element: 'wind' },
+];
+
+/**
+ * Art is optional per variant.
+ *
+ * Only the colours that have been drawn carry a sprite; the rest fall back to
+ * the role badge, exactly as every enemy did before any of this existed. That
+ * keeps the encounter complete and testable while the art arrives one file at a
+ * time, and dropping in `understudy_blue.png` is the whole of what it takes to
+ * light that one up.
+ */
+const understudySprite = (colour: string): SpriteId | null => {
+  const id = `understudy_${colour}` as SpriteId;
+  return id in SPRITE_METRICS ? id : null;
+};
+
+const understudy = ({ colour, element }: UnderstudyVariant): CharacterDef => {
+  const art = understudySprite(colour);
+  return {
+    id: `understudy_${colour}`,
+    icon: 'shade',
+    name: `${colour[0]!.toUpperCase()}${colour.slice(1)} Understudy`,
+    rarity: 3,
+    element,
+    role: 'blade',
+    maxHp: 500,
+    attack: 70,
+    defense: 30,
+    ...(art ? { sprite: sprite(art) } : null),
+    abilities: [
+      // Weights are relative, and these two are written as the percentages they
+      // work out to -- 75 and 25 of a 100 total -- because a reader checking the
+      // odds against the design should not have to normalise them first.
+      { name: 'Fluffed Line', cost: 0, kind: 'attack', power: 0.8, element, range: 1, weight: 75 },
+      { name: 'Scene Stealer', cost: 0, kind: 'attack', power: 1.6, element, range: 2, weight: 25 },
+    ],
+  };
+};
+
+/** The lineup a Performance deploys: one Understudy of each element. */
+export const ENEMIES: CharacterDef[] = UNDERSTUDIES.map(understudy);
+
 export const CURTAIN_CALL: EncounterDef = {
   name: 'Curtain Call',
   background: '/background/battle_screens/battle_screen_1.png',

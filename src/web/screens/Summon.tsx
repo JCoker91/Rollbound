@@ -4,6 +4,7 @@ import { short, type Profile } from '../../engine/idle.ts';
 import {
   MULTI_COST,
   MULTI_COUNT,
+  RARITIES,
   RATES,
   SUMMON_COST,
   summon,
@@ -43,7 +44,10 @@ export function Summon({
             tree in the Characters screen rather than being wasted.
           </p>
           <div className="rates">
-            {([3, 2, 1] as const).map((r) => (
+            {/* Derived from the rate table, rarest first, rather than a hard-coded
+                tier list -- the previous one said [3, 2, 1] and went stale the
+                moment rarity became a 3-5 scale. */}
+            {RARITIES.map((r) => (
               <span key={r} className={`rate r${r}`}>
                 {'★'.repeat(r)} {(RATES[r] * 100).toFixed(0)}%
               </span>

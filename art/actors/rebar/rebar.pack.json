@@ -1,6 +1,21 @@
 {
+  "clips": {
+    "idle": {
+      "anchorX": 0.5,
+      "aspect": 1.247059,
+      "footPad": 0.0,
+      "frames": 5,
+      "loops": true,
+      "normalised": 1.0,
+      "pxH": 85,
+      "restFill": 0.964706,
+      "size": 29117,
+      "src": "/sprites/rebar/rebar_idle.png",
+      "trimmed": 3
+    }
+  },
   "stamp": {
-    "mtime_ns": 1788968217293108800,
-    "size": 147190
+    "sha256": "91e119f60e8c1402fcbe4b6f2c1a40d1643c6ee6d7494dafdc46fc5d28380ba8",
+    "size": 10675
   }
 }

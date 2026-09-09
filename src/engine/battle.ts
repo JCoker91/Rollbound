@@ -1,4 +1,4 @@
-import type { Ability, CharacterDef, Side, Unit } from './types.ts';
+import type { Ability, CharacterDef, Intent, Side, Unit } from './types.ts';
 import { alive } from './types.ts';
 import { Rng } from './rng.ts';
 import { bestPlan, type Action } from './allocate.ts';
@@ -32,6 +32,8 @@ export type Event =
   | { t: 'buff'; target: string; amount: number; stat: 'attack' | 'defense' }
   | { t: 'ko'; unit: string }
   | { t: 'telegraph'; unit: string; ability: string; at: Pos }
+  | { t: 'intent'; unit: string; ability: string; target: string }
+  | { t: 'fizzle'; actor: string; ability: string; reason: string }
   | { t: 'upgrade'; unit: string; name: string; tier: number }
   | { t: 'end'; outcome: Outcome; turns: number };
 
@@ -48,6 +50,26 @@ export interface BattleState {
   rng: Rng;
   /** Per-phase AI plan, so the UI can play it out one step at a time. */
   ai: AiCache | null;
+  /**
+   * The player's queued actions for this round, in the order they will resolve.
+   *
+   * Planning and resolving are separate steps on purpose. If actions landed as
+   * they were clicked, ordering would be a probe -- cast the cheap thing, look
+   * at the result, then decide the rest -- and the order would stop being a
+   * decision. Building the whole turn before any of it happens is what makes
+   * "which of these goes first" a real question with a real cost for getting it
+   * wrong.
+   */
+  plan: PlannedAction[];
+}
+
+/** One queued action. `ability` is null for an upgrade purchase. */
+export interface PlannedAction {
+  unit: Unit;
+  ability: Ability | null;
+  /** Indices into `dice`, reserved while queued and spent on commit. */
+  dice: number[];
+  target: Pos;
 }
 
 interface AiCache {
@@ -88,6 +110,7 @@ export function createBattle(
       upgrades: 0,
       cooldowns: {},
       pending: null,
+      intent: null,
     }));
 
   const state: BattleState = {
@@ -104,6 +127,7 @@ export function createBattle(
     outcome: 'ongoing',
     rng: new Rng(seed),
     ai: null,
+    plan: [],
   };
   beginPhase(state);
   return state;
@@ -130,14 +154,268 @@ function beginPhase(s: BattleState): void {
     }
   }
   s.ai = null;
+  s.plan = [];
   s.dice = s.rng.roll(DICE_PER_TURN);
   s.diceSpent = s.dice.map(() => false);
   s.log.push({ t: 'roll', side: s.phase, turn: s.turn, dice: [...s.dice] });
+
+  // Enemies declare at the top of the PLAYER's phase, so the plan can be made
+  // against them. Doing it at the top of the enemy phase would be too late to
+  // be worth showing.
+  if (s.phase === 'player') chooseIntents(s);
+}
+
+/**
+ * Decide what every living enemy will do, and reveal it.
+ *
+ * Called once at the top of the round, BEFORE the player plans, because the
+ * whole point is that the player plans against it. An enemy that picked its
+ * action when its phase arrived would be unplannable no matter how simple its
+ * rules were.
+ *
+ * Two separate choices, deliberately made differently:
+ *
+ * WHICH ability, by weight. The odds are the enemy's own hidden character --
+ * a boss sitting at 20/30/30/20 is a different threat from one at 70/10/10/10
+ * even with identical abilities. The player is shown the pick, never the
+ * distribution, so this round can be solved and the next one cannot be.
+ *
+ * WHO it targets, uniformly at random among legal targets. Targeting is not
+ * where the interest lives, and a deterministic "always hits the weakest" makes
+ * the reveal redundant -- you would know it before reading it.
+ */
+function chooseIntents(s: BattleState): void {
+  const foes = livingOf(s, 'player');
+  for (const u of livingOf(s, 'enemy')) {
+    u.intent = null;
+    if (foes.length === 0) continue;
+    // A telegraphed cast already committed last round; it is not re-chosen, and
+    // showing it again as a fresh intent would double-count it.
+    if (u.pending) continue;
+
+    const allies = livingOf(s, 'enemy');
+    const usable = u.def.abilities.filter((a) => {
+      if ((u.cooldowns[a.name] ?? 0) > 0) return false;
+      const pool = a.kind === 'attack' ? foes : allies;
+      return pool.some((t) => canTarget(a, u, t.pos, s.units));
+    });
+    if (usable.length === 0) continue;
+
+    const ability = pickWeighted(s, usable);
+    const pool = ability.kind === 'attack' ? foes : allies;
+    const legal = pool.filter((t) => canTarget(ability, u, t.pos, s.units));
+    const target = legal[s.rng.int(0, legal.length - 1)]!;
+
+    u.intent = { ability, target: target.pos };
+    s.log.push({
+      t: 'intent',
+      unit: u.def.name,
+      ability: ability.name,
+      target: target.def.name,
+    });
+  }
+}
+
+/** Weighted pick. `weight` defaults to 1, so an unweighted kit is uniform. */
+function pickWeighted(s: BattleState, abilities: Ability[]): Ability {
+  const total = abilities.reduce((sum, a) => sum + Math.max(0, a.weight ?? 1), 0);
+  if (total <= 0) return abilities[s.rng.int(0, abilities.length - 1)]!;
+
+  // `int` over a scaled range rather than a float, so selection consumes the
+  // seeded RNG the same way everywhere and a battle stays reproducible.
+  let roll = s.rng.int(1, Math.round(total * 1000)) / 1000;
+  for (const a of abilities) {
+    roll -= Math.max(0, a.weight ?? 1);
+    if (roll <= 0) return a;
+  }
+  return abilities[abilities.length - 1]!;
 }
 
 /** Indices of dice not yet spent this phase. */
 export const availableDice = (s: BattleState): number[] =>
   s.dice.map((_, i) => i).filter((i) => !s.diceSpent[i]);
+
+/**
+ * Shared validation for queueing an action. Returns an error string, or null.
+ *
+ * Split out so planning and the older immediate commit cannot drift apart on
+ * what counts as legal -- two copies of "does this pay the cost" is exactly the
+ * kind of duplication that ends with the UI offering a move the engine refuses.
+ */
+function checkAction(
+  s: BattleState,
+  unit: Unit,
+  ability: Ability,
+  diceIndices: number[],
+  target: Pos,
+): string | null {
+  if (s.outcome !== 'ongoing') return 'The battle is over.';
+  if (unit.side !== 'player') return 'Only the player plans.';
+  if (!alive(unit)) return `${unit.def.name} is down.`;
+  if (diceIndices.some((i) => s.diceSpent[i])) return 'Those dice are already committed.';
+
+  const values = diceIndices.map((i) => s.dice[i]!);
+  const sum = values.reduce((a, b) => a + b, 0);
+  if (ability.wildcard ? diceIndices.length !== 1 : sum !== ability.cost) {
+    return ability.wildcard
+      ? `${ability.name} takes exactly one die.`
+      : `${ability.name} costs ${ability.cost}; you selected ${sum}.`;
+  }
+  if (!canTarget(ability, unit, target, s.units)) {
+    return `${unit.def.name} cannot reach that far into the enemy line.`;
+  }
+  return null;
+}
+
+/** Is this character already in the queue? One action each per round. */
+export const isPlanned = (s: BattleState, unit: Unit): boolean =>
+  s.plan.some((p) => p.unit === unit);
+
+/**
+ * Add an action to the end of the queue.
+ *
+ * Dice are reserved immediately rather than at commit, so the tray shows what
+ * is left to spend while the rest of the turn is being built -- planning
+ * against dice you have already promised elsewhere would make the queue a lie.
+ */
+export function planAction(
+  s: BattleState,
+  unit: Unit,
+  ability: Ability,
+  diceIndices: number[],
+  target: Pos,
+): string | null {
+  if (isPlanned(s, unit)) return `${unit.def.name} is already acting this round.`;
+  const err = checkAction(s, unit, ability, diceIndices, target);
+  if (err) return err;
+
+  for (const i of diceIndices) s.diceSpent[i] = true;
+  s.plan.push({ unit, ability, dice: [...diceIndices], target });
+  return null;
+}
+
+/** Queue an upgrade purchase, which costs the character's action like a cast. */
+export function planUpgrade(s: BattleState, unit: Unit, diceIndices: number[]): string | null {
+  if (s.outcome !== 'ongoing') return 'The battle is over.';
+  if (isPlanned(s, unit)) return `${unit.def.name} is already acting this round.`;
+
+  const next = (unit.def.upgrades ?? [])[unit.upgrades];
+  if (!next) return `${unit.def.name} is fully upgraded.`;
+  if (diceIndices.some((i) => s.diceSpent[i])) return 'Those dice are already committed.';
+
+  const sum = diceIndices.reduce((a, i) => a + s.dice[i]!, 0);
+  if (sum !== next.cost) return `${next.name} costs ${next.cost}; you selected ${sum}.`;
+
+  for (const i of diceIndices) s.diceSpent[i] = true;
+  s.plan.push({ unit, ability: null, dice: [...diceIndices], target: unit.pos });
+  return null;
+}
+
+/** Take an action back out of the queue, returning its dice to the pool. */
+export function unplan(s: BattleState, index: number): void {
+  const entry = s.plan[index];
+  if (!entry) return;
+  for (const i of entry.dice) s.diceSpent[i] = false;
+  s.plan.splice(index, 1);
+}
+
+export function clearPlan(s: BattleState): void {
+  for (const entry of s.plan) for (const i of entry.dice) s.diceSpent[i] = false;
+  s.plan = [];
+}
+
+/** Move a queued action to a new position. Reordering IS the strategy. */
+export function movePlanned(s: BattleState, from: number, to: number): void {
+  if (from === to) return;
+  const entry = s.plan[from];
+  if (!entry || to < 0 || to >= s.plan.length) return;
+  s.plan.splice(from, 1);
+  s.plan.splice(to, 0, entry);
+}
+
+/**
+ * Resolve the whole queue, in order, then hand over to the enemies.
+ *
+ * Nothing is re-validated against the state it finds. An action whose target
+ * died earlier in the same queue FIZZLES, and its dice are gone -- that is the
+ * cost of ordering the turn badly, and removing it would remove the decision.
+ * The one thing checked is that the target still exists, because silently
+ * resolving damage onto a corpse would read as a bug rather than a mistake.
+ */
+export function commitPlan(s: BattleState): void {
+  while (commitNext(s)) {
+    /* each call resolves exactly one queued action */
+  }
+}
+
+/**
+ * Resolve the FRONT of the queue and return what happened, or null when the
+ * queue is empty.
+ *
+ * Stepped rather than all-at-once so the UI can animate one action, let it
+ * land, and then run the next -- the same shape the enemy phase already uses.
+ * Resolving the whole turn in a single frame would collapse an ordered plan
+ * into one indistinguishable flash, which throws away the readability that
+ * ordering the turn was supposed to buy.
+ */
+export function commitNext(s: BattleState): PlannedAction | null {
+  if (s.outcome !== 'ongoing' || s.phase !== 'player') return null;
+
+  while (s.plan.length > 0) {
+    const entry = s.plan.shift()!;
+    const { unit, ability, dice, target } = entry;
+
+    if (!alive(unit)) {
+      s.log.push({
+        t: 'fizzle',
+        actor: unit.def.name,
+        ability: ability?.name ?? 'upgrade',
+        reason: 'was taken out before acting',
+      });
+      continue;
+    }
+
+    if (!ability) {
+      const before = unitMaxHp(unit);
+      const next = (unit.def.upgrades ?? [])[unit.upgrades];
+      if (!next) continue;
+      unit.upgrades++;
+      unit.hp += Math.max(0, unitMaxHp(unit) - before);
+      unit.hasActed = true;
+      s.log.push({ t: 'upgrade', unit: unit.def.name, name: next.name, tier: unit.upgrades });
+      return entry;
+    }
+
+    // A single-target ability whose victim is already down does nothing. Whole-
+    // side abilities always have something to land on, so they never fizzle.
+    if ((ability.scope ?? 'one') !== 'all') {
+      const occupant = unitAt(s, target);
+      if (!occupant) {
+        s.log.push({
+          t: 'fizzle',
+          actor: unit.def.name,
+          ability: ability.name,
+          reason: 'its target was already down',
+        });
+        continue;
+      }
+    }
+
+    unit.hasActed = true;
+    s.log.push({
+      t: 'act',
+      side: 'player',
+      actor: unit.def.name,
+      ability: ability.name,
+      dice: dice.map((i) => s.dice[i]!),
+    });
+    applyAbility(s, unit, ability, target);
+    checkOutcome(s);
+    return entry;
+  }
+
+  return null;
+}
 
 /**
  * Commit one character's action. `diceIndices` must exactly pay the cost (or be
@@ -379,7 +657,13 @@ function nextEnemyStep(s: BattleState, team: Unit[], foes: Unit[]): AiStep | nul
 
   for (const u of team) {
     if (!alive(u) || u.hasActed) continue;
-    const choice = chooseEnemyAction(s, u, foes);
+    // Do what was announced. Falling back to a fresh choice would break the
+    // promise the reveal makes -- the player planned against the intent, and an
+    // enemy that quietly picked something else makes planning pointless. The
+    // fallback exists only for an intent whose target has since died.
+    const declared = u.intent && targetStillLegal(s, u, u.intent) ? u.intent : null;
+    const choice = declared ?? chooseEnemyAction(s, u, foes);
+    u.intent = null;
     if (!choice) continue;
 
     const { ability, target } = choice;
@@ -406,6 +690,21 @@ function nextEnemyStep(s: BattleState, team: Unit[], foes: Unit[]): AiStep | nul
 interface EnemyChoice {
   ability: Ability;
   target: Pos;
+}
+
+/**
+ * Can a declared intent still be carried out?
+ *
+ * The target may have died between the reveal and the enemy phase -- which is a
+ * legitimate player answer to a revealed intent, and racing to kill the target's
+ * threat is exactly the kind of play the reveal is meant to enable.
+ */
+function targetStillLegal(s: BattleState, unit: Unit, intent: Intent): boolean {
+  const occupant = unitAt(s, intent.target);
+  if (occupant && !alive(occupant)) return false;
+  // A whole-side ability does not care that one named slot emptied.
+  if (intent.ability.scope === 'all') return true;
+  return !!occupant && canTarget(intent.ability, unit, intent.target, s.units);
 }
 
 /**

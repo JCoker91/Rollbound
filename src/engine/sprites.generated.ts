@@ -2,7 +2,7 @@
 // Measured from the PNGs in public/sprites/; re-run the script after changing art.
 import type { SpriteSheet } from './types.ts';
 
-export type SpriteId = 'aethis' | 'benjamin' | 'kael' | 'maxine' | 'rebar';
+export type SpriteId = 'aethis' | 'benjamin' | 'kael' | 'maxine' | 'rebar' | 'understudy_blue' | 'understudy_green' | 'understudy_orange' | 'understudy_red' | 'understudy_yellow';
 
 export interface SpriteMetrics extends Omit<SpriteSheet, 'scale' | 'nativePx'> {
   /**
@@ -29,15 +29,33 @@ export interface SpriteMetrics extends Omit<SpriteSheet, 'scale' | 'nativePx'> {
 }
 
 export const SPRITE_METRICS: Record<SpriteId, SpriteMetrics> = {
-  aethis: { src: '/sprites/aethis/aethis.png', icon: '/sprites/aethis/aethis_icon.png', aspect: 236 / 320, pxH: 320, anchorX: 0.409, nativePx: 43, nativeCanvas: 64, pixelArt: false },
+  aethis: { src: '/sprites/aethis/aethis.png', icon: '/sprites/aethis/aethis_icon.png', aspect: 70 / 97, pxH: 97, anchorX: 0.436, nativePx: 97, nativeCanvas: 128, pixelArt: true, idle: { src: '/sprites/aethis/aethis_idle.png', frames: 8, aspect: 0.707071, pxH: 99, anchorX: 0.436, restFill: 0.984848, footPad: 0.0 } },
   benjamin: { src: '/sprites/benjamin/benjamin.png', icon: '/sprites/benjamin/benjamin_icon.png', aspect: 103 / 85, pxH: 85, anchorX: 0.447, nativePx: 85, nativeCanvas: 128, pixelArt: true, idle: { src: '/sprites/benjamin/benjamin_idle.png', frames: 8, aspect: 1.352941, pxH: 85, anchorX: 0.496, restFill: 0.988235, footPad: 0.0 } },
-  kael: { src: '/sprites/kael/kael.png', icon: '/sprites/kael/kael_icon.png', aspect: 446 / 320, pxH: 320, anchorX: 0.430, nativePx: 42, nativeCanvas: 64, pixelArt: false },
+  kael: { src: '/sprites/kael/kael.png', icon: '/sprites/kael/kael_icon.png', aspect: 113 / 92, pxH: 92, anchorX: 0.478, nativePx: 92, nativeCanvas: 128, pixelArt: true, idle: { src: '/sprites/kael/kael_idle.png', frames: 8, aspect: 1.212766, pxH: 94, anchorX: 0.482, restFill: 0.984043, footPad: 0.0 } },
   maxine: { src: '/sprites/maxine/maxine.png', icon: '/sprites/maxine/maxine_icon.png', aspect: 83 / 108, pxH: 108, anchorX: 0.602, nativePx: 108, nativeCanvas: 128, pixelArt: true, idle: { src: '/sprites/maxine/maxine_idle.png', frames: 8, aspect: 0.831776, pxH: 107, anchorX: 0.545, restFill: 0.953271, footPad: 0.0 } },
-  rebar: { src: '/sprites/rebar/rebar.png', icon: '/sprites/rebar/rebar_icon.png', aspect: 403 / 320, pxH: 320, anchorX: 0.500, nativePx: 37, nativeCanvas: 64, pixelArt: false },
+  rebar: { src: '/sprites/rebar/rebar.png', icon: '/sprites/rebar/rebar_icon.png', aspect: 106 / 82, pxH: 82, anchorX: 0.500, nativePx: 82, nativeCanvas: 128, pixelArt: true, idle: { src: '/sprites/rebar/rebar_idle.png', frames: 5, aspect: 1.247059, pxH: 85, anchorX: 0.5, restFill: 0.964706, footPad: 0.0 } },
+  understudy_blue: { src: '/sprites/understudy_blue/understudy_blue.png', aspect: 90 / 93, pxH: 93, anchorX: 0.367, nativePx: 93, nativeCanvas: 128, pixelArt: true },
+  understudy_green: { src: '/sprites/understudy_green/understudy_green.png', aspect: 91 / 94, pxH: 94, anchorX: 0.368, nativePx: 94, nativeCanvas: 128, pixelArt: true },
+  understudy_orange: { src: '/sprites/understudy_orange/understudy_orange.png', aspect: 90 / 95, pxH: 95, anchorX: 0.367, nativePx: 95, nativeCanvas: 128, pixelArt: true },
+  understudy_red: { src: '/sprites/understudy_red/understudy_red.png', aspect: 92 / 95, pxH: 95, anchorX: 0.364, nativePx: 95, nativeCanvas: 128, pixelArt: true },
+  understudy_yellow: { src: '/sprites/understudy_yellow/understudy_yellow.png', aspect: 91 / 95, pxH: 95, anchorX: 0.363, nativePx: 95, nativeCanvas: 128, pixelArt: true },
 };
 
 /** Every packed clip, for the dev animation lab. Battle uses `idle` above. */
 export const ANIMATION_CLIPS: Record<string, Record<string, AnimationClip>> = {
+  "aethis": {
+    "idle": {
+      "anchorX": 0.436,
+      "aspect": 0.707071,
+      "footPad": 0.0,
+      "frames": 8,
+      "loops": true,
+      "normalised": 1.0,
+      "pxH": 99,
+      "restFill": 0.984848,
+      "src": "/sprites/aethis/aethis_idle.png"
+    }
+  },
   "benjamin": {
     "idle": {
       "anchorX": 0.496,
@@ -51,6 +69,19 @@ export const ANIMATION_CLIPS: Record<string, Record<string, AnimationClip>> = {
       "src": "/sprites/benjamin/benjamin_idle.png"
     }
   },
+  "kael": {
+    "idle": {
+      "anchorX": 0.482,
+      "aspect": 1.212766,
+      "footPad": 0.0,
+      "frames": 8,
+      "loops": true,
+      "normalised": 1.0,
+      "pxH": 94,
+      "restFill": 0.984043,
+      "src": "/sprites/kael/kael_idle.png"
+    }
+  },
   "maxine": {
     "idle": {
       "anchorX": 0.545,
@@ -62,6 +93,19 @@ export const ANIMATION_CLIPS: Record<string, Record<string, AnimationClip>> = {
       "pxH": 107,
       "restFill": 0.953271,
       "src": "/sprites/maxine/maxine_idle.png"
+    }
+  },
+  "rebar": {
+    "idle": {
+      "anchorX": 0.5,
+      "aspect": 1.247059,
+      "footPad": 0.0,
+      "frames": 5,
+      "loops": true,
+      "normalised": 1.0,
+      "pxH": 85,
+      "restFill": 0.964706,
+      "src": "/sprites/rebar/rebar_idle.png"
     }
   }
 };
