@@ -1,57 +1,21 @@
 {
   "clips": {
-    "celebration": {
-      "anchorX": 0.581,
-      "aspect": 1.0,
-      "footPad": 0.0,
-      "frames": 12,
-      "loops": false,
-      "normalised": 1.7238,
-      "restFill": 0.935268,
-      "settlesInto": "celebration_ending",
-      "size": 830461,
-      "src": "/sprites/maxine/maxine_celebration.png",
-      "trimmed": 0
-    },
-    "celebration_ending": {
-      "anchorX": 0.581,
-      "aspect": 1.0,
-      "footPad": 0.0,
-      "frames": 7,
-      "loops": true,
-      "normalised": 2.3623,
-      "restFill": 0.935268,
-      "size": 456715,
-      "src": "/sprites/maxine/maxine_celebration_ending.png",
-      "trimmed": 1
-    },
     "idle": {
-      "anchorX": 0.581,
-      "aspect": 1.0,
+      "anchorX": 0.545,
+      "aspect": 0.831776,
       "footPad": 0.0,
-      "frames": 10,
+      "frames": 8,
       "loops": true,
       "normalised": 1.0,
-      "restFill": 0.935268,
-      "size": 595721,
+      "pxH": 107,
+      "restFill": 0.953271,
+      "size": 45618,
       "src": "/sprites/maxine/maxine_idle.png",
-      "trimmed": 2
-    },
-    "idle_2": {
-      "anchorX": 0.581,
-      "aspect": 1.0,
-      "footPad": 0.0,
-      "frames": 12,
-      "loops": true,
-      "normalised": 1.6119,
-      "restFill": 0.935268,
-      "size": 789244,
-      "src": "/sprites/maxine/maxine_idle_2.png",
       "trimmed": 0
     }
   },
   "stamp": {
-    "mtime_ns": 1788909937526255400,
-    "size": 108962
+    "mtime_ns": 1788968217062647400,
+    "size": 8139
   }
 }

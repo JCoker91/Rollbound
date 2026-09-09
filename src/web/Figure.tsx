@@ -1,6 +1,7 @@
 import type { CSSProperties } from 'react';
 import type { CharacterDef } from '../engine/types.ts';
 import { Avatar } from './Avatar.tsx';
+import { crisp } from './crisp.ts';
 
 /**
  * A character drawn at an arbitrary size, outside a battle.
@@ -39,7 +40,10 @@ export function Figure({
   // this every character rendered at a flat `height` outside battle, so the
   // roster's statures existed on the board and nowhere else -- a child cleric
   // stood eye to eye with an armoured knight on the idle screen.
-  const h = height * sheet.scale;
+  // Rounded to a whole multiple of the art's own pixels. `height` is already in
+  // CSS pixels here, so this is a plain multiplication -- the battle screen sizes
+  // in stage fractions instead and has to do the same rounding in CSS.
+  const h = crisp(height * sheet.scale, sheet.pxH, sheet.pixelated);
   const w = h * sheet.aspect;
   return (
     <span

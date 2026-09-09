@@ -41,9 +41,17 @@ const LEGACY_SCALE: Partial<Record<SpriteId, number>> = {};
  * Nothing here is hand-authored per character.
  */
 const sprite = (id: SpriteId): SpriteSheet => {
-  const { nativePx, pixelArt, ...metrics } = SPRITE_METRICS[id];
-  const scale = nativePx != null ? (nativePx / 64) * CANVAS_TILES : (LEGACY_SCALE[id] ?? 0.9);
-  return { ...metrics, scale, pixelated: pixelArt };
+  const { nativePx, nativeCanvas, pixelArt, ...metrics } = SPRITE_METRICS[id];
+  // Stature is the figure's share of its OWN canvas, so art authored on the
+  // 64px grid and on the 128px one that replaced it stand the same height
+  // beside each other. Dividing by a fixed 64 would draw the newer art double.
+  const scale =
+    nativePx != null ? (nativePx / nativeCanvas) * CANVAS_TILES : (LEGACY_SCALE[id] ?? 0.9);
+  // `pxH` travels on only for pixel art. Smoothed art is drawn SMALLER than its
+  // file -- 0.28-0.34x -- so rounding it to a multiple of a 320px sheet would
+  // snap every one of them to a single giant step.
+  const { pxH, ...rest } = metrics;
+  return { ...rest, scale, pixelated: pixelArt, ...(pixelArt ? { pxH } : null) };
 };
 
 /**

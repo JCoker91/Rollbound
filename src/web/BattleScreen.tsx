@@ -41,6 +41,7 @@ import {
   type Unit,
 } from '../engine/types.ts';
 import { Avatar } from './Avatar.tsx';
+import { crispCss } from './crisp.ts';
 import {
   clipAnimName,
   clipBox,
@@ -48,6 +49,7 @@ import {
   clipTimeline,
   keyframesFor,
   orderFor,
+  stepMsFor,
   placementFor,
   tuningFor,
 } from './clipAnimation.ts';
@@ -86,9 +88,6 @@ const depthScale = (yPct: number): number => 0.9 + 0.22 * (yPct - 0.6);
 
 const pk = (p: Pos): string => `${p.x},${p.y}`;
 
-/** One idle step, in ms. Ten of these is roughly a breath. */
-const IDLE_STEP_MS = 105;
-
 /**
  * Keyframes for every idle in the roster, built once at module load.
  *
@@ -109,7 +108,9 @@ const IDLE_KEYFRAMES = keyframesFor(
 function idlePhase(id: string, frames: number): number {
   let h = 0;
   for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) % 997;
-  return -(h % frames) * IDLE_STEP_MS;
+  // The character's OWN pace, or the offset would not land on a frame boundary
+  // for anyone whose clip was retimed.
+  return -(h % frames) * stepMsFor(id, 'idle');
 }
 
 interface Selection {
@@ -929,6 +930,14 @@ function UnitChip({
     // this character's widest clip reaches. `clipBox` does that conversion and
     // lands the feet on the slot mark.
     const box = idle ? clipBox(idle, h, placementFor(unit.def.id, 'idle')) : null;
+    // The strip and the still are different files with different heights --
+    // Maxine's strip is 105px against her 106px still -- so the rounding step
+    // has to come from whichever one is actually being drawn.
+    const crispHeight = crispCss(
+      `${(box ? box.boxH : h) * 100}cqh`,
+      box ? idle!.pxH : sheet.pxH,
+      sheet.pixelated,
+    );
     const body = idle && box ? (
       <span
         className="anim-clip"
@@ -952,7 +961,7 @@ function UnitChip({
             animationTimingFunction: 'linear',
             animationDuration: `${clipDuration(
               clipTimeline(idle.frames, tuningFor(unit.def.id, 'idle'), orderFor(unit.def.id, 'idle')),
-              IDLE_STEP_MS,
+              stepMsFor(unit.def.id, 'idle'),
             )}ms`,
             animationDelay: `${idlePhase(unit.def.id, idle.frames)}ms`,
           }}
@@ -978,8 +987,12 @@ function UnitChip({
         className={`unit sprite-unit ${unit.side} ${spent} ${hit ? 'hurt' : ''} ${striking ? 'striking' : ''}`}
         title={title}
         style={{
-          height: `${(box ? box.boxH : h) * 100}cqh`,
-          ...(box ? { width: `${box.boxW * 100}cqh` } : null),
+          // Rounded to whole art pixels, in CSS rather than here: these are
+          // fractions of the stage, and what one resolves to in pixels is not
+          // known until layout. Width follows the ROUNDED height so the aspect
+          // survives the rounding.
+          height: crispHeight,
+          ...(box ? { width: `calc(${crispHeight} * ${idle!.aspect})` } : null),
         }}
       >
         {body}

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ROSTER } from '../../engine/content.ts';
 import { ANIMATION_CLIPS, type AnimationClip } from '../../engine/sprites.generated.ts';
-import type { ClipPlacement, FrameTune } from '../animationData.ts';
+import { DEFAULT_STEP_MS, type ClipPlacement, type FrameTune } from '../animationData.ts';
 import {
   type Step,
   clipAnimName,
@@ -12,6 +12,7 @@ import {
   frameTransform,
   orderFor,
   placementFor,
+  stepMsFor,
   tuningFor,
 } from '../clipAnimation.ts';
 
@@ -114,7 +115,7 @@ export function AnimationLab() {
   const [clipName, setClipName] = useState(names[0] ?? '');
   const clip: AnimationClip | undefined = clips[clipName] ?? clips[names[0] ?? ''];
 
-  const [stepMs, setStepMs] = useState(105);
+  const [stepMs, setStepMs] = useState(DEFAULT_STEP_MS);
   const [height, setHeight] = useState(220);
   const [mode, setMode] = useState<Mode>('loop');
   /** Position within the played sequence, not a source frame index. */
@@ -146,6 +147,9 @@ export function AnimationLab() {
     setTune(blank(clip.frames).map((_, i) => ({ ...committed[i] })));
     setPlace({ ...placementFor(who, clipName) });
     setOrder(orderFor(who, clipName)?.filter((i) => i < clip.frames) ?? natural(clip.frames));
+    // Seeded like every other authored setting. Left at its previous value the
+    // slider would show one clip's pace while a different clip played.
+    setStepMs(stepMsFor(who, clipName));
     setAt(0);
     setSettled(false);
     setDirty(false);
@@ -239,6 +243,7 @@ export function AnimationLab() {
           placement: trimPlacement(place),
           frames: trimTune(tune),
           order: isNatural ? undefined : order,
+          stepMs,
         }),
       });
       const body = (await res.json()) as { file?: string; error?: string };

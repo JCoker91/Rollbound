@@ -2,6 +2,8 @@ import {
   ANIMATION_TUNING,
   CLIP_ORDER,
   CLIP_PLACEMENT,
+  CLIP_STEP_MS,
+  DEFAULT_STEP_MS,
   type ClipPlacement,
   type ClipTuning,
   type FrameTune,
@@ -47,6 +49,10 @@ export const placementFor = (who: string, clip: string): ClipPlacement | undefin
 
 export const orderFor = (who: string, clip: string): number[] | undefined =>
   CLIP_ORDER[clipKey(who, clip)];
+
+/** Authored pace for a clip, falling back to the shared default. */
+export const stepMsFor = (who: string, clip: string): number =>
+  CLIP_STEP_MS[clipKey(who, clip)] ?? DEFAULT_STEP_MS;
 
 /** A frame's hold, floored so a zero in a saved file cannot divide by nothing. */
 const holdOf = (t: FrameTune | undefined): number => Math.max(0.05, t?.hold ?? 1);
@@ -176,3 +182,4 @@ export function clipBox(
     shiftPct: (0.5 - clip.anchorX) * 100 + (place?.dx ?? 0),
   };
 }
+

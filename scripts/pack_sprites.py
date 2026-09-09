@@ -71,6 +71,25 @@ SAFE_MARGIN_NATIVE = 4
 # a lint so genuine drift still shows.
 HUMANOID_H_RANGE = (37, 50)
 
+# Style guide v2.0 moved the native grid from 64px-delivered-at-4x to a 128px
+# canvas that IS the shipped asset, with the feet baseline at y=112.
+#
+# Both standards are in the roster while the migration runs, so the canvas an
+# actor was authored on is READ OFF THEIR FILES rather than assumed globally.
+# That matters for more than the lint: stature is `figure height / native
+# canvas`, so measuring a 128px sprite against the 64px constant would render it
+# at double the size of everyone else.
+SPECS = {
+    2: {'native': 128, 'ground': 112, 'height': (82, 92), 'margin': 8},
+    1: {'native': NATIVE, 'ground': GROUND_LINE_NATIVE, 'height': HUMANOID_H_RANGE,
+        'margin': SAFE_MARGIN_NATIVE},
+}
+
+# Superseded sheets kept beside the live ones. `animations/` is scanned
+# indiscriminately, so without this a deprecated sheet becomes a clip named
+# `idle_old` and gets packed and shipped.
+DEPRECATED_CLIPS = ('_old', '_previous', '_deprecated')
+
 ICON_SIZE = 160
 # Ceiling for oversized source art; _LQ is already well under it.
 BOARD_HEIGHT = 320
@@ -83,6 +102,36 @@ ALPHA_FLOOR = 12
 # How close to the backdrop colour counts as background when clearing pockets
 # the corner fill cannot reach. Tight on purpose -- see key_flat_background.
 POCKET_TOLERANCE = 6
+# Actor -> outline width, in native pixels. Absent means the art ships as drawn.
+#
+# The generators anti-alias, and the drawn outline arrives BROKEN rather than
+# missing: 84% of Benjamin's silhouette boundary is very dark, and the other 16%
+# is where the softening ate it. A boundary that is bold in most places and gone
+# in the rest is what reads as blur, and no keying can put back a pixel the
+# generator never committed to.
+#
+# Redrawing the ring is better than hand-editing every frame for a reason beyond
+# effort: it is derived from the alpha mask, so it is identical on all 8 frames
+# and cannot jitter between them, and it survives regenerating the art.
+#
+# Only the OUTER silhouette. An internal separation -- an arm against a torso --
+# is not on the alpha boundary and still has to be drawn.
+OUTLINE: dict[str, int] = {}
+# Width for art with nothing set, per spec revision. On by default for v2, since
+# the ring is what the current look depends on and a new upload should not have
+# to be added to a dict to get it. Off for v1, whose smoothed sheets are drawn
+# a third of their file size and have no pixel grid for a ring to sit on.
+OUTLINE_DEFAULT = {2: 1, 1: 0}
+
+
+def outline_width(name: str) -> int:
+    return OUTLINE.get(name, OUTLINE_DEFAULT[spec_of(name)])
+
+# Above this many distinct colours, art is treated as a painted render whose
+# edges are genuinely anti-aliased rather than as pixel art whose edges are
+# drawn. Deliberately far from both cases: the guide caps a sprite at 64 colours
+# and the painted sheets run to six figures. See key_flat_background.
+PIXEL_ART_COLOURS = 512
 # What counts as art when mirroring folders that are copied rather than packed.
 IMAGE_SUFFIXES = {'.png', '.jpg', '.jpeg', '.webp'}
 
@@ -99,8 +148,100 @@ METRICS_TS = Path('src/engine/sprites.generated.ts')
 # the guide -- kept because the next pre-guide import will want it.
 LEGACY: set[str] = set()
 
-ONLY = None
+ONLY: set[str] = set()
 SKIP: set[str] = set()
+
+
+def parse_args(argv: list[str]) -> None:
+    """
+    `--only <name>` limits the run to certain actors, repeatable.
+
+    For the dev-server watcher, which knows exactly whose folder changed and has
+    no reason to re-pack the rest of the roster on every save. A limited run
+    already declines to prune, so it cannot delete an untouched actor's output.
+    """
+    import argparse
+
+    ap = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
+    ap.add_argument('--only', action='append', metavar='NAME', default=[],
+                    help='pack just this actor; repeatable')
+    ap.add_argument('--skip', action='append', metavar='NAME', default=[])
+    args = ap.parse_args(argv)
+    ONLY.update(args.only)
+    SKIP.update(args.skip)
+    unknown = (ONLY | SKIP) - set(characters())
+    if unknown:
+        ap.error(f'no such actor: {", ".join(sorted(unknown))}')
+
+
+def spec_of(name: str) -> int:
+    """
+    Which revision of the style guide this actor's art was authored against.
+
+    Decided by which files exist, not by a per-character list, so migrating an
+    actor is only ever a matter of dropping the new files in.
+
+    v2 ships `<name>.png` as the finished 128px asset. v1 shipped a 64px master
+    upscaled to `<name>_LQ.png`, from which `<name>.png` was DERIVED into
+    public/ -- so the presence of `<name>_LQ.png` is what distinguishes them,
+    and it is checked first.
+    """
+    d = ACTORS / name
+    # v2 wins whenever its finished asset is present, even if the v1 files are
+    # still lying beside it. Migrating an actor means dropping in <name>.png, and
+    # deleting the old set is a separate act of tidying -- if `_LQ` took priority
+    # the pipeline would quietly keep shipping the OLD art from the OLD grid
+    # while the new file sat there unused, which is the kind of thing you only
+    # notice by wondering why your upload did nothing.
+    if (d / f'{name}.png').exists():
+        return 2
+    if (d / f'{name}_LQ.png').exists():
+        return 1
+    return 2
+
+
+# The v1 files, which are dead weight once <name>.png exists.
+SUPERSEDED = ('_LQ', '_HQ', '_base_native_64')
+
+
+def leftovers(name: str) -> list[str]:
+    """v1 files still sitting beside migrated v2 art. Reported, never deleted --
+    this script owns public/, not the folder art is uploaded to."""
+    d = ACTORS / name
+    if spec_of(name) != 2:
+        return []
+    return [f'{name}{suffix}.png' for suffix in SUPERSEDED if (d / f'{name}{suffix}.png').exists()]
+
+
+def spec(name: str) -> dict:
+    return SPECS[spec_of(name)]
+
+
+def reference(name: str) -> Image.Image:
+    """
+    The image every measurement is taken from.
+
+    v1 measures the 4x delivery and divides; v2's shipped file IS the native
+    canvas, so `upscale` below is what reconciles the two.
+
+    Keyed here rather than at the point of use, because EVERY measurement depends
+    on it. A still delivered on a green screen is fully opaque, so its content box
+    is the whole canvas -- which reads as a figure standing 128 native px tall
+    with no margin and its feet 15px below the baseline, and would ship a sprite
+    with the backdrop still in it. Sheets were already keyed on the way through
+    `split_sheet`; the still had no equivalent step.
+
+    `key_flat_background` returns art that already has real transparency
+    untouched, so this costs the v1 sheets nothing.
+    """
+    d = ACTORS / name
+    src = d / f'{name}_LQ.png' if spec_of(name) == 1 else d / f'{name}.png'
+    keyed = key_flat_background(Image.open(src).convert('RGBA'))
+    return add_outline(keyed, outline_width(name))
+
+
+def upscale(name: str) -> int:
+    return UPSCALE if spec_of(name) == 1 else 1
 
 
 def characters() -> list[str]:
@@ -108,7 +249,9 @@ def characters() -> list[str]:
     if not ACTORS.is_dir():
         return []
     return sorted(
-        d.name for d in ACTORS.iterdir() if d.is_dir() and (d / f'{d.name}_LQ.png').exists()
+        d.name
+        for d in ACTORS.iterdir()
+        if d.is_dir() and ((d / f'{d.name}_LQ.png').exists() or (d / f'{d.name}.png').exists())
     )
 
 
@@ -234,38 +377,46 @@ def foot_anchor(img: Image.Image) -> float:
     return centre / img.width
 
 
-def audit(name: str, lq: Image.Image, native: Image.Image | None) -> list[str]:
+def audit(name: str, ref: Image.Image, native: Image.Image | None) -> list[str]:
     """
     The guide's acceptance checklist, as a lint.
 
     Reported, never fatal: a sprite that is 2px off the ground line is still
     perfectly usable, and the roster should not be blocked on it. But drift is
     worth seeing, because the ground line is what keeps feet on one line.
-    """
-    notes = []
-    if lq.size != (DELIVERY, DELIVERY):
-        notes.append(f'delivery canvas is {lq.width}x{lq.height}, guide says {DELIVERY}x{DELIVERY}')
 
-    alpha = lq.getchannel('A')
+    Every threshold is expressed in the actor's own native pixels and scaled by
+    `k` on the way out, so the same checks read v1 and v2 art without either
+    spec's numbers being hard-coded here.
+    """
+    s, k = spec(name), upscale(name)
+    canvas = s['native'] * k
+    notes = []
+    if ref.size != (canvas, canvas):
+        notes.append(f'delivery canvas is {ref.width}x{ref.height}, guide says {canvas}x{canvas}')
+
+    alpha = ref.getchannel('A')
     semi = sum(1 for v in alpha.getdata() if 0 < v < 255)
     if semi:
         notes.append(f'{semi} semi-transparent pixels; guide requires binary alpha')
 
-    box = content_box(lq)
-    margin = min(box[0], box[1], lq.width - box[2], lq.height - box[3])
-    if margin < SAFE_MARGIN_NATIVE * UPSCALE:
-        notes.append(
-            f'margin {margin}px < {SAFE_MARGIN_NATIVE * UPSCALE}px '
-            f'({SAFE_MARGIN_NATIVE} native)'
-        )
+    box = content_box(ref)
+    margin = min(box[0], box[1], ref.width - box[2], ref.height - box[3])
+    # Less whatever the outline step spent. The guide's margin is a requirement
+    # on the DELIVERED art, and reporting the pipeline's own deliberate pixel as
+    # drift is how a lint teaches you to ignore it -- the same mistake the
+    # binary-alpha note made while unmatte was feathering pixel art.
+    need = (s['margin'] - outline_width(name)) * k
+    if margin < need:
+        notes.append(f'margin {margin}px < {need}px ({need // k} native)')
 
     feet = box[3] - 1
-    want = GROUND_LINE_NATIVE * UPSCALE
+    want = s['ground'] * k
     if feet != want:
-        notes.append(f'feet at y={feet}, guide ground line is y={want} ({(feet - want) / UPSCALE:+.2f} native px)')
+        notes.append(f'feet at y={feet}, guide ground line is y={want} ({(feet - want) / k:+.2f} native px)')
 
-    h_native = (box[3] - box[1]) / UPSCALE
-    lo, hi = HUMANOID_H_RANGE
+    h_native = (box[3] - box[1]) / k
+    lo, hi = s['height']
     if not lo <= h_native <= hi:
         notes.append(f'height {h_native:.0f} native px is outside the guide range {lo}-{hi}')
 
@@ -282,7 +433,20 @@ def audit(name: str, lq: Image.Image, native: Image.Image | None) -> list[str]:
 # Animation clips live in art/<name>/animations/ and are ALL packed, so the dev
 # animation lab can compare them. Which one a character actually idles with in
 # battle is chosen here.
-DEFAULT_IDLE = {'benjamin': 'idle', 'maxine': 'idle'}
+# Override only. `default_idle` falls back to a clip actually named `idle`, so a
+# new actor animates as soon as their sheet lands -- before this, an actor
+# missing from here packed their strip and then shipped no `idle` field at all,
+# and stood stock still in battle with nothing to say why.
+DEFAULT_IDLE: dict[str, str] = {}
+
+
+def default_idle(name: str, clips) -> str:
+    """Which packed clip the battle idles with."""
+    if name in DEFAULT_IDLE:
+        return DEFAULT_IDLE[name]
+    if 'idle' in clips:
+        return 'idle'
+    return next(iter(sorted(c for c in clips if loops(c))), '')
 
 # Frame height for a packed strip.
 #
@@ -395,7 +559,12 @@ def unmatte(img: Image.Image, bg, erode: int = 2) -> Image.Image:
 
     known = core.copy()
     figure = np.where(core[..., None], rgb, 0).astype(np.float32)
-    for _ in range(erode + 2):
+    # Reach far enough to cross a thin feature. A hair spike or a sword tip
+    # narrower than 2*erode has no core at all, so a short spread never
+    # reaches it, `figure` keeps the pixel's own contaminated colour, and the
+    # projection below then reports full coverage of the backdrop -- which is
+    # how green survived on Benjamin's spikes after the key had done its job.
+    for _ in range(erode + 10):
         figure, known = _spread(figure, known)
     figure = np.where(known[..., None], figure, rgb)
 
@@ -412,6 +581,150 @@ def unmatte(img: Image.Image, bg, erode: int = 2) -> Image.Image:
 
     out = np.dstack([np.clip(figure, 0, 255), a * 255]).astype(np.uint8)
     return Image.fromarray(out, 'RGBA')
+
+
+def _dilate(mask, times: int = 1):
+    """Grow a boolean mask by `times` pixels, 8-connected."""
+    import numpy as np
+
+    for _ in range(times):
+        p = np.pad(mask, 1)
+        grown = np.zeros_like(mask)
+        for dy in range(3):
+            for dx in range(3):
+                grown |= p[dy:dy + mask.shape[0], dx:dx + mask.shape[1]]
+        mask = grown
+    return mask
+
+
+def outline_ink(img: Image.Image) -> tuple[int, int, int]:
+    """
+    The colour to draw the outline in: the art's own most common near-black.
+
+    Sampled rather than fixed, so the ring joins the existing palette instead of
+    adding a 65th colour to a sheet the guide caps at 64. Benjamin's resolves to
+    (3, 1, 1), already 367 pixels of his silhouette.
+    """
+    import numpy as np
+
+    a = np.asarray(img).astype(int)
+    solid = a[..., 3] > ALPHA_FLOOR
+    dark = solid & (a[..., :3].sum(-1) < 120)
+    if not dark.any():
+        return (0, 0, 0)
+    cols, counts = np.unique(a[..., :3][dark].reshape(-1, 3), axis=0, return_counts=True)
+    return tuple(int(v) for v in cols[counts.argmax()])
+
+
+def add_outline(img: Image.Image, width: int, ink: tuple[int, int, int] | None = None) -> Image.Image:
+    """
+    Draw a solid ring of `width` pixels around the silhouette.
+
+    Drawn INSIDE the existing canvas, into the guide's safe margin, which is what
+    that margin is for -- §2 requires 8 clear pixels and the ring needs one. The
+    canvas is only enlarged when the art actually reaches its edge, because
+    growing it otherwise would put every outlined sprite 2px over the 128x128 the
+    guide specifies and the audit would rightly complain.
+
+    Added OUTSIDE the existing pixels rather than recolouring the boundary.
+    Recolouring keeps the figure the same size but spends a pixel of drawing to
+    do it, and measured side by side it flattened the sword's bright edge and
+    thinned the cloth. The figure grows by `width` on each side, and since this
+    runs before anything is measured, the audit and the stature both describe the
+    art as it actually ships.
+    """
+    import numpy as np
+
+    if width < 1:
+        return img
+    ink = ink or outline_ink(img)
+
+    box = content_box(img)
+    room = min(box[0], box[1], img.width - box[2], img.height - box[3]) if box else width
+    grow = max(0, width - room)
+    if grow:
+        bigger = Image.new('RGBA', (img.width + 2 * grow, img.height + 2 * grow), (0, 0, 0, 0))
+        bigger.paste(img, (grow, grow))
+        img = bigger
+
+    a = np.asarray(img).astype(np.int16).copy()
+    solid = a[..., 3] > ALPHA_FLOOR
+    ring = _dilate(solid, width) & ~solid
+    a[ring, :3] = ink
+    a[ring, 3] = 255
+    return Image.fromarray(a.astype(np.uint8), 'RGBA')
+
+
+def key_dominance(rgb, channel: int):
+    """
+    How strongly a colour leans on ONE named channel, over the other two.
+
+    The measure a chroma key turns on. Measured along the key's channel rather
+    than each pixel's own brightest one, which would score a red pixel exactly as
+    highly as a green one and key the figure out along with the backdrop.
+
+    Against a green key: the backdrop scores 246, its anti-aliased mixtures 98 to
+    194, Benjamin's greenest real pixel 22.5, and anything red goes negative. A
+    grey backdrop scores 0 on every channel, which is what keeps this test from
+    engaging on sheets that are merely flat.
+    """
+    import numpy as np
+
+    a = np.asarray(rgb, np.int16)
+    return a[..., channel] - (a.sum(-1) - a[..., channel]) / 2
+
+
+def key_chroma(img: Image.Image, floor: float = 0.35) -> Image.Image:
+    """
+    Remove a chroma-key backdrop from art the corner flood cannot reach.
+
+    `key_flat_background` fills inward from the corners, which needs a corner
+    that IS background. An icon is a full-bleed crop, so its corners are usually
+    the character -- Maxine's is (10,5,13), solid art -- while the key colour
+    sits in the gaps the figure does not fill. Hers shipped with 97 pixels of
+    pure (0,255,0) showing through the roster card.
+
+    Keyed by hue alone, which is safe for the same reason it is safe on the
+    sheets: a green screen means the subject contains no green. Gated on a
+    near-pure key colour actually being present, so a hand-painted backdrop --
+    the dark red behind Benjamin, the blue behind Kael -- is left alone.
+    """
+    import numpy as np
+
+    a = np.asarray(img.convert('RGBA')).astype(np.int16)
+    rgb = a[..., :3]
+
+    # AREA is the test, not peak chroma. Peak alone fires on any saturated
+    # highlight: Kael's icon reaches 209 on an orange trim pixel and Aethis 255
+    # on a red one, and keying either punches a hole through the portrait -- the
+    # very thing this function's predecessor refused to risk. A backdrop covers
+    # ground. Maxine's key is 8.01% of her icon; those two highlights are 0.00%
+    # and 0.02%, so a 1% floor sits 400x clear of the false positives.
+    best = None
+    for channel in range(3):
+        d = key_dominance(rgb, channel)
+        strong = d >= 200
+        if not strong.any():
+            continue
+        cols, counts = np.unique(rgb[strong].reshape(-1, 3), axis=0, return_counts=True)
+        j = int(counts.argmax())
+        if best is None or counts[j] > best[0]:
+            best = (int(counts[j]), channel, d, float(d.max()))
+    if best is None:
+        return img
+
+    count, channel, d, peak = best
+    if count / rgb[..., 0].size < 0.01:
+        return img
+
+    keyed = d >= peak * floor
+    # A backdrop, not a costume: if "background" came out as most of the art,
+    # the test has found a green character rather than a green screen.
+    if keyed.mean() > 0.9:
+        return img
+    out = a.copy()
+    out[keyed, 3] = 0
+    return Image.fromarray(out.astype(np.uint8), 'RGBA')
 
 
 def key_flat_background(img: Image.Image, tolerance: int = 40) -> Image.Image:
@@ -454,30 +767,113 @@ def key_flat_background(img: Image.Image, tolerance: int = 40) -> Image.Image:
     # and not one within 10 of it, so a tight tolerance cannot catch shading.
     # The opening then drops specks and hairlines, so only real pockets go.
     bg = np.asarray(img.convert('RGB').getpixel((0, 0)), np.int16)
-    flat = np.abs(np.asarray(rgb, np.int16) - bg).max(-1) <= POCKET_TOLERANCE
-    keep &= ~_open(flat & keep)
+    dist = np.abs(np.asarray(img.convert('RGB'), np.int16) - bg).max(-1)
+    flat = dist <= POCKET_TOLERANCE
+    pockets = flat & keep
+
+    # Whether a lone matching pixel is trustworthy depends on how isolated the
+    # backdrop colour is, so measure that rather than assuming either way.
+    #
+    # `_open` exists to drop specks and hairlines, on the grounds that a figure
+    # pixel could coincidentally match a plausible backdrop -- a real risk for
+    # the grey backdrops the earlier sheets used. But it also discards the
+    # SINGLE-PIXEL pockets a green screen produces: Benjamin's idle enclosed
+    # about fifty per frame, in the hair, the scarf and the sword hilt, and every
+    # one survived to the strip as an opaque green dot.
+    #
+    # A true key colour makes the opening unnecessary, and says so in the data:
+    # this sheet had 105,716 pixels exactly on (3,250,5) and not one within 23 of
+    # it. With a gap that wide, an exact match cannot be figure detail, so size
+    # carries no information and filtering by it only loses pockets.
+    gap = int(dist[~flat].min()) if (~flat).any() else 0
+    isolated = gap >= POCKET_TOLERANCE * 4
+    if not isolated:
+        pockets = _open(pockets)
+
+    # Anti-aliased contamination, which neither test above can reach.
+    #
+    # An exact-colour match only finds a pocket that HAS a pure centre. A single
+    # enclosed pixel drawn with anti-aliasing has none -- it is all rim, a mix
+    # like (29,223,29) rather than the key's (3,250,5) -- so it is not flat, not
+    # reachable by the flood, and deep enough inside the silhouette that unmatte
+    # counts it as core and forces it opaque. Those are the green dots that
+    # survived in the hair, the scarf and the sword hilt.
+    #
+    # Keying by hue is what a chroma key is FOR, and it is safe precisely because
+    # the backdrop is one: shooting against green means the subject contains no
+    # green, so any pixel carrying the key's hue is contamination wherever it
+    # sits. Benjamin's sheet bears that out -- his palette peaks at 22.5 green
+    # dominance against the key's 246, and the mixed rim runs 98-194.
+    #
+    # Gated on the backdrop actually BEING a key colour. A grey backdrop scores 0
+    # dominance and cannot pass, so the older sheets keep the flood-and-unmatte
+    # path, where a soft edge is real and worth preserving.
+    channel = int(np.argmax(bg))
+    if isolated and (strength := key_dominance(bg, channel)) >= 120:
+        keep &= ~(key_dominance(np.asarray(rgb, np.int16), channel) >= strength * 0.35)
+    keep &= ~pockets
 
     out = img.copy()
     out.putalpha(Image.fromarray((keep * 255).astype(np.uint8), 'L'))
-    # The key leaves the anti-aliased ring opaque and still tinted. Undo the mix
-    # now, while the backdrop colour is known.
+
+    # Un-mixing the edge is right for a PAINTED figure and wrong for a drawn one.
+    #
+    # `unmatte` assumes the ring around the silhouette is a blend of figure and
+    # backdrop, and rebuilds it: it replaces each ring pixel's colour with one
+    # spread outward from the interior and gives it partial alpha. On a render
+    # that was genuinely anti-aliased that restores the soft edge the artist drew.
+    #
+    # On pixel art it destroys the thing the artist drew instead. A hard black
+    # outline is not a mix of anything -- it IS the art, one pixel wide, and
+    # rebuilding it substitutes the skin and cloth colours behind it and fades it
+    # out. Benjamin's 60-colour idle came out of here with 1,209 colours and a
+    # quarter of its visible pixels semi-transparent, which is exactly the
+    # "outline gone, looks blurry" it looked like on screen.
+    #
+    # Decided by counting the palette, because that is what actually separates
+    # the two cases and it is not a judgement call: the guide caps a sprite at 64
+    # colours, the live sheets use 23 and 60, and the painted sheets this function
+    # was written for use 144,000 and 182,000. Any threshold in between works.
+    palette = len(np.unique(np.asarray(img.convert('RGB'))[keep].reshape(-1, 3), axis=0))
+    if palette <= PIXEL_ART_COLOURS:
+        return out
     return unmatte(out, tuple(int(v) for v in bg))
 
 
-def split_sheet(sheet: Image.Image) -> list[Image.Image]:
+def parse_grid(clip: str) -> tuple[str, tuple[int, int] | None]:
+    """
+    Pull an optional `_<cols>x<rows>` off the end of a clip name.
+
+    An escape hatch for sheets whose grid cannot be inferred, which style guide
+    v2 introduced by giving each clip its own canvas: a 6-frame attack at 192x128
+    per cell arrives as 1152x128, and 192 is not recoverable from those two
+    numbers alone -- 128 divides both, so it would silently read as 9 frames of
+    the wrong width. Naming the sheet `..._attack_6x1.png` settles it.
+    """
+    import re
+
+    m = re.fullmatch(r'(.+)_(\d+)x(\d+)', clip)
+    return (m.group(1), (int(m.group(2)), int(m.group(3)))) if m else (clip, None)
+
+
+def split_sheet(sheet: Image.Image, grid: tuple[int, int] | None = None) -> list[Image.Image]:
     """
     Cut a sheet into frames, inferring the grid from the image's own dimensions.
 
-    Frames are square in every sheet delivered so far, so the greatest common
-    divisor of width and height IS the frame size -- 7680x640 resolves to 12x1
-    and 1448x1086 to 4x3. Read row-major.
+    Square frames are the assumption, so the greatest common divisor of width and
+    height IS the frame size -- 7680x640 resolves to 12x1 and 1448x1086 to 4x3.
+    Read row-major. `grid` overrides the inference; see `parse_grid`.
     """
     from math import gcd
 
-    f = gcd(sheet.width, sheet.height)
-    cols, rows = sheet.width // f, sheet.height // f
+    if grid:
+        cols, rows = grid
+        fw, fh = sheet.width // cols, sheet.height // rows
+    else:
+        fw = fh = gcd(sheet.width, sheet.height)
+        cols, rows = sheet.width // fw, sheet.height // fh
     return [
-        key_flat_background(sheet.crop((c * f, r * f, (c + 1) * f, (r + 1) * f)))
+        key_flat_background(sheet.crop((c * fw, r * fh, (c + 1) * fw, (r + 1) * fh)))
         for r in range(rows)
         for c in range(cols)
     ]
@@ -692,16 +1088,26 @@ def build_animations(name: str) -> dict:
     if not folder.is_dir():
         return {}
 
+    ink = outline_ink(reference(name)) if outline_width(name) else None
+
     raw = {}
     for src in sorted(folder.glob('*.png')):
         clip = src.stem[len(name) + 1:] if src.stem.startswith(f'{name}_') else src.stem
-        frames = split_sheet(Image.open(src).convert('RGBA'))
+        if clip.endswith(DEPRECATED_CLIPS):
+            continue
+        clip, grid = parse_grid(clip)
+        frames = split_sheet(Image.open(src).convert('RGBA'), grid)
+        if width := outline_width(name):
+            # Ink sampled from the STILL, not per frame: sampling each frame
+            # could pick a different near-black on a frame that happens to hide
+            # the darkest part, and the outline would shift colour mid-loop.
+            frames = [add_outline(f, width, ink) for f in frames]
         if any(content_box(f) for f in frames):
             raw[clip] = frames
     if not raw:
         return {}
 
-    rest_clip = DEFAULT_IDLE.get(name) or next(iter(sorted(c for c in raw if loops(c))), sorted(raw)[0])
+    rest_clip = default_idle(name, raw) or sorted(raw)[0]
     sheets, factor = normalise(raw, rest_clip)
     if not sheets:
         return {}
@@ -766,6 +1172,11 @@ def build_animations(name: str) -> dict:
             'src': '/sprites/%s/%s_%s.png' % (name, name, clip),
             'frames': len(cropped),
             'aspect': round(cw / ch, 6),
+            # The strip's own height in file pixels. `aspect` cannot stand in for
+            # it: the renderer needs the absolute number to round a figure to a
+            # whole multiple of the art's pixels, and it is NOT the same as the
+            # still's height -- Maxine's strip is 105px against a 106px still.
+            'pxH': ch,
             'anchorX': anchor_x,
             'loops': looping,
             'normalised': round(factor.get(clip, 1.0), 4),
@@ -812,13 +1223,13 @@ def prepare(name: str) -> tuple[int, list[str]]:
     src, out = ACTORS / name, OUT_ROOT / name
     out.mkdir(parents=True, exist_ok=True)
 
-    lq = Image.open(src / f'{name}_LQ.png').convert('RGBA')
+    ref = reference(name)
     native_path = src / f'{name}_base_native_64.png'
     native = Image.open(native_path).convert('RGBA') if native_path.exists() else None
-    notes = audit(name, lq, native)
+    notes = audit(name, ref, native)
 
-    box = content_box(lq)
-    native_h = round((box[3] - box[1]) / UPSCALE)
+    box = content_box(ref)
+    native_h = round((box[3] - box[1]) / upscale(name))
 
     # Ship _HQ, and take the SIZE from the native grid.
     #
@@ -833,8 +1244,17 @@ def prepare(name: str) -> tuple[int, list[str]]:
     # The halo that made _HQ unusable before is handled: content_box trims on
     # ALPHA_FLOOR, so the invisible fringe no longer inflates the content box and
     # shrinks the figure inside it.
+    #
+    # v2 art does not have this split and does not want it. `<name>_preview.png`
+    # looks like an _HQ but is not one: the guide requires it to be an integer
+    # nearest-neighbour enlargement of the very same pixels, so shipping it would
+    # ship a pre-scaled duplicate. The 128px canvas IS the finished asset, and
+    # the browser enlarges it with the same nearest-neighbour step for free.
     hq_path = src / f'{name}_HQ.png'
-    if hq_path.exists():
+    if spec_of(name) == 2:
+        board = ref.crop(box)
+        pixel_art = True
+    elif hq_path.exists():
         hq = Image.open(hq_path).convert('RGBA')  # already has real alpha
         board = hq.crop(content_box(hq))
         pixel_art = False
@@ -853,9 +1273,19 @@ def prepare(name: str) -> tuple[int, list[str]]:
     # is nothing to key out and keying one punches a hole through it.
     icon_src = src / f'{name}_icon.png'
     if icon_src.exists():
-        icon = Image.open(icon_src).convert('RGBA')
+        icon = key_chroma(Image.open(icon_src).convert('RGBA'))
         if icon.height > ICON_SIZE:
             icon = icon.resize((ICON_SIZE, ICON_SIZE), Image.LANCZOS)
+        elif icon.height * 2 <= ICON_SIZE:
+            # Grown by a WHOLE factor, nearest-neighbour, before it ships.
+            #
+            # The v2 icons arrive tiny -- 32x32 and 31x31 -- and the panels draw
+            # them at 40-56px, so the browser was smooth-UPSCALING pixel art by
+            # 1.75x. Enlarging by an integer here keeps every art pixel a clean
+            # block, and leaves the browser only ever scaling DOWN, which is the
+            # direction that looks right without nearest-neighbour.
+            factor = ICON_SIZE // icon.height
+            icon = icon.resize((icon.width * factor, icon.height * factor), Image.NEAREST)
         icon.save(out / f'{name}_icon.png')
 
     clips = build_animations(name)
@@ -865,11 +1295,13 @@ def prepare(name: str) -> tuple[int, list[str]]:
           f'({board_path.stat().st_size // 1024} KB)  = {native_h} native px tall')
     for clip, info in clips.items():
         note = f'  (trimmed {info["trimmed"]} partial-cycle frames)' if info['trimmed'] else ''
-        star = ' *default idle' if DEFAULT_IDLE.get(name) == clip else ''
+        star = ' *default idle' if default_idle(name, clips) == clip else ''
         print(f'  anim  {clip:<14} {info["frames"]:>2} frames  '
               f'({info["size"] // 1024:>4} KB){note}{star}')
     for n in notes:
         print(f'  ! {n}')
+    if stale := leftovers(name):
+        print(f'  ~ superseded v1 files still present, safe to delete: {", ".join(stale)}')
     return native_h, notes
 
 
@@ -903,25 +1335,33 @@ def write_metrics() -> None:
         if (folder / f'{name}_icon.png').exists():
             fields.append(f"icon: '/sprites/{name}/{name}_icon.png'")
         fields.append(f'aspect: {img.width} / {img.height}')
+        fields.append(f'pxH: {img.height}')
         fields.append(f'anchorX: {foot_anchor(img):.3f}')
 
-        # Height on the shared 64px grid, which is what makes the roster's
-        # proportions comparable. Null for pre-guide art with no native basis.
-        lq = ACTORS / name / f'{name}_LQ.png'
-        if lq.exists():
-            b = content_box(Image.open(lq).convert('RGBA'))
-            fields.append(f'nativePx: {round((b[3] - b[1]) / UPSCALE)}')
+        # How tall the figure stands on its own native grid, which is what makes
+        # the roster's proportions comparable. `nativeCanvas` has to travel with
+        # it: stature is the RATIO of the two, and reading a 128px actor's height
+        # against the 64px grid would draw them at twice everyone else's size.
+        # Null for pre-guide art with no native basis.
+        if (ACTORS / name).is_dir() and any(
+            (ACTORS / name / f'{name}{s}.png').exists() for s in ('_LQ', '')
+        ):
+            b = content_box(reference(name))
+            fields.append(f'nativePx: {round((b[3] - b[1]) / upscale(name))}')
+            fields.append(f'nativeCanvas: {spec(name)["native"]}')
         else:
             fields.append('nativePx: null')
+            fields.append(f'nativeCanvas: {NATIVE}')
         # Nearest-neighbour only suits art drawn LARGER than its file. _HQ is
         # drawn smaller, so it needs smoothing.
         fields.append(f'pixelArt: {"false" if (ACTORS / name / f"{name}_HQ.png").exists() else "true"}')
 
-        clip = catalogue.get(name, {}).get(DEFAULT_IDLE.get(name, ''))
+        packed = catalogue.get(name, {})
+        clip = packed.get(default_idle(name, packed))
         if clip:
             fields.append(
                 f"idle: {{ src: '{clip['src']}', frames: {clip['frames']}, "
-                f"aspect: {clip['aspect']}, anchorX: {clip['anchorX']}, "
+                f"aspect: {clip['aspect']}, pxH: {clip['pxH']}, anchorX: {clip['anchorX']}, "
                 f"restFill: {clip['restFill']}, footPad: {clip['footPad']} }}"
             )
         entries.append((name, fields))
@@ -931,7 +1371,7 @@ def write_metrics() -> None:
     # Only the fields the lab needs; `trimmed`/`size` are build diagnostics.
     lab = {
         name: {
-            clip: {k: v for k, v in info.items() if k in ('src', 'frames', 'aspect', 'anchorX', 'loops', 'restFill', 'footPad', 'normalised', 'settlesInto')}
+            clip: {k: v for k, v in info.items() if k in ('src', 'frames', 'aspect', 'pxH', 'anchorX', 'loops', 'restFill', 'footPad', 'normalised', 'settlesInto')}
             for clip, info in clips.items()
         }
         for name, clips in sorted(catalogue.items())
@@ -945,24 +1385,28 @@ import type {{ SpriteSheet }} from './types.ts';
 
 export type SpriteId = {ids};
 
-export interface SpriteMetrics extends Omit<SpriteSheet, 'scale'> {{
+export interface SpriteMetrics extends Omit<SpriteSheet, 'scale' | 'nativePx'> {{
   /**
-   * Figure height on the style guide's 64px native grid. Every sheet is built on
-   * that grid, so these are directly comparable and ARE the roster's relative
-   * statures -- content.ts turns them into tiles with one global factor rather
-   * than a hand-tuned table. Null for pre-guide art with no native basis.
+   * Figure height on the native grid it was drawn on, and the size of that grid.
+   *
+   * Their RATIO is the character's stature, and content.ts turns it into tiles
+   * with one global factor rather than a hand-tuned table. The canvas travels
+   * alongside because the guide changed it from 64 to 128: measured against a
+   * fixed 64, the newer art would render at twice everyone else's height.
    *
    * Deliberately independent of which file supplies the PIXELS: size comes from
-   * the shared grid, quality from the best available render.
+   * the native grid, quality from the best available render. `nativePx` is null
+   * for pre-guide art with no native basis.
    */
   nativePx: number | null;
+  nativeCanvas: number;
   /** True when the shipped sheet is native-grid art needing nearest-neighbour. */
   pixelArt: boolean;
   /**
    * Packed idle strip, when the character has one. Every frame shares one crop
    * box so only the intended parts move, and the renderer steps through it.
    */
-  idle?: {{ src: string; frames: number; aspect: number; anchorX: number; restFill: number; footPad: number }};
+  idle?: {{ src: string; frames: number; aspect: number; pxH: number; anchorX: number; restFill: number; footPad: number }};
 }}
 
 export const SPRITE_METRICS: Record<SpriteId, SpriteMetrics> = {{
@@ -976,6 +1420,8 @@ export interface AnimationClip {{
   src: string;
   frames: number;
   aspect: number;
+  /** The strip's own height in file pixels, for rounding to whole art pixels. */
+  pxH: number;
   anchorX: number;
   /**
    * How much of the box height the RESTING figure occupies (its MEDIAN frame,
@@ -1019,10 +1465,13 @@ export interface AnimationClip {{
 
 
 if __name__ == '__main__':
+    import sys
+
+    parse_args(sys.argv[1:])
     heights = {}
     complete = True
     for name in characters():
-        if ONLY and name != ONLY:
+        if ONLY and name not in ONLY:
             complete = False
             continue
         if name in SKIP or name in LEGACY:
@@ -1042,19 +1491,31 @@ if __name__ == '__main__':
         heights[name] = prepare(name)[0]
 
     if heights:
-        print('\nnative heights (the cast\'s relative statures, straight from the art):')
-        for n, h in sorted(heights.items(), key=lambda kv: -kv[1]):
-            print(f'  {n:10} {h:>3} native px  {"#" * h}')
+        # Charted as a SHARE of each actor's own canvas, because that is what
+        # the renderer uses. Charting the raw native heights would put a 128px
+        # actor at twice the bar of an equally tall 64px one.
+        print('\nrelative statures, straight from the art:')
+        share = {n: h / SPECS[spec_of(n)]['native'] for n, h in heights.items()}
+        for n, s in sorted(share.items(), key=lambda kv: -kv[1]):
+            print(f'  {n:10} {heights[n]:>3}/{SPECS[spec_of(n)]["native"]}  {"#" * round(s * 60)}')
 
     for path in publish_scenery():
         print(f'scenery {path}')
 
     # Only safe once every actor has been through this run -- otherwise the keep
     # set is missing whatever a skipped actor would have contributed.
+    keep = {Path(p) for p in expected_outputs()}
     if complete:
-        keep = {Path(p) for p in expected_outputs()}
         for gone in prune(OUT_ROOT, keep) + prune(OUT_SCENERY, keep):
             print(f'pruned  {gone}')
+    elif ONLY:
+        # A deliberately scoped run can still tidy up after ITSELF. These actors
+        # just rewrote their manifests, so their share of the keep set is exact
+        # -- which means renaming a clip does not leave the old strip behind in
+        # public/ until the next whole-roster run.
+        for name in sorted(ONLY):
+            for gone in prune(OUT_ROOT / name, keep):
+                print(f'pruned  {gone}')
     else:
         print('\nprune skipped -- not every actor was processed this run.')
 

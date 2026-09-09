@@ -142,6 +142,19 @@ export interface SpriteSheet {
    */
   pixelated?: boolean;
   /**
+   * The shipped still's own height, in file pixels.
+   *
+   * Here so the renderer can round a figure to a WHOLE multiple of the art's
+   * pixels. Nearest-neighbour only looks right at integer scales: measured side
+   * by side, Benjamin at 1x and 2x is razor sharp, while the 1.208x the stage
+   * happened to ask for drew some outline segments one pixel wide and others
+   * two -- which reads as blur even though nothing was ever interpolated.
+   *
+   * A real file dimension, NOT the design-canvas measurement that sets stature:
+   * rounding has to land on the pixels that actually exist in the PNG.
+   */
+  pxH?: number;
+  /**
    * A packed idle strip: `frames` frames side by side, every one cropped to the
    * same box so only the intended parts move, and looped -- the pack step trims
    * a sheet to whole cycles so it never snaps from the last frame to the first.
@@ -156,6 +169,9 @@ export interface SpriteSheet {
     src: string;
     frames: number;
     aspect: number;
+    /** The strip's own height in file pixels. See `pxH` above -- and note it is
+     * not the still's: Maxine's strip is 105px against a 106px still. */
+    pxH: number;
     anchorX: number;
     restFill: number;
     footPad: number;

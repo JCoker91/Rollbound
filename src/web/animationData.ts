@@ -59,6 +59,18 @@ export interface ClipPlacement {
 export interface ClipSettings {
   placement?: ClipPlacement;
   /**
+   * Milliseconds per plain frame, which sets the clip's overall pace.
+   *
+   * Per clip rather than global: a bounce idle and a celebration are not the
+   * same tempo, and the sheets they come from are not drawn at a common frame
+   * rate either. Omitted means `DEFAULT_STEP_MS`.
+   *
+   * `frames[].hold` multiplies this for one frame; this is the base it
+   * multiplies. Both are needed -- one sets the clip's speed, the other its
+   * rhythm.
+   */
+  stepMs?: number;
+  /**
    * Per-frame tuning, indexed by the frame's position in the SOURCE strip --
    * not by its position in playback. Keeping it source-indexed is what lets a
    * hold or a nudge stay attached to the drawing it was authored for when the
@@ -93,9 +105,20 @@ const key = (who: string, clip: string): string => `${who}/${clip}`;
 /** `who` is the folder name, which is also the character id. */
 const ownerOf = (path: string): string => path.split('/').slice(-2)[0];
 
+/**
+ * Pace for a clip with nothing authored.
+ *
+ * Lives here, beside the type, rather than in the battle screen: the lab and the
+ * battle have to agree on it or a clip plays at one speed while being tuned and
+ * another in play, which is exactly what made the lab's speed slider look
+ * broken.
+ */
+export const DEFAULT_STEP_MS = 105;
+
 const tuning: Record<string, ClipTuning> = {};
 const placement: Record<string, ClipPlacement> = {};
 const order: Record<string, number[]> = {};
+const stepMs: Record<string, number> = {};
 
 for (const [path, data] of Object.entries(files)) {
   const who = ownerOf(path);
@@ -105,12 +128,19 @@ for (const [path, data] of Object.entries(files)) {
       placement[key(who, clip)] = settings.placement;
     }
     if (settings?.order?.length) order[key(who, clip)] = settings.order;
+    if (settings?.stepMs) stepMs[key(who, clip)] = settings.stepMs;
   }
 }
 
 export const ANIMATION_TUNING: Record<string, ClipTuning> = tuning;
 export const CLIP_PLACEMENT: Record<string, ClipPlacement> = placement;
 export const CLIP_ORDER: Record<string, number[]> = order;
+export const CLIP_STEP_MS: Record<string, number> = stepMs;
+
+/** Authored pace for one clip, or the default. */
+export function stepMsFor(who: string, clip: string): number {
+  return CLIP_STEP_MS[key(who, clip)] ?? DEFAULT_STEP_MS;
+}
 
 /** Everything authored for one actor, for the lab's save round-trip. */
 export function actorAnimData(who: string): ActorAnimData {

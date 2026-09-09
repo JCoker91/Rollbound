@@ -4,100 +4,64 @@ import type { SpriteSheet } from './types.ts';
 
 export type SpriteId = 'aethis' | 'benjamin' | 'kael' | 'maxine' | 'rebar';
 
-export interface SpriteMetrics extends Omit<SpriteSheet, 'scale'> {
+export interface SpriteMetrics extends Omit<SpriteSheet, 'scale' | 'nativePx'> {
   /**
-   * Figure height on the style guide's 64px native grid. Every sheet is built on
-   * that grid, so these are directly comparable and ARE the roster's relative
-   * statures -- content.ts turns them into tiles with one global factor rather
-   * than a hand-tuned table. Null for pre-guide art with no native basis.
+   * Figure height on the native grid it was drawn on, and the size of that grid.
+   *
+   * Their RATIO is the character's stature, and content.ts turns it into tiles
+   * with one global factor rather than a hand-tuned table. The canvas travels
+   * alongside because the guide changed it from 64 to 128: measured against a
+   * fixed 64, the newer art would render at twice everyone else's height.
    *
    * Deliberately independent of which file supplies the PIXELS: size comes from
-   * the shared grid, quality from the best available render.
+   * the native grid, quality from the best available render. `nativePx` is null
+   * for pre-guide art with no native basis.
    */
   nativePx: number | null;
+  nativeCanvas: number;
   /** True when the shipped sheet is native-grid art needing nearest-neighbour. */
   pixelArt: boolean;
   /**
    * Packed idle strip, when the character has one. Every frame shares one crop
    * box so only the intended parts move, and the renderer steps through it.
    */
-  idle?: { src: string; frames: number; aspect: number; anchorX: number; restFill: number; footPad: number };
+  idle?: { src: string; frames: number; aspect: number; pxH: number; anchorX: number; restFill: number; footPad: number };
 }
 
 export const SPRITE_METRICS: Record<SpriteId, SpriteMetrics> = {
-  aethis: { src: '/sprites/aethis/aethis.png', icon: '/sprites/aethis/aethis_icon.png', aspect: 236 / 320, anchorX: 0.409, nativePx: 43, pixelArt: false },
-  benjamin: { src: '/sprites/benjamin/benjamin.png', icon: '/sprites/benjamin/benjamin_icon.png', aspect: 325 / 320, anchorX: 0.543, nativePx: 42, pixelArt: false, idle: { src: '/sprites/benjamin/benjamin_idle.png', frames: 10, aspect: 1.241071, anchorX: 0.619, restFill: 0.857143, footPad: 0.0 } },
-  kael: { src: '/sprites/kael/kael.png', icon: '/sprites/kael/kael_icon.png', aspect: 446 / 320, anchorX: 0.430, nativePx: 42, pixelArt: false },
-  maxine: { src: '/sprites/maxine/maxine.png', icon: '/sprites/maxine/maxine_icon.png', aspect: 248 / 320, anchorX: 0.609, nativePx: 50, pixelArt: false, idle: { src: '/sprites/maxine/maxine_idle.png', frames: 10, aspect: 1.0, anchorX: 0.581, restFill: 0.935268, footPad: 0.0 } },
-  rebar: { src: '/sprites/rebar/rebar.png', icon: '/sprites/rebar/rebar_icon.png', aspect: 403 / 320, anchorX: 0.500, nativePx: 37, pixelArt: false },
+  aethis: { src: '/sprites/aethis/aethis.png', icon: '/sprites/aethis/aethis_icon.png', aspect: 236 / 320, pxH: 320, anchorX: 0.409, nativePx: 43, nativeCanvas: 64, pixelArt: false },
+  benjamin: { src: '/sprites/benjamin/benjamin.png', icon: '/sprites/benjamin/benjamin_icon.png', aspect: 103 / 85, pxH: 85, anchorX: 0.447, nativePx: 85, nativeCanvas: 128, pixelArt: true, idle: { src: '/sprites/benjamin/benjamin_idle.png', frames: 8, aspect: 1.352941, pxH: 85, anchorX: 0.496, restFill: 0.988235, footPad: 0.0 } },
+  kael: { src: '/sprites/kael/kael.png', icon: '/sprites/kael/kael_icon.png', aspect: 446 / 320, pxH: 320, anchorX: 0.430, nativePx: 42, nativeCanvas: 64, pixelArt: false },
+  maxine: { src: '/sprites/maxine/maxine.png', icon: '/sprites/maxine/maxine_icon.png', aspect: 83 / 108, pxH: 108, anchorX: 0.602, nativePx: 108, nativeCanvas: 128, pixelArt: true, idle: { src: '/sprites/maxine/maxine_idle.png', frames: 8, aspect: 0.831776, pxH: 107, anchorX: 0.545, restFill: 0.953271, footPad: 0.0 } },
+  rebar: { src: '/sprites/rebar/rebar.png', icon: '/sprites/rebar/rebar_icon.png', aspect: 403 / 320, pxH: 320, anchorX: 0.500, nativePx: 37, nativeCanvas: 64, pixelArt: false },
 };
 
 /** Every packed clip, for the dev animation lab. Battle uses `idle` above. */
 export const ANIMATION_CLIPS: Record<string, Record<string, AnimationClip>> = {
   "benjamin": {
-    "attack": {
-      "anchorX": 0.619,
-      "aspect": 1.241071,
-      "footPad": 0.0,
-      "frames": 16,
-      "loops": false,
-      "normalised": 0.9866,
-      "restFill": 0.857143,
-      "settlesInto": "idle",
-      "src": "/sprites/benjamin/benjamin_attack.png"
-    },
     "idle": {
-      "anchorX": 0.619,
-      "aspect": 1.241071,
+      "anchorX": 0.496,
+      "aspect": 1.352941,
       "footPad": 0.0,
-      "frames": 10,
+      "frames": 8,
       "loops": true,
       "normalised": 1.0,
-      "restFill": 0.857143,
+      "pxH": 85,
+      "restFill": 0.988235,
       "src": "/sprites/benjamin/benjamin_idle.png"
     }
   },
   "maxine": {
-    "celebration": {
-      "anchorX": 0.581,
-      "aspect": 1.0,
-      "footPad": 0.0,
-      "frames": 12,
-      "loops": false,
-      "normalised": 1.7238,
-      "restFill": 0.935268,
-      "settlesInto": "celebration_ending",
-      "src": "/sprites/maxine/maxine_celebration.png"
-    },
-    "celebration_ending": {
-      "anchorX": 0.581,
-      "aspect": 1.0,
-      "footPad": 0.0,
-      "frames": 7,
-      "loops": true,
-      "normalised": 2.3623,
-      "restFill": 0.935268,
-      "src": "/sprites/maxine/maxine_celebration_ending.png"
-    },
     "idle": {
-      "anchorX": 0.581,
-      "aspect": 1.0,
+      "anchorX": 0.545,
+      "aspect": 0.831776,
       "footPad": 0.0,
-      "frames": 10,
+      "frames": 8,
       "loops": true,
       "normalised": 1.0,
-      "restFill": 0.935268,
+      "pxH": 107,
+      "restFill": 0.953271,
       "src": "/sprites/maxine/maxine_idle.png"
-    },
-    "idle_2": {
-      "anchorX": 0.581,
-      "aspect": 1.0,
-      "footPad": 0.0,
-      "frames": 12,
-      "loops": true,
-      "normalised": 1.6119,
-      "restFill": 0.935268,
-      "src": "/sprites/maxine/maxine_idle_2.png"
     }
   }
 };
@@ -106,6 +70,8 @@ export interface AnimationClip {
   src: string;
   frames: number;
   aspect: number;
+  /** The strip's own height in file pixels, for rounding to whole art pixels. */
+  pxH: number;
   anchorX: number;
   /**
    * How much of the box height the RESTING figure occupies (its MEDIAN frame,

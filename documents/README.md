@@ -10,6 +10,9 @@ arbitrary but were made to fix specific, observed problems.
 
 Companion documents:
 
+- **`BATTLE_DESIGN.md` — the battle system the game is being rebuilt towards. READ THIS FIRST if
+  you are touching battle code.** What is described in §5 below is the *current* implementation and
+  is being replaced. The two do not match.
 - `STAGEBOUND_STORY_REFERENCE.md` — premise, tone, terminology, and the long-term mystery.
 - `SPRITE_STYLE_GUIDE.md` — the art standard every sprite is generated against. Non-negotiable
   for anything that ships.
@@ -42,8 +45,9 @@ Code keeps plain RPG names — `ROSTER`, `CharacterDef`, `battle` — because, p
 ### Platform decision
 
 Web only, no app stores. Vite + React + TypeScript, no game engine. The battle engine is pure
-TypeScript with **zero rendering dependencies**, which is what lets the same code resolve idle
-stages headlessly and run balance simulations over thousands of battles.
+TypeScript with **zero rendering dependencies**. That still earns its keep — it keeps game rules out
+of components and lets idle stages resolve headlessly — but note that the balance simulator it was
+originally built for has been **abandoned** (§2).
 
 ---
 
@@ -63,12 +67,31 @@ npm run dev          # usually http://localhost:5173
 | `npm run build` | Production build into `dist/` |
 | `npm run preview` | Serve the built output |
 | `npm run typecheck` | `tsc --noEmit` |
-| `npm run play [seed]` | Watch one full AI-vs-AI battle in the terminal |
-| `npm run sim [n]` | Balance report over N simulated battles |
-| `python scripts/pack_sprites.py` | Publish `art/` → `public/`; regenerate sprite metrics |
+| ~~`npm run play [seed]`~~ | **Abandoned** — AI-vs-AI terminal battle viewer |
+| ~~`npm run sim [n]`~~ | **Abandoned** — balance report over N simulated battles |
+| `python scripts/pack_sprites.py [--only NAME]` | Publish `art/` → `public/`; regenerate sprite metrics. **Runs automatically** — see [`art/` in, `public/` out](#art-in-public-out) |
 | `python scripts/make_favicon.py` | Regenerate the site icon (SVG + ICO + apple-touch) |
 
-`npm run sim` is the most useful tool in the repo. It has caught every balance and AI bug so far.
+### The simulator is abandoned
+
+`npm run sim` and `npm run play` still run, and **should not be used to make decisions.** The game
+is not being designed around them.
+
+They were built before the playable game existed — the wrong order — and the cost showed up twice.
+First they measured an AI playing a game no human plays, so their verdicts were about the AI's
+priorities rather than the design's. Second, and worse, the battle system they measure is being
+replaced wholesale (`BATTLE_DESIGN.md`), so every balance figure they have ever produced describes
+mechanics that are going away.
+
+The AI would also need substantial rework to play the new system at all: it scores single actions in
+isolation, with no notion of resolution order, chains, or spending a debuff against a revealed
+intent. **A weak auto-battler in a composition-driven game is worse than none**, because it ignores
+the mechanic the whole game is about.
+
+The files are left in place (`src/cli/`, `scoreAction` in `combat.ts`) rather than deleted, because
+an idle game does eventually want auto-resolve for farming and the headless architecture is the
+right home for it. Treat them as a starting point for that, not as a measuring instrument. Safe to
+delete outright if they get in the way.
 
 ### Dev tools
 
@@ -125,11 +148,12 @@ src/
     Figure.tsx     Character renderer for menus
     clipAnimation.ts  Sprite-strip keyframe generation and clip geometry
     animationData.ts  Loads the authored art/actors/*/*.anim.json settings
+    crisp.ts       Rounds figures to whole multiples of the art's own pixels
     screens/       Home, Characters, Summon, Inventory, Events, AnimationLab
     styles.css     Battle screen styles
     hub.css        Hub styles
     stars.css      Star tree + levelling styles
-  cli/
+  cli/           ABANDONED — see §2
     play.ts        Terminal battle viewer
     sim.ts         Balance simulator
 scripts/
@@ -165,8 +189,33 @@ That split is enforced, not just documented:
   wrote the same folder, and a run destroyed a freshly uploaded sprite by regenerating it from stale
   sources. Comparing mtimes cannot catch that — after any normal run the output is always newer.
 - A complete run **prunes** `public/sprites/` and `public/background/` of anything it did not
-  produce. Pruning is skipped when any actor was skipped, so a partial run cannot delete a
-  skipped actor's output.
+  produce. Pruning is skipped when an actor was skipped unexpectedly, so a partial run cannot
+  delete a skipped actor's output. A run deliberately scoped with `--only` still prunes *those*
+  actors' own folders, since it just rewrote their manifests — so renaming a clip does not leave
+  the old strip behind until the next whole-roster run.
+
+**You do not run the pipeline by hand.** The `stagebound:art-pipeline` plugin in `vite.config.ts`
+runs it for you, on two triggers:
+
+| When | What runs |
+| --- | --- |
+| `npm run dev`, then any save under `art/` | Re-packs **only that actor**, then full-page reloads |
+| `npm run dev` startup | One catch-up pack, after the server is listening |
+| `npm run build` | One full pack before the bundle is written |
+
+So dropping a new sprite into `art/actors/<name>/` is the whole workflow — it appears in the running
+game a second later, and the terminal prints what was written plus any audit notes. Details that
+matter if it ever misbehaves:
+
+- The watcher **ignores `*.pack.json` and `*.anim.json`**, which the pipeline and the animation lab
+  write back *into* `art/`. Without that the pipeline's own output would retrigger it forever.
+- Runs are **debounced 300ms and serialised**. Dropping a sprite, an icon and a sheet together is
+  one pack, not three, and two packs can never race over the same manifest.
+- The child process is spawned **asynchronously**. A synchronous one would block the dev server's
+  event loop for the seconds a pack takes.
+- Python is found as `python` on Windows and `python3` elsewhere; override with
+  **`STAGEBOUND_PYTHON`**. `STAGEBOUND_SKIP_PACK=1` skips the build-time pack.
+- It needs **Pillow and numpy** (`python -m pip install pillow numpy`).
 
 The favicon files are the one hand-managed exception, and they are generated too — by
 `make_favicon.py`.
@@ -177,9 +226,10 @@ The favicon files are the one hand-managed exception, and they are generated too
 
 These three separations are load-bearing. Breaking them will hurt.
 
-**1. The engine never imports React.** Everything in `src/engine/` is pure. This is why `npm run sim`
-can run thousands of battles in seconds, and why a server can later resolve idle stage clears with
-the exact same code.
+**1. The engine never imports React.** Everything in `src/engine/` is pure. This is what keeps game
+rules out of components, lets a server later resolve idle stage clears with the exact same code, and
+leaves the door open for auto-resolve. It is also what made the abandoned simulator possible — but
+the principle earns its keep without it, so keep it.
 
 **2. Progression is folded into character sheets once, before a battle starts.**
 
@@ -202,6 +252,13 @@ replaced Kael sheet once kept the old aspect ratio in `content.ts` and rendered 
 ---
 
 ## 5. Systems
+
+> **The battle systems below (§5.1–§5.4) describe the CURRENT implementation, which is being
+> replaced.** See `BATTLE_DESIGN.md` for the target: damage types, symbols and chains, a planned
+> resolution queue, revealed enemy intent, and status effects. The dice economy in §5.1 survives
+> into the new design and is worth reading; the rest is context for what is being torn out.
+>
+> §5.5–§5.7 (stars, levels, idle, summoning) are unaffected.
 
 ### 5.1 The dice economy
 
@@ -377,14 +434,119 @@ different arrangement supplies its own.
 Authored against **`SPRITE_STYLE_GUIDE.md`**, which is the source of truth. Read §10 of it before
 generating any animation — that section exists because of the bugs listed below.
 
-**Stills.** Four files per Performer in `art/actors/<name>/`. `_LQ` is the *measurement* reference
-(stature, ground line, audit); `_HQ` is what actually **ships**. Size and pixels are separate
-questions: how big a character is comes from the shared 64px grid, which pixels get drawn comes from
-the best available render.
+**Stills.** Two spec revisions are in the roster at once while the 128px migration runs, and the
+pipeline tells them apart **by which files exist** rather than by a list of names — so migrating an
+actor is only ever a matter of dropping the new files in.
+
+| | v1 (Kael, Rebar, Maxine, Aethis) | v2 (Benjamin) |
+| --- | --- | --- |
+| Native grid | 64px | **128px** |
+| Measured from | `<name>_LQ.png` (256px, ÷4) | `<name>.png` — it *is* the native canvas |
+| Ships | `<name>_HQ.png`, smoothed | `<name>.png`, nearest-neighbour |
+| Detected by | `<name>_LQ.png` present | `<name>_LQ.png` absent |
+
+`<name>_preview.png` is a review aid, **not** shipped: the guide requires it to be an integer
+nearest-neighbour enlargement of the same pixels, so shipping it would ship a pre-scaled duplicate.
+
+Size and pixels stay separate questions: how big a character is comes from their native grid, which
+pixels get drawn comes from the best available render. Stature is the **ratio** `nativePx /
+nativeCanvas`, and both travel together into `sprites.generated.ts` — measuring a 128px actor
+against a hard-coded 64 would draw them at twice everyone else's height.
 
 **Animations.** Sheets go in `art/actors/<name>/animations/<name>_<clip>.png`. The frame grid is
 inferred from the image's own dimensions — gcd of width and height, read row-major — so `7680×640`
-is 12×1 and `1448×1086` is 4×3.
+is 12×1 and `1448×1086` is 4×3. That assumes **square** cells, which v2 broke by giving each clip
+its own canvas: a 6-frame attack at 192×128 arrives as `1152×128`, and 192 is not recoverable from
+those two numbers. Name such a sheet `<name>_attack_6x1.png` and the grid is read off the filename.
+
+Sheets named `*_old`, `*_previous` or `*_deprecated` are **skipped**, so a superseded sheet can be
+kept beside the live one without being packed and shipped as a clip called `idle_old`.
+
+**Pixel art is never re-coloured or feathered.** `key_flat_background` keys the backdrop and stops
+there when the palette is small; only painted art goes through `unmatte`, which rebuilds the edge
+ring by spreading interior colours outward and giving it partial alpha. That is right for a render
+that was genuinely anti-aliased and destructive for a drawn one-pixel outline — it turned a
+60-colour sheet into 1,209 colours with a quarter of its pixels semi-transparent, which on screen
+read as "the outline is gone and it looks blurry". The two cases are told apart by counting colours,
+which is not a close call: the guide caps a sprite at 64, the live sheets use 23 and 60, and the
+painted sheets run to 144,000.
+
+#### Pre-flight for a new or rebuilt actor
+
+Everything here has already cost a debugging session at least once.
+
+1. **Body height 82–92 native px**, feet baseline y=112, margin ≥8px on a 128×128 canvas. Benjamin
+   is the reference — he audits with zero notes.
+2. **Green screen `RGB(0,255,0)`**, except **Aethis, who must be on magenta**. He wears green and
+   gold; the hue key that produces the outline and cleans the icon cannot tell a green costume from
+   a green screen. The pipeline reads the key colour from the corner and does not care which it is.
+3. **Do not draw the outer outline yourself.** The pipeline adds a 1px ring outside the silhouette.
+   Draw one too and you get 2px, which reads heavy. Internal outlines (chin over neck, cape folds)
+   *are* yours to draw — they cannot be derived, see below.
+4. **Delete the v1 files** (`_LQ`, `_HQ`, `_base_native_64`) once `<name>.png` exists. Harmless if
+   left — `<name>.png` wins and the run reports them — but they are dead weight.
+5. **One clip, named `<name>_idle.png`**, a single row of square 128×128 cells. Non-square cells
+   need the count in the filename (`<name>_attack_6x1.png`); square ones are inferred. The battle
+   picks up a clip named `idle` automatically.
+6. **Icons ≥64px**, and do not leave key colour in them. The pipeline keys and integer-upscales
+   them, but a clean crop is better than a rescued one.
+7. **Old sheets**: suffix `_old` or delete. Suffixed ones are skipped, never packed.
+
+Drop the files in with `npm run dev` running; each actor packs and the page reloads on save, with
+measurements and audit notes printed to the terminal.
+
+> **Why internal outlines are yours and not the pipeline's.** The outer ring is derivable because
+> the alpha mask *is* the silhouette — ground truth. Internal outlines need the pipeline to tell
+> "two overlapping forms" from "shading within one form", and those are the same signal in the
+> pixels: a hair highlight beside a hair shadow looks exactly like a chin beside a neck. Every
+> variant tried either shredded the face (1,271–1,671 pixels overwritten) or, once gated by region
+> size to protect the face, still streaked the hair. At an 85px figure the face is ~10px tall, so
+> one wrong pixel is a quarter of a feature — and unlike the silhouette ring, internal ink must
+> *overwrite* art rather than grow into empty space. Large forms only (cape over tunic) are
+> derivable; the fine features you actually want are not. **More resolution is the real fix** — on a
+> 256 canvas with a ~170px figure there is room, and with integer snapping that renders at exactly
+> 1×, about 70% larger on screen than today.
+
+**Icons are keyed by hue and grown by whole factors.** They are full-bleed portrait crops, so the
+corner flood cannot key them — the corner is usually the character. `key_chroma` keys by hue
+instead, gated on **area**: peak chroma alone fires on any saturated highlight (Kael's icon reaches
+209 on an orange trim pixel, Aethis 255 on a red one) and keying either punches a hole through the
+portrait. A backdrop covers ground — Maxine's key was 8.01% of her icon against those two at 0.02%
+and 0.00%, so the 1% floor sits 400× clear. Small icons are then enlarged by an integer factor with
+nearest-neighbour, because the panels draw them at 40–56px and a 32px icon was being
+smooth-upscaled 1.75×.
+
+**A bold outline is generated, not drawn.** The generators anti-alias, and the outline arrives
+*broken* rather than missing: 84% of Benjamin's silhouette boundary was already very dark and the
+other 16% was where the softening ate it. A boundary that is bold in most places and gone in the
+rest is what reads as blur, and no amount of keying puts back a pixel the generator never committed
+to. `OUTLINE` in `pack_sprites.py` maps actor → ring width in native pixels; `add_outline` dilates
+the alpha mask and fills the new ring with `outline_ink` — the art's own most common near-black, so
+the ring joins the palette instead of adding a 65th colour to a sheet the guide caps at 64.
+
+Preferred over hand-editing frames for reasons beyond effort: it derives from the alpha mask, so it
+is *identical* on all 8 frames and cannot jitter between them, and it survives regenerating the art.
+It is drawn into the guide's 8px safe margin rather than by growing the canvas, which would put
+every outlined sprite 2px over the specified 128×128. The margin check discounts what it spent —
+reporting the pipeline's own deliberate pixel as art drift is how a lint teaches you to ignore it.
+
+> **Only the OUTER silhouette.** An internal separation — an arm against a torso, the gap under a
+> scarf — is not on the alpha boundary, so it cannot be derived and still has to be drawn.
+
+**Pixel art is drawn at whole-number scale.** Nearest-neighbour is only faithful at integer factors;
+at the 1.208× the stage's proportions happened to ask for, some source pixels are one screen pixel
+wide and their neighbours two, so a one-pixel outline comes out thick in places and thin in others.
+`src/web/crisp.ts` rounds a figure to the nearest whole multiple of the art's own height (never
+below 1×), using the real file dimension `pxH` rather than the design-canvas measurement.
+
+Two functions, because the two screens size in different units — and getting that wrong has already
+cost a bug. `Figure` sizes in CSS pixels, so `crisp()` is plain arithmetic. The battle sizes in
+**fractions of the stage** (`SLOT_H = 0.155`, rendered as `cqh`), where the pixel size is not known
+until layout, so `crispCss()` defers to CSS `round()`. Applying the pixel version to a stage
+fraction rounded `0.13` up to `83` and drew the cast 638× too large.
+
+Smoothed art is left alone: it is drawn 0.28–0.34× of a 320px sheet, so rounding it to whole sheet
+heights would snap every character to one enormous step.
 
 Four things the pipeline does, each earned:
 
@@ -446,6 +608,7 @@ rewrite a file that also describes Benjamin.
 {
   "celebration": {
     "placement": { "scale": 1.04, "dy": 2 },
+    "stepMs": 120,
     "frames": [{}, { "hold": 2.5 }],
     "order": [1, 0, 2, 4, 5]
   }
@@ -455,11 +618,17 @@ rewrite a file that also describes Benjamin.
 | Key | Scope | Meaning |
 | --- | --- | --- |
 | `placement` | Whole clip | `scale`, `dx`, `dy` against the foot anchor |
+| `stepMs` | Whole clip | Ms per plain frame; omit for `DEFAULT_STEP_MS` (105) |
 | `frames` | Per frame | `hold` weight, `dx`, `dy` |
 | `order` | Whole clip | Playback sequence; omit for natural order |
 
 Offsets are percentages, so corrections hold at any render size. `hold` is a **weight**, not a
-duration, so the speed control still means "how long a plain frame lasts."
+duration, so `stepMs` still means "how long a plain frame lasts."
+
+`stepMs` is per clip because a bounce idle and a celebration are not the same tempo, and the sheets
+they come from are not drawn at a common frame rate either. It was the one lab control that had no
+authored home: the slider lived in React state, `save()` never sent it, and the battle used a
+hard-coded constant — so it moved the lab preview and nothing else.
 
 > **`frames` is indexed by SOURCE frame, not by playback position.** That is what lets a hold or a
 > nudge stay attached to the drawing it was authored for when `order` is rearranged underneath it.
@@ -486,24 +655,35 @@ idle scene).
 
 ## 8. Current state
 
-**Balance — 200 simulated battles, *Curtain Call*:**
+**Battle balance is not tracked, and deliberately so.** The simulator that used to report it is
+abandoned (§2) and the system it measured is being replaced (`BATTLE_DESIGN.md`). For the record,
+its last reading was a **100% player win rate with 4.94 of 5 survivors over 300 battles** — the
+party out-damaged enemies roughly 2:1 per action, had 14% more HP, and healed on top. Do not tune
+against that. The kits and the enemies are both being rebuilt.
 
-```
-player win rate : 100.0%   (draws 0.0%)
-avg turns       : 14.5
-avg survivors   : 4.92 / 5
-avg acting/phase: 3.60 / 5
-```
-
-**Zero losses.** In-battle upgrades, stars, levels and the side-view rewrite have all landed on top
-of enemies tuned before any of them existed. **An enemy difficulty pass is the most overdue work in
-the project** — the simulator can no longer discriminate difficulty at all.
+The diagnosis is still useful as a warning, because the same trap is easy to re-create: enemy
+damage was **flat** (312 per turn, every turn), and flat damage is always healable — one Sanctuary
+healed 315 for two dice, so a single Performer spending two of five dice cancelled five enemies.
+`BATTLE_DESIGN.md` addresses this structurally, via simultaneous enemy phases that cannot be healed
+through mid-burst, rather than by raising enemy numbers into a sustain cliff.
 
 **Cast** (all five have sprites): Benjamin (3★ fire blade), Kael (2★ wind blade), Rebar (2★ light
-shield), Maxine (3★ water staff, artillery), Aethis (1★ earth staff, healer).
+shield), Maxine (3★ water staff, artillery), Aethis (1★ earth staff, healer). **All five kits are
+being redesigned** against `BATTLE_DESIGN.md` — treat the current abilities as disposable.
 
-**Animations:** Benjamin — idle, attack. Maxine — idle, idle_2, celebration + celebration_ending.
-Everyone else is a static still.
+**Art migration to style guide v2 (128px) is in progress:**
+
+| | spec | still | idle |
+| --- | --- | --- | --- |
+| Benjamin | **v2** | 85 native px, audits clean | 8 frames |
+| Maxine | **v2** | 108 native px — over the guide's range, see §9 | 8 frames |
+| Kael | v1 | 42 native px | — |
+| Rebar | v1 | 37 native px | — |
+| Aethis | v1 | 43 native px | — |
+
+The remaining three are to be rebuilt at 128px with **a single idle each**. The pipeline detects
+which spec an actor is on from their files, so migrating one is just dropping the new files in — see
+[`art/` in, `public/` out](#art-in-public-out) for the full contract and the pre-flight list.
 
 **Enemies:** Ash Husk, Bog Wisp, Crag Golem, Pale Shade, Fallen Seraph (boss, telegraphs Judgment).
 All still render as SVG role badges — **no enemy art exists yet**; `art/enemies/` is empty.
@@ -520,15 +700,19 @@ everything disabled and labelled "Not implemented").
 
 **Gameplay**
 
-- **Enemies are far too weak.** Start here.
-- **Rebar lost his identity in the rewrite.** Ironpaw Charge was a 3-tile gap-closer and that
-  *was* his design — a guardian who relocates. With fixed slots it is now a plain cheap melee hit.
-  Marked with a `TODO` in `content.ts`. He needs a new mechanical hook.
-- **Telegraphs lost their counterplay.** The Fallen Seraph's Judgment used to resolve on the tile it
-  named rather than where you moved — the whole point. With no movement, the wind-up needs a new
-  player response: a damage-reduction window, an interrupt by damaging the caster, or something else.
+> Several long-standing issues here are **resolved by design** in `BATTLE_DESIGN.md` and should not
+> be fixed in the current system — the fix would be thrown away:
+>
+> - *Enemies are far too weak* → addressed structurally by simultaneous enemy phases and enemy kits,
+>   not by raising stats.
+> - *Telegraphs have no counterplay* → revealed intent plus one-round statuses is the answer. You
+>   see the attack coming and blind the caster.
+> - *Rebar has no identity* → symbols give a guardian a home: a Performer whose symbol is common,
+>   who exists to complete other people's chains.
+
 - **Stage progression does not exist.** `profile.stage` is always 1; winning does not advance it or
-  grant rewards. The battle and idle layers are not yet connected.
+  grant rewards. The battle and idle layers are not yet connected. **Unaffected by the battle
+  redesign — safe to build now.**
 - **Party is the first five owned characters**, in roster order. No lineup management UI.
 - **The 1★ summon pool is a single character.** Aethis is the only 1★, so 70% of pulls are the same
   unit. If she is ever promoted the tier empties, and `summon()` falls back to rolling the whole
@@ -537,13 +721,19 @@ everything disabled and labelled "Not implemented").
 
 **Art**
 
-- **No enemy art.** The largest visible gap now that the Cast is done.
-- **Kael has 4 delivery px of margin** where the guide wants 16 — nothing for an animation to swing
-  into. Regenerate before animating him.
-- **Aethis and Rebar sit 3 native px above the ground line.** Harmless for a still (the pipeline
-  trims and re-anchors) but *not* once either is animated, where every frame must share a ground line.
-- **`maxine/celebration` and `maxine/idle_2` were upscaled 1.73× and 1.61×** to match the reference
-  idle. They are permanently softer than art delivered at the right cell size.
+- **No enemy art.** The largest visible gap now that the Cast is done. `art/enemies/` is empty and
+  every enemy renders as an SVG role badge.
+- **Maxine is 108 native px**, past the guide's Standard band (82–92) *and* Large (92–104). She sits
+  at 0.84 of her canvas while everyone else is 0.58–0.66, so she reads as the tallest of the cast by
+  a wide margin. Either bring her to ~86–90 with the rest or make the deviation deliberate — the
+  audit will keep reporting it until the numbers agree.
+- **Kael, Rebar and Aethis are still v1** and carry the old defects: Kael has 4 delivery px of
+  margin where the guide wants 16, and Rebar and Aethis sit 3 native px above the ground line. All
+  three are moot once they are rebuilt at 128px, which is the plan — do not fix them in place.
+- **The generators anti-alias**, which the guide forbids (§ "no anti-aliasing"). The pipeline copes:
+  it keys the backdrop, skips `unmatte` on pixel art, and redraws the silhouette outline. But a
+  clean hard-edged export would make three separate heuristics unnecessary — worth trying to get
+  right at the prompt.
 
 **Technical**
 
@@ -560,12 +750,25 @@ everything disabled and labelled "Not implemented").
 
 **Next up, roughly in order:**
 
-1. **Enemy difficulty pass** — scale enemies to a Cast that levels, stars, and upgrades.
-2. **Enemy art** — they are role badges on a painted stage; it is the most visible gap.
-3. **Stage progression** — winning advances `profile.stage`, grants rewards, raises the idle rate.
-   This is the missing link between the two halves of the game.
-4. **Rebar's replacement identity** and **telegraph counterplay** — both left dangling by the rewrite.
-5. **Party / lineup management** — choose which five perform, and in what order.
+1. **Rebuild the art at 128px** — Kael, Rebar and Aethis, each with a single idle. Benjamin and
+   Maxine are done. The pipeline is ready; see the pre-flight list in §3.
+2. **Build the new battle system** — `BATTLE_DESIGN.md`, largest first: turn loop and resolution
+   queue, damage types, statuses, symbols and chains, revealed enemy intent.
+3. **Redesign every Performer's kit** against that document. Damage types, symbols and costs
+   authored deliberately against the payability table. The current kits are disposable.
+4. **Enemy kits** — mobs currently have one 1.0-power attack each, which is why party actions were
+   worth 2:1. Enemies need 1–4 abilities with hidden activation odds.
+5. **Enemy art** — they are role badges on a painted stage; the most visible gap.
+6. **Stage progression** — winning advances `profile.stage`, grants rewards, raises the idle rate.
+   The missing link between the two halves of the game, and **independent of the battle redesign**,
+   so it can be built any time.
+7. **Party / lineup management** — choose which five perform, and in what order.
+
+**Deliberately dropped:**
+
+- **The balance simulator** (§2). Not the measuring instrument this game is designed around.
+- **Enemy difficulty tuning in the current system.** The system is being replaced; tuning it now
+  produces numbers that describe mechanics that are going away.
 
 **Planned, further out:**
 
@@ -610,8 +813,10 @@ everything disabled and labelled "Not implemented").
 
 **Verification habits that paid off**
 
-- `npm run sim` after every balance-affecting change. It found the buff-scoring bug, the AI stall,
-  the pathfinding stranding, and the boss HP sponge.
+- **Measure the pipeline, not just the art.** The audit was reporting "758 semi-transparent pixels;
+  guide requires binary alpha" as a delivery defect when the *pipeline* was creating it — `unmatte`
+  was feathering pixel art. A lint that reports your own deliberate acts is a lint people learn to
+  ignore, so discount them: the margin check now subtracts the outline width it spent.
 - **Measure before believing a guess.** A reported "Kael renders higher than Dart, probably padding"
   turned out to be a deliberate `:nth-child(even)` margin rule. The 3% still-vs-clip gap turned out
   to be `restFill` measuring the bounce apex.
@@ -664,64 +869,42 @@ Open questions:
 
 - **The dice-manipulating members are the dangerous ones.** The dice economy is the game's identity
   and it is finely measured; an Audience member who rerolls or nudges a die changes the reliability
-  curve that §5.1 is built on. Any such effect must be re-simulated, not eyeballed.
+  curve that §5.1 is built on — and under `BATTLE_DESIGN.md` it also changes how affordable chains
+  are, which is the whole composition axis. Do not eyeball one; work out what it does to the
+  payability table first.
 - Sources: story progression, boss victories, achievements, events, Theater upgrades, hidden
   objectives.
 - Are seats positional — does a front-row member matter more? Positional would give the upgrade
   system something to sell beyond raw count.
 
-### 12.3 Chains — the next battle mechanic, and the one worth getting right
+### 12.3 Chains — settled, and moved out
 
-**The idea:** abilities carry a symbol. When two Performers use abilities sharing a symbol in the
-same turn, an extra effect triggers.
+**This section has been superseded by `BATTLE_DESIGN.md` §4.** Chains are no longer a backlog idea;
+they are the centre of the battle redesign. Its open questions were answered:
 
-**Why this is the right shape for this game.** Today the roster has exactly one composition axis:
-**cost spread** (§5.1). Chains would add a second — **symbol overlap** — and the two pull in
-*opposite directions*. You want costs that do not collide so your team acts often, and symbols that
-do collide so your team chains. One roster slot, two competing pressures, and no dominant answer.
-That is the structure that makes a team-builder deep without making it complicated.
+| question then | answer now |
+| --- | --- |
+| What is a symbol? Element, or something orthogonal? | **Orthogonal**, deliberately. 8–12 in the pool, 2 per character — the density that gives 2–3 live options per team without making chains automatic. |
+| Pairs only, or does a 3-chain escalate? | Chains read **forward** from the arming symbol, so a 3-ability chain fires two triggers naturally. Whether to cap at pairs is still open, for the `allocate.ts` reason below. |
+| What does a chain do? | **An effect authored on the chaining ability**, not on the symbol — so the same symbol does different things depending on who chains it. |
+| Does order matter? | **Yes, and it is the point.** The turn is a planned resolution queue. |
 
-It also lands exactly on the stated goal: **simple to play, deep to master.** Reading it is trivial
-— the ability list shows a symbol and lights up when a chain is live, which is the same affordance
-the dice-gating already uses. Mastering it means planning two turns of dice around a chain you can
-see coming.
+The one prediction from this section that held up exactly: the two composition axes pull in
+**opposite directions**. You want costs that do not collide so your team acts often, and symbols
+that do collide so your team chains. One roster slot, two competing pressures, no dominant answer.
 
-**Design questions to settle before building:**
-
-- **What is a symbol?** Element is the obvious candidate and costs nothing new — but it is already
-  load-bearing for the damage wheel, so chains would double down on mono-element teams rather than
-  rewarding a new kind of thinking. A separate, orthogonal glyph (2–4 per character, drawn from a
-  small shared set) is more work but keeps the two axes independent.
-- **Pairs only, or does a 3-chain escalate?** Escalation is exciting and is where a hardcore player
-  lives, but it collides hard with the dice economy: three characters chaining means three cheap
-  abilities, and cheap costs are the *least* reliable (a 1-cost hits on 59.8% of rolls). A 3-chain
-  might be rare enough to feel like a genuine event — which may be exactly right.
-- **What does a chain actually do?** Bonus damage is the boring answer. More interesting: a chain
-  refunds a die, which feeds directly back into "who gets to act" — the decision the whole game is
-  built on.
-- **Does order matter?** Ordering adds depth but also adds a sequencing UI to a turn that currently
-  resolves as a set.
-- **How does it read to the Audience?** Chains are a natural Hype source, which would connect §12.3
-  to §12.2 rather than leaving them as separate bolt-ons.
-
-**Implementation warning.** `bestPlan` in `allocate.ts` currently optimises dice→ability assignment
-where each assignment's value is independent. **Chains break that independence** — the worth of
-giving Kael a 4 depends on whether Benjamin also acts. That turns a clean solve into a combinatorial
-one. Two ways out, both worth considering before committing to escalating chains:
-
-1. Keep the solver's job as "enumerate affordable sets" and score chains one level up, where the
-   candidate count is small.
-2. Restrict chains to **pairs**, which keeps the interaction term quadratic and tractable.
-
-**Whatever is chosen, run `npm run sim` before and after.** Every previous change to the dice economy
-moved `acting/phase` in ways nobody predicted — 2.95 → 3.26 from filling two empty cost slots,
-3.26 → 3.60 from removing approach turns. A mechanic that hands dice back will move it again.
+**The `allocate.ts` warning still stands and is the sharpest technical risk in the redesign.**
+`bestPlan` optimises dice→ability assignment assuming each assignment's value is *independent*.
+Chains break that: the worth of giving one Performer a 4 depends on whether another also acts. Two
+ways out — keep the solver's job as "enumerate affordable sets" and score chains one level up where
+the candidate count is small, or restrict chains to pairs to keep the interaction term tractable.
 
 ### 12.4 Standing questions from the rewrite
 
-Not new ideas — unfinished business that any battle-mechanics work should resolve alongside:
+Both of these are now **answered by design** rather than open (see §9):
 
-- **Rebar needs an identity** (§9). A chain system is a plausible home for a guardian: a Performer
-  whose symbol is common, who exists to complete other people's chains.
-- **Telegraphs need counterplay** (§9). "Break the chain the boss is building" is one answer that
-  would fall out of §12.3 for free.
+- **Rebar needs an identity.** Symbols give a guardian a home — a Performer whose symbol is common,
+  who exists to complete other people's chains.
+- **Telegraphs need counterplay.** Revealed enemy intent (`BATTLE_DESIGN.md` §5) plus one-round
+  statuses (§6) is the answer: you see the attack coming and blind the caster. A one-round debuff
+  has an exactly legible worth — you negated one enemy action.
