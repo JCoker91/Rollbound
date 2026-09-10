@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import {
   createBattle,
+  ENEMY_DIE,
   planAction,
   planUpgrade,
   commitNext,
@@ -16,13 +17,17 @@ import {
   MAX_TURNS,
   type BattleState,
 } from '../engine/battle.ts';
-import { ENCOUNTERS, ENEMIES, ROSTER } from '../engine/content.ts';
+import { BOSS_EVERY, ROSTER, sceneFor } from '../engine/content.ts';
+import { useDevTools } from './dev.ts';
+import { applyLevel, levelOf, MAX_LEVEL } from '../engine/levels.ts';
 import { payingMasks } from '../engine/allocate.ts';
 import {
   activePassives,
   canTarget,
   computeDamage,
   effectiveDefense,
+  modifierTotal,
+  damageTypeOf,
   statScale,
   unitAttack,
   unitMaxHp,
@@ -36,6 +41,7 @@ import {
   describePassive,
 } from '../engine/describe.ts';
 import { columnRank, type Slot } from '../engine/formation.ts';
+import { actionLine, floaterClass, type Floater } from './narrate.ts';
 import {
   ROLE_LABEL,
   alive,
@@ -46,7 +52,7 @@ import {
   type SpriteSheet,
   type Unit,
 } from '../engine/types.ts';
-import { Avatar } from './Avatar.tsx';
+import { Avatar, themeOf } from './Avatar.tsx';
 import { crispCss } from './crisp.ts';
 import {
   clipAnimName,
@@ -70,14 +76,24 @@ const ELEMENT_COLOR: Record<Element, string> = {
   dark: '#a77fd6',
 };
 
-const DIE_PIPS = ['', '⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
-
 /**
- * Authoring tools are hidden so the battle screen reads as the shipped game.
- * Add `?dev=1` to the URL (before the hash the hub routes on) to bring back the
- * encounter switcher and the battle log.
+ * Every element a character can actually deal, in kit order.
+ *
+ * Replaces the single element tag. It is strictly more informative -- a
+ * Performer with fire and water abilities now says so instead of being filed
+ * under one of them -- and it maintains itself as kits change.
  */
-const DEV_TOOLS = new URLSearchParams(window.location.search).has('dev');
+const elementsOf = (def: CharacterDef): string[] => {
+  const found = new Set(
+    def.abilities.filter((a) => a.kind === 'attack').map((a) => a.element).filter(Boolean),
+  );
+  // An attacker with no elemental abilities at all is not "neutral" -- there is
+  // simply no elemental line to draw for them, and saying so beats an empty gap
+  // where every other Performer has a word.
+  return found.size > 0 ? ([...found] as string[]) : ['physical'];
+};
+
+const DIE_PIPS = ['', '⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
 
 /**
  * How tall one "slot" is as a fraction of the stage, before a sprite's own scale
@@ -130,28 +146,41 @@ interface Selection {
 
 const NO_SELECTION: Selection = { unit: null, ability: null, dice: [] };
 
-interface Floater {
-  id: number;
-  amount: number;
-  kind: 'damage' | 'heal';
-  at: Pos;
-}
 
 /** Must match the floater CSS animation length. */
 const FLOATER_MS = 1000;
 
 export function BattleScreen({
-  party,
+  party: basePartyProp,
   onExit,
 }: {
   party: CharacterDef[];
   onExit: () => void;
 }) {
   const [seed, setSeed] = useState(() => Math.floor(Math.random() * 100000));
-  const [encounterIndex, setEncounterIndex] = useState(0);
-  const [battle, setBattle] = useState<BattleState>(() =>
-    createBattle(ENCOUNTERS[0]!, party, ENEMIES, seed),
-  );
+  /**
+   * Which rung of the ladder. Nine Scenes then a boss, repeating -- the whole
+   * encounter list is generated from this one number, so testing levelling and
+   * idle accrual does not need thirty hand-authored fights.
+   */
+  const [stage, setStage] = useState(1);
+  /**
+   * Dev only: re-level the party to test a stage without grinding to it.
+   *
+   * Null means "use the real save". Any number re-derives every sheet from the
+   * base roster at that level, which is what makes the stage/level curve
+   * explorable at all -- otherwise checking whether a level 12 team clears
+   * stage 10 means actually having a level 12 team.
+   */
+  const [devLevel, setDevLevel] = useState<number | null>(null);
+  const devMode = useDevTools();
+  const [battle, setBattle] = useState<BattleState>(() => {
+    const s = sceneFor(1);
+    // `basePartyProp`, not `party`: the memo below is declared after this
+    // initializer and reading it here is a temporal dead zone. The dev
+    // override starts null anyway, so on first render they are the same.
+    return createBattle(s.encounter, basePartyProp, s.enemies, seed);
+  });
 
   const [sel, setSel] = useState<Selection>(NO_SELECTION);
   const [hover, setHover] = useState<Pos | null>(null);
@@ -177,6 +206,13 @@ export function BattleScreen({
   // The engine mutates state in place, so a revision counter is what re-renders.
   const [, bump] = useReducer((n: number) => n + 1, 0);
 
+  // Re-levelled from the BASE roster, not from the passed-in party: the party
+  // already has levels folded in, and levelling it again would compound.
+  const party = useMemo(
+    () => (devLevel === null ? basePartyProp : ROSTER.slice(0, 5).map((d) => applyLevel(d, devLevel))),
+    [devLevel, basePartyProp],
+  );
+
   const encounter = battle.encounter;
   const over = battle.outcome !== 'ongoing';
   const players = battle.units.filter((u) => u.side === 'player');
@@ -192,7 +228,7 @@ export function BattleScreen({
     [],
   );
 
-  function restart(nextSeed: number, nextEncounter = encounterIndex) {
+  function restart(nextSeed: number, nextStage = stage) {
     if (enemyTimer.current !== null) window.clearTimeout(enemyTimer.current);
     if (playerTimer.current !== null) window.clearTimeout(playerTimer.current);
     stopDiceRoll();
@@ -201,8 +237,9 @@ export function BattleScreen({
     setHits({});
     setFloaters([]);
     setSeed(nextSeed);
-    setEncounterIndex(nextEncounter);
-    setBattle(createBattle(ENCOUNTERS[nextEncounter]!, party, ENEMIES, nextSeed));
+    setStage(nextStage);
+    const scene = sceneFor(nextStage);
+    setBattle(createBattle(scene.encounter, party, scene.enemies, nextSeed));
     setSel(NO_SELECTION);
     setError(null);
   }
@@ -297,6 +334,19 @@ export function BattleScreen({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [battle.turn, battle.phase, battle.units]);
 
+  // A new party only reaches the battle through `createBattle`, so changing the
+  // dev level has to restart the fight -- otherwise the slider moves and
+  // nothing on the stage does.
+  const firstRun = useRef(true);
+  useEffect(() => {
+    if (firstRun.current) {
+      firstRun.current = false;
+      return;
+    }
+    restart(seed, stage);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [devLevel]);
+
   /** Which enemy the cursor is over, so its intent can be picked out. */
   const hoveredEnemyId = useMemo(() => {
     if (!hover) return null;
@@ -389,7 +439,28 @@ export function BattleScreen({
    */
   function withHitReactions(act: () => void) {
     const before = new Map(battle.units.map((u) => [u.def.id, u.hp]));
+    // Where the log stood before the action, so the events it appends can be
+    // read back. The HP diff below still decides the NUMBER -- it catches
+    // every source at once, including ones that log nothing -- but it cannot
+    // say what the damage was made of. The log can, so the two are combined:
+    // diff for the amount, log for the element and the critical.
+    const logMark = battle.log.length;
     act();
+
+    /** Element and crit per target name, from this action's own events. */
+    const style = new Map<string, { element?: Element; crit?: boolean }>();
+    for (const e of battle.log.slice(logMark)) {
+      if (e.t !== 'damage') continue;
+      // Last write wins. A target hit twice in one action (a strike plus the
+      // thorns it provokes) shows one merged number, so the styling should be
+      // whichever event described the larger part of it -- and the reflected
+      // hit, which carries no element, is the one that comes second.
+      const prev = style.get(e.target);
+      style.set(e.target, {
+        element: e.element ?? prev?.element,
+        crit: e.crit || prev?.crit,
+      });
+    }
 
     const changed = battle.units
       .map((u) => ({ unit: u, delta: u.hp - (before.get(u.def.id) ?? u.hp) }))
@@ -405,12 +476,17 @@ export function BattleScreen({
       });
     }
 
-    const spawned = changed.map((c) => ({
-      id: floaterId.current++,
-      amount: Math.abs(c.delta),
-      kind: c.delta < 0 ? ('damage' as const) : ('heal' as const),
-      at: { ...c.unit.pos },
-    }));
+    const spawned = changed.map((c) => {
+      const hit = c.delta < 0 ? style.get(c.unit.def.name) : undefined;
+      return {
+        id: floaterId.current++,
+        amount: Math.abs(c.delta),
+        kind: c.delta < 0 ? ('damage' as const) : ('heal' as const),
+        at: { ...c.unit.pos },
+        element: hit?.element,
+        crit: hit?.crit,
+      };
+    });
     setFloaters((f) => [...f, ...spawned]);
     const ids = new Set(spawned.map((f) => f.id));
     window.setTimeout(() => setFloaters((f) => f.filter((n) => !ids.has(n.id))), FLOATER_MS);
@@ -526,7 +602,7 @@ export function BattleScreen({
     }
 
     lunge(step.unit.def.id, step.unit.side);
-    setNarration(`${step.unit.def.name} — ${step.ability?.name ?? 'upgrades'}`);
+    setNarration(actionLine(step.unit, step.ability, step.target, battle.units));
     bump();
     playerTimer.current = window.setTimeout(stepPlan, 620);
   }
@@ -548,7 +624,7 @@ export function BattleScreen({
     }
 
     lunge(step.unit.def.id, step.unit.side);
-    setNarration(`${step.unit.def.name} — ${step.ability?.name ?? 'acts'}`);
+    setNarration(actionLine(step.unit, step.ability, step.target, battle.units));
     bump();
     enemyTimer.current = window.setTimeout(stepEnemy, 700);
   }
@@ -627,15 +703,33 @@ export function BattleScreen({
                 striking={pulse?.id === u.def.id}
               />
               {u.pending && <span className="casting">!</span>}
-              {/* The reveal. Shown on the enemy rather than in a side panel so
-                  the declaration sits next to the thing that made it, and reads
-                  in the same glance as the formation it has to reach through. */}
-              {u.intent && !u.pending && battle.phase === 'player' && (
-                <span className="intent">{u.intent.ability.name}</span>
-              )}
             </div>
           );
         })}
+
+        {/* Every declared intent, in ONE layer above all the slots.
+            These were rendered inside each slot, which put them in that slot's
+            stacking context -- and a slot's z-index comes from its depth, so a
+            creature standing nearer covered the label of the one behind it.
+            Above the face was no better: with six enemies staggered for depth,
+            a label over one head lands on another. Only a layer over all of
+            them is free of both, and it costs one extra pass over the units. */}
+        {battle.phase === 'player' &&
+          livingOf(battle, 'enemy').map((u) => {
+            if (!u.intent || u.pending) return null;
+            const slot = slotAt(u.pos, encounter);
+            if (!slot) return null;
+            return (
+              <span
+                key={u.def.id}
+                className="intent"
+                title={`rolled ${u.intent.roll} — ${u.intent.ability.name}`}
+                style={{ left: `${slot.xPct * 100}%`, top: `${slot.yPct * 100}%` }}
+              >
+                {u.intent.roll}
+              </span>
+            );
+          })}
 
         {floaters.map((f) => {
           const slot = slotAt(f.at, encounter);
@@ -643,9 +737,10 @@ export function BattleScreen({
           return (
             <span
               key={f.id}
-              className={`floater ${f.kind}`}
+              className={floaterClass(f)}
               style={{ left: `${slot.xPct * 100}%`, top: `${slot.yPct * 100}%`, zIndex: 900 }}
             >
+              {f.crit && <b className="crit-flag">CRIT</b>}
               {f.kind === 'damage' ? '-' : '+'}
               {f.amount}
             </span>
@@ -667,15 +762,29 @@ export function BattleScreen({
         </div>
         <div className="panel bar">
           <button onClick={onExit}>Home</button>
-          {DEV_TOOLS && (
+          {devMode && (
             <>
-              <select value={encounterIndex} onChange={(e) => restart(seed, Number(e.target.value))}>
-                {ENCOUNTERS.map((enc, i) => (
-                  <option key={enc.name} value={i}>
-                    {enc.name}
+              {/* Jump anywhere on the ladder: every tenth rung is the boss, and
+                  the level rises with the number, so this is the whole
+                  difficulty curve in one control. */}
+              <select value={stage} onChange={(e) => restart(seed, Number(e.target.value))}>
+                {Array.from({ length: 20 }, (_, i) => i + 1).map((n) => (
+                  <option key={n} value={n}>
+                    {n % BOSS_EVERY === 0 ? `★ Stage ${n} — boss` : `Stage ${n}`}
                   </option>
                 ))}
               </select>
+              <label className="dev-level">
+                party lv
+                <input
+                  type="number"
+                  min={1}
+                  max={MAX_LEVEL}
+                  value={devLevel ?? ''}
+                  placeholder="save"
+                  onChange={(e) => setDevLevel(e.target.value === '' ? null : Number(e.target.value))}
+                />
+              </label>
               <button onClick={() => setShowLog(true)}>Show log</button>
               <button onClick={() => restart(seed)}>Restart</button>
               <button onClick={() => restart(Math.floor(Math.random() * 100000))}>New seed</button>
@@ -708,13 +817,14 @@ export function BattleScreen({
                 HP {sel.unit.hp}/{unitMaxHp(sel.unit)}
               </span>
               <span>ATK {unitAttack(sel.unit)}</span>
-              <span>DEF {effectiveDefense(sel.unit)}</span>
+              <span>P.DEF {effectiveDefense(sel.unit, 'physical')}</span>
+              <span>M.DEF {effectiveDefense(sel.unit, 'magical')}</span>
               {sel.unit.upgrades > 0 && (
                 <span className="boosted">+{Math.round((statScale(sel.unit) - 1) * 100)}%</span>
               )}
             </div>
             <div className="terrain-note">
-              {ROLE_LABEL[sel.unit.def.role]} · {sel.unit.def.element} ·{' '}
+              {ROLE_LABEL[sel.unit.def.role]} · {elementsOf(sel.unit.def).join('/')} ·{' '}
               {rankLabel(sel.unit, battle)}
             </div>
 
@@ -724,6 +834,31 @@ export function BattleScreen({
                   {sel.unit.hasActed ? 'action spent' : 'action available'}
                 </span>
               </div>
+            )}
+
+            {/* An enemy's whole d20 table, with this round's roll marked.
+                The badge on the stage is only a number; this is what makes it
+                mean something, and it is why the roll is worth showing at all
+                rather than the ability name. */}
+            {sel.unit.side === 'enemy' && (
+              <ul className="rolltable">
+                {sel.unit.def.abilities
+                  .filter((a) => a.roll)
+                  .map((a) => {
+                    const [lo, hi] = a.roll!;
+                    const now = sel.unit!.intent?.roll;
+                    const live = now !== undefined && now >= lo && now <= hi;
+                    return (
+                      <li key={a.name} className={live ? 'on' : ''}>
+                        <span className="band">{lo === hi ? lo : `${lo}–${hi}`}</span>
+                        <span className="nm">{a.name}</span>
+                        <span className="odds">
+                          {Math.round(((hi - lo + 1) / ENEMY_DIE) * 100)}%
+                        </span>
+                      </li>
+                    );
+                  })}
+              </ul>
             )}
 
             {sel.unit.side === 'player' && !sel.unit.hasActed && !over && (
@@ -756,8 +891,14 @@ export function BattleScreen({
                         <span className="body">
                           <strong>{a.name}</strong>
                           <em>
-                            {a.kind} · {rangeLabel(a)} ·{' '}
-                            <span style={{ color: ELEMENT_COLOR[a.element] }}>{a.element}</span>
+                            {a.kind}
+                            {a.kind === 'attack' ? ` · ${damageTypeOf(a)}` : ''} · {rangeLabel(a)}
+                            {a.element && (
+                              <>
+                                {' · '}
+                                <span style={{ color: ELEMENT_COLOR[a.element] }}>{a.element}</span>
+                              </>
+                            )}
                           </em>
                         </span>
                       </button>
@@ -853,7 +994,11 @@ export function BattleScreen({
       )}
 
       <div className="hud hud-bottom">
-        {narration && <div className="panel narration">{narration}</div>}
+        {/* Reserved whether or not anything is being said, so the tray below
+            does not jump every time an action starts and finishes. */}
+        <div className="narration-slot">
+          {narration && <div className="panel narration">{narration}</div>}
+        </div>
 
         <div className="panel tray">
           {battle.phase === 'player' && !busy ? (
@@ -1057,20 +1202,19 @@ function UnitChip({
   hit: number;
   striking: boolean;
 }) {
-  const pct = (unit.hp / unitMaxHp(unit)) * 100;
   // Only grey out the side whose turn it is; the idle side's flags are stale.
   // `queued` is distinct from `acted`: one is a promise the player can still take
   // back, the other has already happened.
   const spent = unit.side !== phase ? '' : unit.hasActed ? 'acted' : queued ? 'queued' : '';
   const sheet = unit.def.sprite;
-  const title = `${unit.def.name} · ${unit.hp}/${unitMaxHp(unit)} hp · def ${effectiveDefense(unit)}`;
-  const hp = (
-    <span className="hpbar">
-      <span
-        style={{ width: `${pct}%`, background: pct > 50 ? '#4ec97a' : pct > 25 ? '#e0b64a' : '#e05a5a' }}
-      />
-    </span>
-  );
+  const title =
+    `${unit.def.name} · ${unit.hp}/${unitMaxHp(unit)} hp` +
+    ` · p.def ${effectiveDefense(unit, 'physical')} · m.def ${effectiveDefense(unit, 'magical')}`;
+  // No HP bar on the stage. Six of them stacked under six creatures was a row
+  // of coloured slivers competing with the art, and the space is better spent
+  // on the intent label -- which is the thing you actually plan against.
+  // Health lives in the team lists, which show every unit at once, and in the
+  // detail panel for whoever is selected.
 
   if (sheet) {
     // Height in stage units; `slotH * sheet.scale` is exactly the old tile math,
@@ -1152,7 +1296,6 @@ function UnitChip({
         }}
       >
         {body}
-        {hp}
       </div>
     );
   }
@@ -1160,11 +1303,10 @@ function UnitChip({
   return (
     <div
       className={`unit ${unit.side} ${spent} ${hit ? 'hurt' : ''} ${striking ? 'striking' : ''}`}
-      style={{ borderColor: ELEMENT_COLOR[unit.def.element] }}
+      style={{ borderColor: ELEMENT_COLOR[themeOf(unit.def)] }}
       title={title}
     >
       <Avatar def={unit.def} size={40} side={unit.side} />
-      {hp}
     </div>
   );
 }
@@ -1231,9 +1373,23 @@ function TeamPanel({
                 <Avatar def={u.def} size={26} side={u.side} />
               )}
               <span className="nm">{u.def.name}</span>
+              {/* Level, on both sides. The enemy's is the whole reason to show
+                  it -- how far ahead or behind the stage is running is the
+                  first thing you want to know, and it was previously only
+                  inferable from the stat line in the detail panel. */}
+              <span className="lv">Lv {levelOf(u.def)}</span>
               <span className="hp">
                 {alive(u) ? `${u.hp}/${u.def.maxHp}` : 'down'}
-                {u.atkBuff > 0 && <span className="buff"> +{u.atkBuff}</span>}
+                {/* Net attack modifier, buffs and shreds together, so a row
+                    says at a glance whether this unit is currently running hot
+                    or has been cut down. */}
+                {modifierTotal(u, 'attack') !== 0 && (
+                  <span className={modifierTotal(u, 'attack') > 0 ? 'buff' : 'shred'}>
+                    {' '}
+                    {modifierTotal(u, 'attack') > 0 ? '+' : ''}
+                    {modifierTotal(u, 'attack')}
+                  </span>
+                )}
               </span>
             </button>
           </li>

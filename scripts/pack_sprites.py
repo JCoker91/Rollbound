@@ -133,21 +133,36 @@ SCALE_CLASSES = {
     'small': (58, 72),
     'standard': (82, 92),
     'large': (92, 104),
+    # Bosses are drawn on their own larger canvas, so their band is expressed as
+    # a FRACTION of it rather than in 128-grid pixels -- see `scale_band`.
+    'boss': (0.70, 0.98),
 }
 SCALE_CLASS: dict[str, str] = {
-    # Trash mobs. Currently drawn at 91-93, which is Large -- they stand taller
-    # than three of the five Performers, and the audit says so on every run.
-    'understudy_red': 'small',
-    'understudy_yellow': 'small',
-    'understudy_blue': 'small',
-    'understudy_orange': 'small',
-    'understudy_green': 'small',
+    # The Understudies were briefly declared `small` as a recommendation -- trash
+    # mobs standing shorter than the Cast. That was overruled: the art is
+    # approved at 91-93, so the declaration came out rather than being left to
+    # report a deviation from a decision nobody is going to make. Undeclared
+    # audits as Standard, which is the band they sit on.
 }
 
 
-def scale_band(name: str) -> tuple[int, int]:
-    declared = SCALE_CLASS.get(name)
-    return SCALE_CLASSES[declared] if declared else SPECS[spec_of(name)]['height']
+def scale_band(name: str) -> tuple[float, float]:
+    """
+    The body-height range this sprite is audited against, in ITS canvas's pixels.
+
+    A boss's band is authored as a fraction of its own canvas, because "82-92
+    native px" is meaningless on a 256px grid -- the numbers only compare when
+    they are ratios. Everything else is already on a 128 grid and keeps its
+    pixel band unchanged.
+    """
+    declared = SCALE_CLASS.get(name) or ('boss' if is_boss(name) else None)
+    if declared == 'boss':
+        lo, hi = SCALE_CLASSES['boss']
+        canvas = file_canvas(name)
+        return (round(lo * canvas), round(hi * canvas))
+    if declared:
+        return SCALE_CLASSES[declared]
+    return SPECS[spec_of(name)]['height']
 
 
 OUTLINE: dict[str, int] = {}
@@ -172,6 +187,7 @@ IMAGE_SUFFIXES = {'.png', '.jpg', '.jpeg', '.webp'}
 ART = Path('art')
 ACTORS = ART / 'actors'
 CREATURES = ART / 'enemies' / 'creatures'
+BOSSES = ART / 'enemies' / 'bosses'
 SCENERY = ART / 'background'
 OUT_ROOT = Path('public/sprites')
 OUT_SCENERY = Path('public/background')
@@ -292,26 +308,71 @@ def creatures() -> list[str]:
     portrait crop, no animation set. Giving each a folder would be four empty
     directories per enemy for a bestiary that wants dozens of them.
     """
-    if not CREATURES.is_dir():
-        return []
-    return sorted(
-        f.stem for f in CREATURES.glob('*.png') if not f.stem.endswith(DEPRECATED_CLIPS)
-    )
+    out = []
+    for folder in (CREATURES, BOSSES):
+        if folder.is_dir():
+            out += [f.stem for f in folder.glob('*.png') if not f.stem.endswith(DEPRECATED_CLIPS)]
+    return sorted(out)
+
+
+def creature_file(name: str) -> Path | None:
+    for folder in (CREATURES, BOSSES):
+        f = folder / f'{name}.png'
+        if f.exists():
+            return f
+    return None
 
 
 def is_creature(name: str) -> bool:
-    return (CREATURES / f'{name}.png').exists() and not (ACTORS / name).is_dir()
+    return creature_file(name) is not None and not (ACTORS / name).is_dir()
+
+
+def is_boss(name: str) -> bool:
+    return (BOSSES / f'{name}.png').exists()
 
 
 def source_image(name: str) -> Path | None:
     """The file every measurement for `name` is taken from, actor or creature."""
     if is_creature(name):
-        return CREATURES / f'{name}.png'
+        return creature_file(name)
     d = ACTORS / name
     for candidate in (d / f'{name}.png', d / f'{name}_LQ.png'):
         if candidate.exists():
             return candidate
     return None
+
+
+def file_canvas(name: str) -> int:
+    """
+    The canvas this art was actually drawn on, from the file.
+
+    Used for the GEOMETRY checks -- margins, the ground line -- which are facts
+    about the image. A boss legitimately uses a bigger canvas (the guide's Giant
+    class), and auditing its 256px file against 128 reported its canvas, its
+    ground line and its height as wrong all at once for one deliberate choice.
+    """
+    src = source_image(name)
+    if is_creature(name) and src is not None:
+        return Image.open(src).size[1]
+    return SPECS[spec_of(name)]['native']
+
+
+def density_grid(name: str) -> int:
+    """
+    The grid this sprite's STATURE is measured against, which is not the same
+    thing as the canvas it was drawn on.
+
+    A larger canvas means a larger CREATURE at the same pixel density -- not the
+    same creature at higher resolution. Dividing a 203px boss by its own 256px
+    file normalises exactly the size that makes it a boss, and it came out
+    1.19x a Performer: barely taller than the trash it commands. Against the
+    shared 128 density grid it is 2.39x, which is what the art is saying.
+
+    So the canvas division exists only to reconcile art authored at different
+    DENSITIES -- the old 64px grid against the 128px one that replaced it -- and
+    a v2 sprite is measured against 128 whatever size its file happens to be.
+    """
+    return SPECS[spec_of(name)]['native']
 
 
 def characters() -> list[str]:
@@ -364,6 +425,7 @@ def expected_outputs() -> list[str]:
     out = []
     for name in creatures():
         out.append((OUT_ROOT / name / f'{name}.png').as_posix())
+        out.append((OUT_ROOT / name / f'{name}_icon.png').as_posix())
     for name in characters():
         folder = OUT_ROOT / name
         out.append((folder / f'{name}.png').as_posix())
@@ -453,6 +515,34 @@ def foot_anchor(img: Image.Image) -> float:
     return centre / img.width
 
 
+def derive_icon(board: Image.Image) -> Image.Image:
+    """
+    A square portrait for the team list, from the full-body sprite.
+
+    The whole figure, padded to a square -- NOT a head crop. Cropping to the
+    face was tried and abandoned: it needs the pipeline to know where a face
+    is, and it does not. The Understudies wear a plume occupying the top
+    quarter of the sprite with the mask below it, so a crop anchored at the top
+    of the figure returned feathers and a shoulder. Every fix for that is
+    another guess about anatomy, which is the same losing game as deriving
+    internal outlines.
+
+    A shrunk full body is honest instead of nearly-right, and for the job in
+    hand -- telling five colour variants apart in a 26px row -- silhouette and
+    colour carry it. A hand-drawn `<name>_icon.png` beats this and takes
+    precedence wherever one exists; this is the fallback that means nobody has
+    to draw one.
+    """
+    box = content_box(board)
+    if not box:
+        return board
+    figure = board.crop(box)
+    side = max(figure.size)
+    square = Image.new('RGBA', (side, side), (0, 0, 0, 0))
+    square.paste(figure, ((side - figure.width) // 2, (side - figure.height) // 2))
+    return square
+
+
 def audit(name: str, ref: Image.Image, native: Image.Image | None) -> list[str]:
     """
     The guide's acceptance checklist, as a lint.
@@ -466,7 +556,12 @@ def audit(name: str, ref: Image.Image, native: Image.Image | None) -> list[str]:
     spec's numbers being hard-coded here.
     """
     s, k = spec(name), upscale(name)
-    canvas = s['native'] * k
+    # A boss is authored on its own larger canvas by design (the guide's Giant
+    # class), so the grid every other check is measured against comes from the
+    # FILE for creature art. Hard-coding 128 here reported a legitimate 256px
+    # boss as wrong on its canvas, its ground line and its height at once --
+    # three notes for one deliberate decision.
+    canvas = file_canvas(name) * k if is_creature(name) else s['native'] * k
     notes = []
     if ref.size != (canvas, canvas):
         notes.append(f'delivery canvas is {ref.width}x{ref.height}, guide says {canvas}x{canvas}')
@@ -487,9 +582,11 @@ def audit(name: str, ref: Image.Image, native: Image.Image | None) -> list[str]:
         notes.append(f'margin {margin}px < {need}px ({need // k} native)')
 
     feet = box[3] - 1
-    want = s['ground'] * k
+    # Expressed as a fraction of the canvas so it survives a different one: the
+    # guide's y=112 on 128 is 0.875 down, which is y=224 on a 256px boss.
+    want = round((s['ground'] / s['native']) * canvas)
     if feet != want:
-        notes.append(f'feet at y={feet}, guide ground line is y={want} ({(feet - want) / k:+.2f} native px)')
+        notes.append(f'feet at y={feet}, ground line is y={want} ({(feet - want) / k:+.2f} native px)')
 
     # Less the ring this script drew, for the same reason the margin check
     # discounts it: the guide's band is about the ART, and reporting the
@@ -499,7 +596,7 @@ def audit(name: str, ref: Image.Image, native: Image.Image | None) -> list[str]:
     h_native = (box[3] - box[1] - 2 * outline_width(name)) / k
     lo, hi = scale_band(name)
     if not lo <= h_native <= hi:
-        klass = SCALE_CLASS.get(name, 'standard')
+        klass = SCALE_CLASS.get(name) or ('boss' if is_boss(name) else 'standard')
         notes.append(f'body {h_native:.0f} native px is outside the {klass} band ({lo}-{hi})')
 
     if native is not None:
@@ -1344,6 +1441,15 @@ def prepare_creature(name: str) -> tuple[int, list[str]]:
 
     board_path = out / f'{name}.png'
     board.save(board_path)
+
+    # Portrait for the team list. Grown by a whole factor so it stays crisp at
+    # the 26-56px the panels draw it at, same rule as the hand-made ones.
+    icon = derive_icon(ref)
+    if icon.height and icon.height * 2 <= ICON_SIZE:
+        factor = max(1, ICON_SIZE // icon.height)
+        icon = icon.resize((icon.width * factor, icon.height * factor), Image.NEAREST)
+    icon.save(out / f'{name}_icon.png')
+
     save_manifest(name, stamp=stamp_of(board_path))
     return box[3] - box[1], notes
 
@@ -1476,7 +1582,7 @@ def write_metrics() -> None:
         if source_image(name) is not None:
             b = content_box(reference(name))
             fields.append(f'nativePx: {round((b[3] - b[1]) / upscale(name))}')
-            fields.append(f'nativeCanvas: {spec(name)["native"]}')
+            fields.append(f'nativeCanvas: {density_grid(name)}')
         else:
             fields.append('nativePx: null')
             fields.append(f'nativeCanvas: {NATIVE}')

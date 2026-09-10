@@ -1,16 +1,25 @@
 # Battle Design — the target system
 
 **Status: in build.** This document specifies the battle the game is being rebuilt towards.
-`src/engine/battle.ts` still implements the older system (see README §5) except where noted below.
+Most of it is now implemented (see the table); the two pieces left are **symbols and chains** (§4)
+and an **auto-battler that can price an enabler**, which are the same problem in `allocate.ts`.
+**Benjamin (§8) is the first Performer authored against this document**, and building him is what
+drove the phase model, modifiers, ordered effects and cooldowns in.
 
 | § | piece | state |
 | --- | --- | --- |
-| 5 | Enemy intent — weighted pick, revealed target | **built** |
+| 5 | Enemy intent — d20 roll against a shown table, revealed target | **built** |
 | 2 | Turn loop — planning queue, commit-and-lock, ordered resolution | **built** |
+| 2 | Start / Resolve / End phases, with expiry at the End | **built** |
+| 2 | Abilities as an ordered list of effects | **built** |
 | 2 | Enemy phase strictly simultaneous (currently sequential within one phase) | not built |
-| 3 | Damage types, split defenses | not built |
-| 6 | Status effects | not built |
+| 3 | Damage types, split defenses | **built** |
+| 3 | Elementless abilities (`element` optional) | **built** |
+| 6 | Timed stat modifiers — durations, per-track, named percentage source | **built** |
+| 6 | Status effects — paralyze, burn and friends | not built; they share the modifier clock |
+| 8 | Player-side cooldowns | **built** |
 | 4 | Symbols and chains | not built |
+| — | Auto-battler scoring for enablers | **not built, and now blocking** — see §8 |
 
 Read this before touching battle code. Read **§1** before touching anything at all, because every
 other decision in this document follows from it and a change that violates it breaks the game's
@@ -55,18 +64,48 @@ satisfied by arithmetic, not by good intentions.
 
 ---
 
-## 2. Turn structure — MOSTLY BUILT
+## 2. Turn structure — BUILT
+
+Each side's turn has three phases — **Start Turn, Resolve, End Turn** — and the two bookends are
+*simultaneous for everyone on that side*. Nothing that happens at Start or End belongs to a
+particular unit's slot in the order; a regen tick and an expiring buff land together, so no effect
+can depend on who happens to be listed first.
 
 One round, in order:
 
-1. **Roll** the shared dice pool. The player sees the dice before planning.
+1. **Start Turn (player).** Regeneration ticks. Cooldowns count down. The shared dice pool is
+   rolled — the player sees the dice before planning.
 2. **Reveal enemy intent** — for every living enemy, which ability it will use and on whom.
 3. **Player plans.** Assign abilities to Performers, paying exact dice sums, and place them in a
    resolution order.
 4. **Commit.** The plan locks. There is no stopping partway, no reacting to a result, no re-planning.
-5. **Player abilities resolve** one at a time, in the assigned order.
-6. **Enemies act simultaneously**, using the intents revealed in step 2.
-7. Statuses expire, durations tick. Next round.
+5. **Resolve.** Player abilities resolve one at a time, in the assigned order.
+6. **End Turn (player).** Damage over time ticks. Modifier and status durations count down, and
+   anything reaching zero expires. All at once.
+7. The enemy turn runs the same three phases, using the intents revealed in step 2.
+
+### Within one ability, effects resolve in authored order
+
+An ability is a **list of effects**, not a single kind, and it resolves them top to bottom. This is
+the whole answer to "does the self-buff apply before or after the damage": it applies wherever it
+is written, and it should be *written* in the order it happens.
+
+So the ult is authored and worded as **"Gain 20% ATK for 3 turns, then deal damage"** — not "deal
+damage and gain 20% ATK". The first phrasing is unambiguous about whether the strike benefits from
+the buff, and it is the same order the code executes. If a kit ever wants the other behaviour, it
+writes the effects the other way round and says so.
+
+### A duration applied this turn ticks at the end of this turn
+
+A 3-turn buff cast on turn one is active for turns **one, two and three**, and is gone when turn
+four begins. There is no grace round: the turn it was cast on is the first of the three.
+
+That is what makes a 3-turn modifier mean "buff, act, act, then reapply" — one spare turn in the
+cycle where that Performer's dice can go to somebody else. Counting from the *next* turn instead
+would quietly make every duration one longer than it reads.
+
+**A cooldown counts turns you cannot use it.** A 2-turn cooldown used on turn three means turns
+four and five are locked out and turn six is available again.
 
 > **As implemented.** `planAction` / `planUpgrade` queue an action and reserve its dice
 > immediately, so the tray shows what is genuinely left to spend; `unplan` gives them back.
@@ -126,7 +165,7 @@ Two facts to author costs against:
 
 ---
 
-## 3. Damage types and elements
+## 3. Damage types and elements — TYPES BUILT
 
 ### Three damage types
 
@@ -153,11 +192,27 @@ other. Choosing the damage type an enemy is soft to is the first composition axi
 >
 > True then answers a specific problem — the boss armoured against both — rather than being a build.
 > Keep it rare: one True ability on a handful of Performers, never a whole kit.
+>
+> **As implemented.** `Ability.damageType` is `physical` (default) / `magical` / `true`, and
+> `effectiveDefense(unit, type)` returns the matching track — or **0 for True**, so one place knows
+> that True bypasses armour and every caller reasoning about mitigation gets it right for free.
+> Stat blocks carry `physicalDefense` and `magicalDefense`; a guard buff and a defensive star node
+> both raise **both** tracks, because splitting them would halve every defensive ability without
+> adding a decision — per-type warding belongs to elemental resistance, which is a separate axis.
+>
+> The 55% pricing was verified against the crossover claim above: typed @1.0 versus true @0.55 is
+> **even at exactly DEF 80**, typed wins below it, True wins above.
 
 ### Elements
 
 Not every Performer deals elemental damage. Enemies may be weak to an element and resistant to
 another.
+
+> **As implemented.** Elements belong to ABILITIES, not to units — a `CharacterDef` has no
+> `element` field, only `resistances`. That is what allows a Performer with both a fire and a water
+> ability, and it frees resistance from the wheel's rigid one-weakness/one-resistance shape.
+> `aligned('fire')` reproduces the familiar spread in one line for the common case, so the wheel
+> survives as a guessable default rather than as a law.
 
 - **Elemental abilities** are spiky: strong into a weakness, weak into a resistance.
 - **Non-elemental abilities have a higher baseline** precisely because they cannot exploit weakness.
@@ -299,30 +354,90 @@ because intent is visible, and one that would give support Performers something 
 
 ---
 
-## 6. Status effects
+## 6. Status effects and modifiers — MODIFIERS BUILT
+
+Two families, one clock, different lifespans:
+
+- **Statuses** — blind, paralyze, burn. Sharp, short, disruptive.
+- **Modifiers** — timed changes to Attack, Physical Defense or Magical Defense. Longer, and the
+  substance of every support kit.
 
 ### Duration
 
-A status lasts **exactly one of the opponent's action phases.** "Blind for 1 turn" applied during
-the player's turn is active through the enemies' next phase and gone when the player's turn comes
-round again. The mirror holds for enemy-applied statuses. Multi-turn durations span that many
-opponent phases.
+Durations tick at the **End Turn** phase of the side that applied them (§2), so they are counted in
+that side's own turns. A 3-turn buff cast by a Performer on turn one covers turns one, two and
+three; a 3-turn debuff an enemy lands covers three enemy turns. Either way it is three rounds — the
+two clocks only differ in where in the round they tick.
+
+The turn an effect is applied is the **first** of its turns, not a free one before the count starts.
+
+Statuses are typically 1 turn. **Modifiers are typically 3**, and that is deliberate rather than
+generous. Three is what makes a support kit *manageable* instead of a chore: buff on turn one,
+debuff on turn two, and turn three is free — a spare turn where that Performer's dice can go to
+somebody else. At two, the loop has no slack and every turn is spent maintaining. A starting
+Performer in particular has to teach the rhythm without the player feeling behind on upkeep.
+
+**Where the balance lever goes:** if a modifier is too strong, cut its magnitude, not its duration.
+Duration is the ergonomics of the kit; magnitude is its power. They are not interchangeable, and
+trading away the first to fix the second makes the character worse to play rather than weaker.
+
+### What a modifier changes
+
+Attack, Physical Defense, Magical Defense. Not max HP — a buff that moves the HP ceiling has to
+decide what happens to current HP when it expires, and every answer is either a heal, a surprise
+death, or a special case.
+
+Offense is one stat. `attack` drives physical hits, magical hits and healing alike, so a modifier
+to Attack is worth the same to a blade, a staff and a healer. Defense stays split across two
+tracks, so a shred can be pointed at one of them.
+
+### Stacking: refresh within an ability, stack across abilities
+
+- **The same ability recast refreshes its own effect.** It does not stack with itself. Rally cast
+  twice on one ally is one modifier with its clock reset.
+- **Different abilities stack**, as separate modifiers with separate clocks. Two sources of +20%
+  give +40%, and each expires on its own schedule.
+
+### Percentages resolve to a flat amount at cast time, from a named source
+
+This is the rule that keeps stacking honest. A modifier stores a **number**, computed once when it
+lands, and every ability states what its percentage is a percentage *of*:
+
+| source | reads | so two 20% buffs give |
+| --- | --- | --- |
+| **target's base** | the target's own unmodified stat | +40% of base — additive, no compounding |
+| **caster's current** | the caster's stat *including* their own live modifiers | whatever the caster was worth at that moment |
+
+Without this, "+20% then +20%" silently means +44% and the second buff is worth more than the
+first for no reason a player could predict. Resolving to a flat number at cast time also makes
+expiry trivial: remove the number you added.
+
+**Caster-current is the interesting one**, and it is a design tool rather than a default. It means
+the buff is worth whatever the *caster* is worth, so building that Performer up is how they help
+the team — and it means a Performer can be buffed and then pass that strength along, which is a
+two-step combo assembled across turns. It also ages gracefully: a gift measured in the caster's
+stats quietly stops mattering once the recipients out-scale them, which is exactly what a starting
+Performer should do.
 
 ### Two clocks — do not conflate them
 
 - **Effects apply immediately on resolution.** Otherwise "debuff, then attack" ordering does
   nothing, and that ordering is the entire point of the resolution queue (§2). A defense shred cast
   first *must* benefit an attack cast fourth.
-- **Durations count in opponent phases**, per above.
+- **Durations count in whole turns and expire at End Turn**, per above — never mid-resolution, so
+  a buff cannot lapse between the second and third ability of the same plan.
 
-Immediate effect, phase-counted expiry. Easy to conflate, painful to debug.
+Immediate effect, End-Turn expiry. Easy to conflate, painful to debug.
 
-### Damage over time: decide when it ticks
+### Damage over time ticks at End Turn — SETTLED
 
-If burn ticks at the **start of the afflicted side's phase**, a burn can kill an enemy *before it
-acts* — making damage-over-time a form of action denial, far stronger than its damage suggests. If
-it ticks at **end of round**, it never denies anything. Both are defensible and they are very
-different power levels. Pick one on purpose.
+The phase model (§2) answers what used to be an open question. If burn ticked at the **start** of
+the afflicted side's turn it could kill an enemy *before it acts*, making damage-over-time a form
+of action denial and far stronger than its damage suggests. Ticking at **End Turn** never denies
+anything, so a DoT is worth exactly the damage it says.
+
+That keeps action denial where it belongs — on statuses priced for it — instead of arriving as a
+hidden second effect on every burn.
 
 ### Chance-based effects, and the line to hold
 
@@ -378,7 +493,87 @@ authored for a system that is going away, and their balance data is not evidence
 
 ---
 
-## 8. Settled, and still open
+## 8. Performer kits
+
+Authored one at a time against everything above. Numbers are the last thing decided, not the first.
+
+### Benjamin — the Utility Vanguard
+
+**Goal:** never sit out, and make whoever *is* acting hit harder. His value is multiplicative on
+the team rather than additive to it.
+
+He is the first Performer the player owns and the one the tutorial teaches with, so his kit has no
+resource, no stacks, no positioning and no element — a plain physical attacker whose whole idea is
+*buff, debuff, hit*. He is also designed to **fall off**, and to do it by mechanism rather than by
+a later balance pass: see Rally.
+
+| | cost | payable | dice | effect |
+| --- | --- | --- | --- | --- |
+| **Quick Cut** | wildcard | — | 1 | Physical damage, single target. |
+| **Sunder** | 6 | 97.4% | 1.42 | Physical damage, **then** shred the target's Physical Defense, 3 turns. |
+| **Rally** | 4 | 87.0% | 1.34 | Buff one ally's Attack/P.DEF/M.DEF by a % of **Benjamin's current** stats, 3 turns. |
+| **Perfect Form** | 10 | 92.6% | 2.58 | Buff **his own** stats by a %, 3 turns, **then** deal large single-target physical damage. **2-turn cooldown.** |
+
+**Chain triggers** sit on the two support abilities, never on the ult:
+
+- **Sunder:** shred by an additional amount.
+- **Rally:** buff the **whole team** instead of one ally.
+
+That second one is the "convert to whole-team" trigger §4 warns is an order of magnitude above the
+others — which is exactly why it is attached to a cost-4 ability with no damage on it, per that
+section's own advice.
+
+**Why the costs are what they are.** Three of his four options cost about one die, so he acts
+nearly every turn without eating the pool; the ult is his only real commitment at 2.58 dice, where
+somebody else sits out. Cost 6 is the most payable number on 5d6 (97.4%) and his signature ability
+owns it: the thing that *is* Benjamin should always be affordable.
+
+**Order inside the ult matters.** The self-buff is authored *before* the damage, so the strike
+lands with the buff already up (§2). It is worded that way for the same reason: the phrasing is the
+execution order.
+
+**The rhythm.** Turn one Rally, turn two Sunder, turn three Perfect Form — and because a modifier
+applied on a turn covers that turn and the two after it, turn four is spare before Rally needs
+reapplying. Each Performer acts once per turn, so the loop is forced to be sequential; he cannot
+front-load it, and the spare turn is where his dice go to somebody else.
+
+The 2-turn cooldown on the ult sits inside that loop rather than fighting it: used on turn three,
+locked out on four and five, ready again on six.
+
+**Why Rally reads his current stats.** It is what makes flat stat investment in Benjamin pay out
+across the whole team, it lets his ult feed his own buff a turn later, and it is his obsolescence
+built in: a gift measured in Benjamin's stats is generous to a 3★ and a rounding error to a 5★. He
+stops being worth a slot on his own, without anyone having to nerf him.
+
+**Built with him.** Authoring this kit is what drove most of the remaining engine work in. Verified
+in isolation: the ultimate's self-buff lands before its own strike; its cooldown blocks a recast;
+Rally reads Benjamin's *current* attack rather than the recipient's, so it is worth more after the
+ultimate; recasting Rally refreshes instead of stacking; Sunder shreds physical defense and
+leaves the magical track untouched; and a 3-turn modifier covers the turn it was cast and the two
+after it.
+
+**What he still needs:**
+
+1. **Chains** (§4), for his two triggers.
+2. **An auto-battler that can price an enabler.** `scoreAction` values what an action does now, to
+   the target it names, so the shred, the self-buff and Rally's real magnitude are invisible to
+   it — his free basic outscores his whole kit per die, and idle play uses him as a stick. This is
+   the `allocate.ts` independence assumption chains were expected to break, reached early.
+
+**Landed while building him:**
+
+- Player-side cooldowns. `Unit.cooldowns` and its countdown were side-agnostic already, but only
+  the enemy path set or checked them.
+- Timed modifiers per §6, replacing the flat `atkBuff` / `defBuff` pair that decayed 10 a turn.
+- Per-track defense modifiers. `defBuff` was one number added to both tracks.
+- Percentage modifiers resolved against a named source (§6).
+- Abilities as an ordered list of effects (§2) — his ult buffs *then* strikes.
+- A real End Turn phase, with expiry at the end of the turn and regen and cooldowns at the start.
+- Elementless attacks. `Ability.element` was required, so "no element" could not be said.
+
+---
+
+## 9. Settled, and still open
 
 **Settled:**
 
@@ -386,13 +581,16 @@ authored for a system that is going away, and their balance data is not evidence
 - 5d6 for now; the trade for 6d6 is understood (§2)
 - Commit-and-lock, no stop-and-rethink, no mid-turn reaction
 - Chain triggers are authored per ability, and read forward from the arming symbol
-- Statuses last one opponent phase; effects apply immediately
+- Every turn is Start / Resolve / End; the bookends are simultaneous for the whole side (§2)
+- An ability is an ordered list of effects, and is worded in that order
+- A duration applied this turn ticks at the end of this turn; damage over time ticks at End Turn
+- Modifiers refresh within an ability and stack across abilities, resolved to a flat amount at
+  cast time from a named source (§6)
 - Enemy intent is revealed each round; activation odds stay hidden
 
 **Open:**
 
 - Whether revealed intent can be disrupted (§5)
-- When damage over time ticks (§6)
 - Whether action-denying statuses are deterministic or chance-based (§6 — a recommendation, not a
   decision)
 - The symbol list itself, and which Performers carry which

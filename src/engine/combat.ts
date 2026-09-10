@@ -1,17 +1,98 @@
-import type { Ability, Passive, Pos, Unit } from './types.ts';
+import type { Ability, DamageType, ModSource, ModStat, Passive, Pos, Unit } from './types.ts';
 import { alive, UPGRADE_STAT_BONUS } from './types.ts';
-import { elementMultiplier } from './elements.ts';
+import { resistanceOf, resistMultiplier } from './elements.ts';
 import { samePos, withinReach } from './formation.ts';
 
-/** Attack buffs lose this much per turn; see battle.ts. */
-export const BUFF_DECAY_PER_TURN = 10;
+/**
+ * How long a modifier runs when an ability does not say.
+ *
+ * Three turns, and that is ergonomics rather than generosity: buff on turn
+ * one, act on two, act on three, reapply on four. One spare turn in the cycle
+ * is what stops a support Performer spending every turn on upkeep. If a
+ * modifier is too strong, cut its magnitude -- never its duration.
+ */
+export const DEFAULT_MODIFIER_TURNS = 3;
 /** Measured from simulation: a living character acts ~70% of phases. */
 const EXPECTED_ACT_RATE = 0.7;
 
-/** Defense stat plus any active guard buff. */
-export function effectiveDefense(unit: Unit): number {
-  return Math.round(unit.def.defense * statScale(unit)) + unit.defBuff;
+/**
+ * The mitigation a hit of this type meets: the matching defense stat, plus any
+ * active guard buff.
+ *
+ * `true` meets none, and returns 0 rather than being special-cased at the call
+ * site -- one place knows that True bypasses armour, and every caller that
+ * reasons about mitigation gets it right for free.
+ *
+ * Modifiers name the track they move, so a shred can be pointed at one of them
+ * while a general guard buff lists both. Offense has no such split: `attack`
+ * drives physical hits, magical hits and healing alike, so one modifier to
+ * Attack is worth the same to a blade, a staff and a healer.
+ */
+export function effectiveDefense(unit: Unit, type: DamageType = 'physical'): number {
+  if (type === 'true') return 0;
+  const stat: ModStat = type === 'magical' ? 'magicalDefense' : 'physicalDefense';
+  return baseStat(unit, stat) + modifierTotal(unit, stat);
 }
+
+/**
+ * A stat before modifiers: the sheet, grown by level and upgrade tiers.
+ *
+ * This is what a `targetBase` percentage reads, and keeping it separate from
+ * the modified value is what stops two 20% buffs compounding into 44%.
+ */
+export function baseStat(unit: Unit, stat: ModStat): number {
+  const raw =
+    stat === 'attack'
+      ? unit.def.attack
+      : stat === 'magicalDefense'
+        ? unit.def.magicalDefense
+        : unit.def.physicalDefense;
+  return Math.round(raw * statScale(unit));
+}
+
+/** Everything currently modifying one stat, buffs and shreds together. */
+export function modifierTotal(unit: Unit, stat: ModStat): number {
+  let total = 0;
+  for (const m of unit.modifiers) if (m.stat === stat) total += m.amount;
+  return total;
+}
+
+/**
+ * A stat as it stands right now, modifiers included.
+ *
+ * What a `casterCurrent` percentage reads, and what the damage formula uses.
+ * Floored at zero: a shred can take a defense to nothing but never past it,
+ * because negative armour would turn mitigation inside out and start
+ * amplifying damage.
+ */
+export function currentStat(unit: Unit, stat: ModStat): number {
+  return Math.max(0, baseStat(unit, stat) + modifierTotal(unit, stat));
+}
+
+/**
+ * Turn a percentage into the flat amount a `Modifier` stores.
+ *
+ * Done once, when the modifier lands, never re-read afterwards. That is what
+ * makes stacking additive and expiry a subtraction -- and it is why a
+ * `casterCurrent` buff is worth whatever the caster was worth *at that
+ * moment*, which is the property the combo is built on.
+ */
+export function resolveModifierAmount(
+  caster: Unit,
+  target: Unit,
+  stat: ModStat,
+  percent: number,
+  of: ModSource,
+): number {
+  const from = of === 'casterCurrent' ? currentStat(caster, stat) : baseStat(target, stat);
+  const amount = (from * percent) / 100;
+  // Away from zero, so a small buff is never rounded into nothing and a small
+  // shred always bites at least a point.
+  return amount < 0 ? -Math.max(1, Math.round(-amount)) : Math.max(1, Math.round(amount));
+}
+
+/** An ability's damage type. Attacks default to physical; see types.ts. */
+export const damageTypeOf = (a: Ability): DamageType => a.damageType ?? 'physical';
 
 /** Heals scale off the caster's ATK, same as damage, so support scales too. */
 export function computeHeal(source: Unit, ability: Ability): number {
@@ -36,20 +117,80 @@ const passive = (u: Unit, kind: Passive['kind']): number =>
 /** Multiplier on attack, defense and max HP from bought upgrades. */
 export const statScale = (u: Unit): number => 1 + u.upgrades * UPGRADE_STAT_BONUS;
 
-export const unitAttack = (u: Unit): number =>
-  Math.round(u.def.attack * statScale(u)) + u.atkBuff;
+export const unitAttack = (u: Unit): number => currentStat(u, 'attack');
 
 export const unitMaxHp = (u: Unit): number => Math.round(u.def.maxHp * statScale(u));
+
+/**
+ * The defense value that halves incoming damage, at power scale 1.
+ *
+ * This constant is what makes `DEF / (anchor + DEF)` mean anything: it sets how
+ * much armour is "a lot". Fixed, it silently expires -- see `computeDamage`.
+ */
+export const MITIGATION_ANCHOR = 100;
+
+/*
+ * Critical hits.
+ *
+ * Rolled where the hit LANDS (`applyAbility`), not inside `computeDamage`.
+ * `computeDamage` has to stay pure: the forecast panel calls it to show what a
+ * target would take before you commit, and a forecast that rolled its own dice
+ * would be a different number from the one the attack deals. So the forecast
+ * shows the ordinary hit and a crit is always upside.
+ *
+ * NOT a balance pass. A flat chance for everyone, no crit stat on the sheet
+ * yet -- these are placeholders chosen to make the system observable, like the
+ * rest of the numbers in the bestiary, and the natural next step is moving the
+ * chance onto `CharacterDef` so a Performer can be built around it.
+ */
+export const CRIT_PERCENT = 12;
+export const CRIT_MULTIPLIER = 1.5;
+
+/** How large this unit's numbers are, relative to a level-1 sheet. */
+export const powerScaleOf = (u: Unit): number => u.def.powerScale ?? 1;
 
 /** Flat damage formula. Defense is diminishing-returns rather than subtractive. */
 export function computeDamage(source: Unit, ability: Ability, target: Unit): number {
   const frenzy = source.hp * 2 <= unitMaxHp(source) ? passive(source, 'frenzy') : 0;
   const atk = unitAttack(source) * (1 + frenzy / 100);
   const base = atk * ability.power;
-  const mitigated = base * (100 / (100 + effectiveDefense(target)));
-  const elemental = mitigated * elementMultiplier(ability.element, target.def.element);
+  // Mitigation is `K / (K + DEF)` -- diminishing returns, never negative damage,
+  // never immunity, and each point of DEF buys a constant slice of effective HP.
+  // Subtractive `ATK - DEF` has none of those properties: it needs clamping at
+  // zero, creates hard thresholds where an attacker flips from useful to
+  // useless, and makes many small hits worthless against armour.
+  //
+  // K is anchored to the ATTACKER's power scale, and that is the whole trick.
+  // With a fixed K the formula quietly expires: stats grow with level but the
+  // constant does not, so mitigation drifts from 0.69 to 0.24 between level 1
+  // and 80 and the SAME fight stretches from 7.5 hits to 22. Scaling K with the
+  // attacker keeps an even fight the same length at every level -- and because
+  // DEF still carries the DEFENDER's scale, a level gap falls out of the same
+  // expression for free: out-levelled attackers are resisted, over-levelled
+  // ones cut through. No separate level-difference term is needed, and adding
+  // one would count level twice.
+  const anchor = MITIGATION_ANCHOR * powerScaleOf(source);
+  const mitigated = base * (anchor / (anchor + effectiveDefense(target, damageTypeOf(ability))));
+  const elemental = mitigated * resistMultiplier(elementResistance(target, ability.element));
   const resisted = elemental * (1 - passive(target, 'resilient') / 100);
+  // The floor is there so a heavily mitigated hit still registers, but it must
+  // not apply to genuine immunity: an attack labelled IMMUNE that deals 1 is a
+  // lie, and the one-point difference is worth less than the label being true.
+  if (elemental === 0) return 0;
   return Math.max(1, Math.round(resisted));
+}
+
+/**
+ * A unit's resistance to one element, as a percentage.
+ *
+ * The wheel supplies the default and the sheet may override it. A runtime
+ * modifier layer -- "+40% fire resistance for three turns" -- adds on top of
+ * this and is where status effects will hook in; until statuses exist there is
+ * nothing to add, so this is the whole calculation.
+ */
+export function elementResistance(unit: Unit, element: Ability['element']): number {
+  if (!element) return 0;
+  return resistanceOf(element, unit.def.resistances) + (unit.resistMods[element] ?? 0);
 }
 
 /** HP an attacker recovers from a lifesteal passive, if any. */
@@ -132,7 +273,9 @@ export function scoreAction(
 
       const avgDef = living.reduce((s, e) => s + effectiveDefense(e), 0) / living.length;
       const mitigation = 100 / (100 + avgDef);
-      const turnsActive = Math.max(1, ability.power / BUFF_DECAY_PER_TURN);
+      // Modifiers run a fixed number of turns now rather than decaying, so the
+      // window a buff is worth anything over is the duration itself.
+      const turnsActive = DEFAULT_MODIFIER_TURNS;
 
       if (ability.stat === 'defense') {
         // Value a guard buff as the damage it will absorb: raising DEF by N

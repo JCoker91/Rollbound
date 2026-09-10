@@ -11,54 +11,43 @@ import { Summon } from './screens/Summon.tsx';
 import { Inventory } from './screens/Inventory.tsx';
 import { Events } from './screens/Events.tsx';
 import { AnimationLab } from './screens/AnimationLab.tsx';
-
-/**
- * Dev-only screens. Hidden unless `?dev=1` is in the URL, before the hash the
- * hub routes on: http://localhost:5173/?dev=1#anim
- *
- * A query param rather than `import.meta.env.DEV` on purpose: the point of the
- * gate is to be able to play the real game on the dev server AND to open the
- * tools against a production build when something only reproduces there.
- */
-const DEV_TOOLS = new URLSearchParams(window.location.search).has('dev');
-
-/**
- * Whether to offer the shortcut INTO dev mode. This one is build-time, because
- * a way in has to be reachable before the query param is set -- and a button
- * that turns on dev tools has no business existing in a shipped build.
- */
-const SHOW_DEV_ENTRY = import.meta.env.DEV;
-
-/** Flip dev mode, keeping the hash so you land where you asked to land. */
-function toggleDev(on: boolean, hash = window.location.hash): void {
-  const params = new URLSearchParams(window.location.search);
-  if (on) params.set('dev', '1');
-  else params.delete('dev');
-  const query = params.toString();
-  // A full navigation, not a hash change: DEV_TOOLS is read once at module load,
-  // so the tabs only reappear on a fresh parse of the URL.
-  window.location.href = `${window.location.pathname}${query ? `?${query}` : ''}${hash}`;
-}
+import { devTools, useDevTools } from './dev.ts';
+import { DevBadge } from './DevBadge.tsx';
 
 type Screen = 'home' | 'characters' | 'summon' | 'inventory' | 'events' | 'anim';
 
+/**
+ * The game's own navigation. Five tabs, and no dev screen among them.
+ *
+ * The animation lab used to appear here as a sixth tab in dev mode, which put
+ * a tool inside the shipped nav bar and changed its shape depending on a flag.
+ * It lives in the header now, next to the switch that reveals it, so every dev
+ * affordance is in one place and the nav is the nav.
+ */
 const TABS: { id: Screen; label: string; icon: string }[] = [
   { id: 'home', label: 'Home', icon: '⌂' },
   { id: 'characters', label: 'Characters', icon: '⚔' },
   { id: 'summon', label: 'Summon', icon: '✦' },
   { id: 'inventory', label: 'Inventory', icon: '◰' },
   { id: 'events', label: 'Events', icon: '◷' },
-  ...(DEV_TOOLS ? [{ id: 'anim' as const, label: 'Anim', icon: '▶' }] : []),
 ];
 
 /** The party you begin with, so a fresh save can fight immediately. */
 const STARTERS = ROSTER.map((d) => d.id);
 
-const IDS = TABS.map((t) => t.id);
+const IDS: Screen[] = TABS.map((t) => t.id);
 
-/** Screens are addressable by hash, so a tab survives a reload. */
+/**
+ * Screens are addressable by hash, so a tab survives a reload.
+ *
+ * The lab is addressable only while the tools are on -- the hash outlives the
+ * flag that made it valid, so arriving at `#anim` without dev mode lands on
+ * Home rather than on a blank `<main>`. Read live, not from a captured
+ * constant, because the flag now changes without a reload.
+ */
 function screenFromHash(): Screen {
   const raw = window.location.hash.replace('#', '') as Screen;
+  if (raw === 'anim') return devTools() ? raw : 'home';
   return IDS.includes(raw) ? raw : 'home';
 }
 
@@ -66,6 +55,7 @@ export function App() {
   const [profile, setProfile] = useState<Profile>(() => load(Date.now(), STARTERS));
   const [screen, setScreen] = useState<Screen>(screenFromHash);
   const [inBattle, setInBattle] = useState(false);
+  const dev = useDevTools();
 
   // Persist on every change. Cheap at this size, and it means a closed tab never
   // costs more than the last action.
@@ -81,6 +71,19 @@ export function App() {
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
+  // Turning the tools off while standing in the lab would leave an empty
+  // `<main>`, since the lab is the one screen with no player-facing form.
+  useEffect(() => {
+    if (!dev && screen === 'anim') setScreen('home');
+  }, [dev, screen]);
+
+  /** Wipe the save and start over from the tutorial roster. */
+  function reset(): void {
+    if (!confirm('Reset all progress on this device?')) return;
+    wipe();
+    setProfile(load(Date.now(), STARTERS));
+  }
+
   if (inBattle) {
     // Star picks are folded into the character sheets here, once, so nothing in
     // the battle engine needs to know the star system exists.
@@ -89,11 +92,20 @@ export function App() {
       // Level growth first, then star picks, so a star's percentage is of the
       // levelled stat rather than the base sheet.
       .map((d) => applyStars(applyLevel(d, profile.levels[d.id] ?? 1), progressFor(profile.stars, d.id)));
-    return <BattleScreen party={party} onExit={() => setInBattle(false)} />;
+    // The badge is a sibling of the screen, not part of it -- that is what
+    // makes it survive the hub/battle switch. The lab and the wipe are left
+    // out here: neither is reachable without leaving the fight first.
+    return (
+      <>
+        <BattleScreen party={party} onExit={() => setInBattle(false)} />
+        <DevBadge />
+      </>
+    );
   }
 
   return (
-    <div className="hub">
+    <>
+      <div className="hub">
       <header className="hub-top">
         <strong className="title">Stagebound</strong>
         <div className="wallet">
@@ -104,26 +116,6 @@ export function App() {
           <span className="coin xp" />
           <span>{short(profile.xp)}</span>
         </div>
-        {SHOW_DEV_ENTRY && (
-          <button
-            className="quiet dev-entry"
-            title={DEV_TOOLS ? 'Hide dev tools' : 'Show dev tools and open the animation lab'}
-            onClick={() => toggleDev(!DEV_TOOLS, DEV_TOOLS ? window.location.hash : '#anim')}
-          >
-            {DEV_TOOLS ? 'Exit dev' : '▶ Dev'}
-          </button>
-        )}
-        <button
-          className="quiet"
-          title="Clear the save stored in this browser"
-          onClick={() => {
-            if (!confirm('Reset all progress on this device?')) return;
-            wipe();
-            setProfile(load(Date.now(), STARTERS));
-          }}
-        >
-          Reset
-        </button>
       </header>
 
       <main className="hub-body">
@@ -134,7 +126,7 @@ export function App() {
         {screen === 'summon' && <Summon profile={profile} onProfile={setProfile} />}
         {screen === 'inventory' && <Inventory profile={profile} />}
         {screen === 'events' && <Events profile={profile} />}
-        {screen === 'anim' && DEV_TOOLS && <AnimationLab />}
+        {screen === 'anim' && dev && <AnimationLab />}
       </main>
 
       <nav className="hub-nav">
@@ -148,7 +140,16 @@ export function App() {
             {t.label}
           </button>
         ))}
+
       </nav>
-    </div>
+      </div>
+
+      <DevBadge
+        overNav
+        labActive={screen === 'anim'}
+        onLab={() => setScreen('anim')}
+        onReset={reset}
+      />
+    </>
   );
 }

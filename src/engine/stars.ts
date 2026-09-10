@@ -73,7 +73,8 @@ export function applyStars(def: CharacterDef, progress: StarProgress): Character
 
   let maxHp = def.maxHp;
   let attack = def.attack;
-  let defense = def.defense;
+  let physicalDefense = def.physicalDefense;
+  let magicalDefense = def.magicalDefense;
   const passives = [...(def.passives ?? [])];
   const abilities = def.abilities.map((a) => ({ ...a }));
 
@@ -85,7 +86,11 @@ export function applyStars(def: CharacterDef, progress: StarProgress): Character
           // rather than compounding into something the UI cannot explain.
           if (e.stat === 'maxHp') maxHp += Math.round((def.maxHp * e.percent) / 100);
           if (e.stat === 'attack') attack += Math.round((def.attack * e.percent) / 100);
-          if (e.stat === 'defense') defense += Math.round((def.defense * e.percent) / 100);
+          // A defensive node raises both tracks, matching the guard buff.
+          if (e.stat === 'defense') {
+            physicalDefense += Math.round((def.physicalDefense * e.percent) / 100);
+            magicalDefense += Math.round((def.magicalDefense * e.percent) / 100);
+          }
           break;
         }
         case 'passive':
@@ -103,7 +108,7 @@ export function applyStars(def: CharacterDef, progress: StarProgress): Character
     }
   }
 
-  return { ...def, maxHp, attack, defense, passives, abilities };
+  return { ...def, maxHp, attack, physicalDefense, magicalDefense, passives, abilities };
 }
 
 /** Rules text for one effect, generated from its own numbers. */

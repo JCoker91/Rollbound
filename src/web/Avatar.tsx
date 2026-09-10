@@ -19,6 +19,21 @@ interface Palette {
   rim: string;
 }
 
+/**
+ * What colour to draw a character who has no single element any more.
+ *
+ * Taken from the kit rather than from a field: the elements a character DEALS
+ * are the ones a player associates with them, and deriving it means a dual-
+ * element Performer cannot end up wearing a colour their abilities never use.
+ * Falls back to light for a purely non-elemental kit.
+ */
+export function themeOf(def: { abilities: { element?: Element; kind: string }[] }): Element {
+  // First elemental attack wins. A Performer with no elemental abilities at all
+  // falls through to `light`, which reads as neutral gold rather than claiming
+  // an element they do not have.
+  return def.abilities.find((a) => a.kind === 'attack' && a.element)?.element ?? 'light';
+}
+
 const PALETTE: Record<Element, Palette> = {
   fire: { light: '#ff8a5c', deep: '#5e1a10', rim: '#ffb98a' },
   wind: { light: '#5fd0a0', deep: '#0f3a2b', rim: '#a8f0d0' },
@@ -41,7 +56,7 @@ export function Avatar({
   size?: number;
   side?: Side;
 }) {
-  const p = PALETTE[def.element];
+  const p = PALETTE[themeOf(def)];
   const foe = side === 'enemy';
   const gid = `bdg-${foe ? 'e' : 'a'}-${def.id}`;
   // Allies read as rounded tokens; enemies as angular shards with spiked corners.
@@ -58,7 +73,7 @@ export function Avatar({
       height={size}
       className="avatar"
       role="img"
-      aria-label={`${def.name}, ${def.element} ${def.role}`}
+      aria-label={`${def.name}, ${def.role}`}
     >
       <defs>
         <linearGradient id={`${gid}-g`} x1="0" y1="0" x2="0" y2="1">

@@ -57,14 +57,33 @@ export function pacesetters(
   return sorted.filter((e) => e.level === pace);
 }
 
+/**
+ * The level a sheet was grown to, read back off its `powerScale`.
+ *
+ * Derived rather than stored. `applyLevel` deliberately leaves no `level`
+ * field on the sheet -- the damage formula anchors on the SCALE, and a level
+ * sitting there invites someone to put progression back inside combat maths
+ * that is meant not to know about it. This is exact for whole levels, which
+ * are the only kind there are, and it exists purely so the UI can say "Lv 12"
+ * instead of making the player infer it from a stat line.
+ *
+ * A sheet that never went through `applyLevel` has no scale and is level 1.
+ */
+export function levelOf(def: CharacterDef): number {
+  return Math.max(1, Math.round((((def.powerScale ?? 1) - 1) / GROWTH_PER_LEVEL) + 1));
+}
+
 /** A copy of the character grown to `level`. Applied before star picks. */
 export function applyLevel(def: CharacterDef, level: number): CharacterDef {
   if (level <= 1) return def;
   const scale = 1 + (level - 1) * GROWTH_PER_LEVEL;
   return {
     ...def,
+    // Travels with the sheet so the damage formula can anchor mitigation to it.
+    powerScale: scale,
     maxHp: Math.round(def.maxHp * scale),
     attack: Math.round(def.attack * scale),
-    defense: Math.round(def.defense * scale),
+    physicalDefense: Math.round(def.physicalDefense * scale),
+    magicalDefense: Math.round(def.magicalDefense * scale),
   };
 }

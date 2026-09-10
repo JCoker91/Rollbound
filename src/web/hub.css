@@ -29,11 +29,90 @@
 }
 
 /*
- * The way into the dev tools, rendered only on the Vite dev server. Dashed and
- * muted on purpose: it sits in the game's own header, so it has to be obviously
- * not part of the game.
+ * The dev affordances: the switch that turns the tools on and, once they are
+ * on, the way into the animation lab and the save wipe.
+ *
+ * They live on the nav bar's corner rather than in the header, so that the
+ * header -- title, wallet, nothing else -- is exactly what a player sees. The
+ * split is the point: with the switch off there is no evidence of any of this
+ * in the game's own chrome.
  */
-.hub-top .dev-entry {
+/*
+ * Both pieces are fixed to the viewport, not to a screen, so they survive the
+ * hub/battle switch and are reachable from everywhere -- including mid-fight,
+ * where the battle screen replaces the hub outright.
+ *
+ * Bottom-right because that corner is free in both layouts: the hub's content
+ * column is centred with gutters either side, and the battle's dock stops
+ * short of the right edge. The one thing they would collide with is the hub's
+ * nav bar, which `.over-nav` lifts them clear of.
+ */
+.dev-badge,
+.dev-panel {
+  position: fixed;
+  right: 10px;
+  /* Over everything: the battle stage runs to 900 for damage floaters. */
+  z-index: 2000;
+  border-radius: 8px;
+  /* Their own ground, so they read as laid on the app rather than as controls
+     belonging to whatever screen is behind them. */
+  background: rgba(16, 19, 26, 0.92);
+  border: 1px solid var(--line);
+}
+
+/* The switch, alone. One control, one shape, whatever state it is in. */
+.dev-badge {
+  bottom: 10px;
+  display: flex;
+  align-items: center;
+  padding: 4px 5px;
+}
+
+/*
+ * The tools it reveals, stacked directly above it.
+ *
+ * A column rather than a row: this is the list that grows as tools are added,
+ * and growing downward off a fixed bottom edge keeps the switch where your
+ * hand already is. A row would push the panel sideways across the screen
+ * instead.
+ */
+.dev-panel {
+  /* The switch is 34px tall on a 10px bottom edge, plus an 8px gap. */
+  bottom: 52px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  padding: 6px;
+  min-width: 118px;
+}
+
+.dev-panel-title {
+  font-size: 9px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--dim);
+  padding: 0 2px 1px;
+}
+
+/*
+ * Clear of the hub's nav bar, which the corner would otherwise sit on top of.
+ * The nav is ~61px tall (11px padding, a 17px icon and an 11px label), so this
+ * is that plus a small gap rather than a number chosen by eye -- and the panel
+ * keeps the same 42px above the switch it has everywhere else.
+ */
+.dev-badge.over-nav {
+  bottom: 70px;
+}
+
+.dev-panel.over-nav {
+  bottom: 112px;
+}
+
+/* Dashed and muted on purpose: these sit in the game's header, so they have to
+   be obviously not part of the game. */
+.dev-badge .dev-entry,
+.dev-panel .dev-link {
   font-size: 11px;
   padding: 3px 9px;
   letter-spacing: 0.04em;
@@ -41,9 +120,63 @@
   opacity: 0.7;
 }
 
-.hub-top .dev-entry:hover {
+.dev-badge .dev-entry:hover,
+.dev-panel .dev-link:hover {
   opacity: 1;
   border-color: var(--accent);
+}
+
+/* The switch, carrying its own state. */
+.dev-badge .dev-entry {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/*
+ * On: solid border, lit text, faint accent wash.
+ *
+ * The state has to survive being read at a glance from across the header, so
+ * it is carried by three things at once -- the lamp, the border going from
+ * dashed to solid, and the colour. Any one of them alone is the kind of
+ * difference you only notice once you already know to look for it.
+ */
+.dev-badge .dev-entry.on {
+  opacity: 1;
+  border-style: solid;
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(107, 164, 255, 0.12);
+}
+
+/* The lamp. Dark and flat when off, lit with a halo when on. */
+.dev-led {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--dim);
+  opacity: 0.5;
+}
+
+.dev-entry.on .dev-led {
+  background: var(--accent);
+  opacity: 1;
+  box-shadow: 0 0 0 2px rgba(107, 164, 255, 0.25);
+}
+
+/* The lab link marks itself when the lab is the screen you are on, the same
+   way a nav tab does -- it is navigation, and should behave like it. */
+.dev-panel .dev-link {
+  text-align: left;
+  width: 100%;
+}
+
+.dev-panel .dev-link.on {
+  opacity: 1;
+  border-style: solid;
+  border-color: var(--accent);
+  color: var(--text);
 }
 
 .wallet {
@@ -128,6 +261,7 @@ button.quiet:hover {
   border-top-color: var(--accent);
   background: rgba(107, 164, 255, 0.08);
 }
+
 
 .nav-icon {
   font-size: 17px;

@@ -166,13 +166,24 @@ function Detail({
           <div className="char-tags">
             <span className="tag lvl-tag">Lv {level}</span>
             <span className="tag">{ROLE_LABEL[def.role]}</span>
-            <span className="tag">{def.element}</span>
+            {/* The elements this kit can deal, not one the sheet was filed
+                under -- a dual-element Performer shows both. */}
+            {[...new Set(def.abilities.filter((a) => a.kind === 'attack').map((a) => a.element))].map(
+              (e) => (
+                <span key={e} className="tag">
+                  {e}
+                </span>
+              ),
+            )}
             <StarPips level={progress.level} />
           </div>
           <div className="stat-row">
             <Stat label="HP" base={def.maxHp} live={live.maxHp} />
             <Stat label="ATK" base={def.attack} live={live.attack} />
-            <Stat label="DEF" base={def.defense} live={live.defense} />
+            {/* Two tracks now, shown separately -- a single averaged DEF would
+                hide the whole point of the split. */}
+            <Stat label="P.DEF" base={def.physicalDefense} live={live.physicalDefense} />
+            <Stat label="M.DEF" base={def.magicalDefense} live={live.magicalDefense} />
           </div>
           <div className="dim copies">
             {copies} pulled · <strong>{available}</strong> spare

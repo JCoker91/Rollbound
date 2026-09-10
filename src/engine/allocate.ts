@@ -90,6 +90,9 @@ function optionsFor(unit: Unit, dice: number[], allies: Unit[], enemies: Unit[])
   }
 
   for (const ability of unit.def.abilities) {
+    // The auto-battler has to respect cooldowns for the same reason the player
+    // does, or idle play quietly gets a better kit than manual play.
+    if ((unit.cooldowns[ability.name] ?? 0) > 0) continue;
     const placement = bestTarget(unit, ability, allies, enemies);
     if (!placement) continue;
     for (const mask of payingMasks(dice, ability)) {

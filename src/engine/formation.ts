@@ -37,6 +37,16 @@ export interface Slot {
 
 export interface EncounterDef {
   name: string;
+  /**
+   * What level this encounter's enemies are fielded at. Defaults to 1.
+   *
+   * This is the difficulty dial for an idle game, and it is deliberately the
+   * ONLY one for a re-used encounter: the same five creatures at level 30 are a
+   * wall the same five at level 1 are not, and authoring thirty distinct
+   * bestiaries to say the same thing would be work with no design in it.
+   * Enemies with genuinely different BEHAVIOUR still earn their own defs.
+   */
+  enemyLevel?: number;
   /** Backdrop image, drawn behind both formations. */
   background: string;
   /** Five, in roster order. */
@@ -119,14 +129,55 @@ export const STANDARD_PARTY_SLOTS: Slot[] = [
   slot(1, 2, 0.32, 0.85),
 ];
 
+/**
+ * A boss and its retinue: a two-creature guard line, the boss alone behind it.
+ *
+ * Order matters -- enemies fill slots in the order they are supplied -- so the
+ * boss must be supplied LAST to land in the back rank.
+ *
+ * Putting it there is not just staging. `range` counts occupied enemy columns,
+ * so a boss behind two live ranks is out of reach of every melee ability until
+ * the retinue is cleared. The guards therefore sit in DIFFERENT columns: two
+ * abreast would collapse the formation to two ranks and put the boss inside
+ * melee reach from the opening turn.
+ *
+ * Two guards and not five. The gate was the boss's own bulk PLUS a level bump
+ * PLUS a full second encounter stapled to the front of it, and three stacked
+ * multipliers is what made stage 10 a fifteen-level wall rather than a fight.
+ * Cutting the retinue is the one of the three that costs the boss nothing --
+ * it keeps every point of its HP and every degree of its rotation, and what it
+ * loses is a crowd that was never the interesting part.
+ */
+export const BOSS_ENEMY_SLOTS: Slot[] = [
+  slot(2, 0, 0.60, 0.66),
+  slot(3, 2, 0.70, 0.90),
+  // The back rank holds TWO slots (y 0.66 and 0.78), not three, so there is no
+  // middle row for a boss to stand in. It goes between them instead: x centred
+  // on the pair, y on the lower one's floor line, so it is planted on the same
+  // ground its retinue stands on and towers up from there. Placing it at the
+  // midpoint y left it floating -- a sprite hangs UPWARD from its feet, and at
+  // 2.4x a Performer that half-slot of air is very visible.
+  slot(4, 1, 0.90, 0.80),
+];
+
 export const STANDARD_ENEMY_SLOTS: Slot[] = [
   // Front rank first, so a small encounter forms a line facing the party and a
   // boss supplied last ends up at the back behind its own adds.
-  slot(2, 0, 0.62, 0.66),
-  slot(2, 1, 0.60, 0.80),
-  slot(3, 0, 0.75, 0.62),
-  slot(3, 1, 0.73, 0.73),
-  slot(3, 2, 0.71, 0.85),
-  slot(4, 0, 0.88, 0.66),
-  slot(4, 1, 0.86, 0.78),
+  //
+  // Spread wider than the party's, because the enemy block holds up to seven
+  // against five and the stage lost a third of its height to the dock -- the
+  // sprites did not shrink with it, so the same percentages that read as a
+  // formation on a full-height stage read as a pile on this one.
+  //
+  // The front rank sits at 0.58+ rather than hard against the party. Widening
+  // the block earlier pushed it left until the two sides looked interlocked
+  // instead of facing each other across a stage; the space between them is
+  // what makes the formation read as two formations.
+  slot(2, 0, 0.60, 0.64),
+  slot(2, 1, 0.58, 0.82),
+  slot(3, 0, 0.75, 0.60),
+  slot(3, 1, 0.73, 0.74),
+  slot(3, 2, 0.71, 0.90),
+  slot(4, 0, 0.90, 0.64),
+  slot(4, 1, 0.88, 0.80),
 ];
