@@ -1,0 +1,21 @@
+{
+  "clips": {
+    "idle": {
+      "anchorX": 0.496,
+      "aspect": 1.07109,
+      "footPad": 0.0,
+      "frames": 8,
+      "loops": true,
+      "normalised": 1.0,
+      "pxH": 211,
+      "restFill": 0.976303,
+      "size": 395912,
+      "src": "/sprites/brax/brax_idle.png",
+      "trimmed": 0
+    }
+  },
+  "stamp": {
+    "sha256": "a905a3ad3aaa7e3671ef2629dbfad7c93ae8ac71c5ffd2500e828b62dc1a4a7c",
+    "size": 49041
+  }
+}

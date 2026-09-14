@@ -150,14 +150,14 @@ export const STANDARD_PARTY_SLOTS: Slot[] = [
  */
 export const BOSS_ENEMY_SLOTS: Slot[] = [
   slot(2, 0, 0.60, 0.66),
-  slot(3, 2, 0.70, 0.90),
+  slot(3, 2, 0.70, 0.9),
   // The back rank holds TWO slots (y 0.66 and 0.78), not three, so there is no
   // middle row for a boss to stand in. It goes between them instead: x centred
   // on the pair, y on the lower one's floor line, so it is planted on the same
   // ground its retinue stands on and towers up from there. Placing it at the
   // midpoint y left it floating -- a sprite hangs UPWARD from its feet, and at
   // 2.4x a Performer that half-slot of air is very visible.
-  slot(4, 1, 0.90, 0.80),
+  slot(4, 1, 0.90, 0.8),
 ];
 
 export const STANDARD_ENEMY_SLOTS: Slot[] = [
@@ -175,9 +175,9 @@ export const STANDARD_ENEMY_SLOTS: Slot[] = [
   // what makes the formation read as two formations.
   slot(2, 0, 0.60, 0.64),
   slot(2, 1, 0.58, 0.82),
-  slot(3, 0, 0.75, 0.60),
+  slot(3, 0, 0.75, 0.6),
   slot(3, 1, 0.73, 0.74),
-  slot(3, 2, 0.71, 0.90),
+  slot(3, 2, 0.71, 0.9),
   slot(4, 0, 0.90, 0.64),
-  slot(4, 1, 0.88, 0.80),
+  slot(4, 1, 0.88, 0.8),
 ];

@@ -87,7 +87,9 @@ export function resolveModifierAmount(
   const from = of === 'casterCurrent' ? currentStat(caster, stat) : baseStat(target, stat);
   const amount = (from * percent) / 100;
   // Away from zero, so a small buff is never rounded into nothing and a small
-  // shred always bites at least a point.
+  // shred always bites at least a point. Safe again now that a point is a TENTH
+  // of a damage point: rounding 20% of ATK 26 up from 5.2 to 5 costs 4%, where
+  // at a whole-point scale the same floor turned +20% into +31%.
   return amount < 0 ? -Math.max(1, Math.round(-amount)) : Math.max(1, Math.round(amount));
 }
 
@@ -96,7 +98,7 @@ export const damageTypeOf = (a: Ability): DamageType => a.damageType ?? 'physica
 
 /** Heals scale off the caster's ATK, same as damage, so support scales too. */
 export function computeHeal(source: Unit, ability: Ability): number {
-  return Math.round(unitAttack(source) * ability.power);
+  return Math.round((unitAttack(source) * ability.power) / ATK_PER_DAMAGE);
 }
 
 /**
@@ -108,11 +110,21 @@ export function activePassives(u: Unit): Passive[] {
   return [...(u.def.passives ?? []), ...bought];
 }
 
+/**
+ * The kinds that are a percentage applied to their owner.
+ *
+ * `extraDie` is the first passive that is not one of these -- it puts a die in
+ * the shared pool rather than changing a number on a sheet -- so "every passive
+ * has a percent" stopped being true and this is the type that says which ones
+ * still do.
+ */
+export type NumericPassive = Extract<Passive, { percent: number }>['kind'];
+
 /** Summed, so buying a passive you already have stacks rather than replacing it. */
-const passive = (u: Unit, kind: Passive['kind']): number =>
+const passive = (u: Unit, kind: NumericPassive): number =>
   activePassives(u)
     .filter((p) => p.kind === kind)
-    .reduce((n, p) => n + p.percent, 0);
+    .reduce((n, p) => n + ('percent' in p ? p.percent : 0), 0);
 
 /** Multiplier on attack, defense and max HP from bought upgrades. */
 export const statScale = (u: Unit): number => 1 + u.upgrades * UPGRADE_STAT_BONUS;
@@ -122,10 +134,32 @@ export const unitAttack = (u: Unit): number => currentStat(u, 'attack');
 export const unitMaxHp = (u: Unit): number => Math.round(u.def.maxHp * statScale(u));
 
 /**
+ * ATK points per point of damage, at power 1.0 and no mitigation.
+ *
+ * This is what lets ATK read as 26 while a hit lands for 2 on an 11 HP bar.
+ * HP is small because a bar the player can count is worth more than one reading
+ * 780, and that forces damage to be a small integer -- but a stat that moves in
+ * whole damage points has no resolution left: ATK 2 to ATK 3 is a 50% jump
+ * where the roster was authored at 37%, and +10% of it rounds to nothing.
+ *
+ * So the stat is measured in a FINER unit than its output. ATK and DEF are in
+ * tenths of a damage point; the formula divides once, at the end. Nothing else
+ * in the engine has to know, and every stat on every sheet is a whole number
+ * again -- which is the whole reason the fractional-stat plumbing this replaced
+ * could be deleted.
+ */
+export const ATK_PER_DAMAGE = 10;
+
+/**
  * The defense value that halves incoming damage, at power scale 1.
  *
  * This constant is what makes `DEF / (anchor + DEF)` mean anything: it sets how
  * much armour is "a lot". Fixed, it silently expires -- see `computeDamage`.
+ *
+ * It moves with the sheet: the ONLY thing that matters is the ratio
+ * `DEF / anchor`, so scaling every defence stat and this constant by the same
+ * number leaves every mitigation percentage in the game exactly where it was.
+ * A hundred, because DEF is in the same tenths-of-a-point unit as ATK.
  */
 export const MITIGATION_ANCHOR = 100;
 
@@ -149,11 +183,14 @@ export const CRIT_MULTIPLIER = 1.5;
 /** How large this unit's numbers are, relative to a level-1 sheet. */
 export const powerScaleOf = (u: Unit): number => u.def.powerScale ?? 1;
 
-/** Flat damage formula. Defense is diminishing-returns rather than subtractive. */
-export function computeDamage(source: Unit, ability: Ability, target: Unit): number {
+/**
+ * A hit's damage before the defender's `resilient` bank is spent on it, as an
+ * exact number. The shared half of `computeDamage` and `spendResilience`.
+ */
+function elementalDamage(source: Unit, ability: Ability, target: Unit): number {
   const frenzy = source.hp * 2 <= unitMaxHp(source) ? passive(source, 'frenzy') : 0;
   const atk = unitAttack(source) * (1 + frenzy / 100);
-  const base = atk * ability.power;
+  const base = (atk * ability.power) / ATK_PER_DAMAGE;
   // Mitigation is `K / (K + DEF)` -- diminishing returns, never negative damage,
   // never immunity, and each point of DEF buys a constant slice of effective HP.
   // Subtractive `ATK - DEF` has none of those properties: it needs clamping at
@@ -171,13 +208,55 @@ export function computeDamage(source: Unit, ability: Ability, target: Unit): num
   // one would count level twice.
   const anchor = MITIGATION_ANCHOR * powerScaleOf(source);
   const mitigated = base * (anchor / (anchor + effectiveDefense(target, damageTypeOf(ability))));
-  const elemental = mitigated * resistMultiplier(elementResistance(target, ability.element));
-  const resisted = elemental * (1 - passive(target, 'resilient') / 100);
+  return mitigated * resistMultiplier(elementResistance(target, ability.element));
+}
+
+/** The exact damage a unit's `resilient` passives take off one hit. */
+const resilienceShare = (target: Unit, raw: number): number => {
+  const pct = passive(target, 'resilient');
+  return pct > 0 ? (raw * pct) / 100 : 0;
+};
+
+/**
+ * Whole points this hit's resilience is worth, WITHOUT spending the bank.
+ *
+ * `resilient` is a percentage of a number that is usually 1, 2 or 3, and
+ * multiplying before rounding quietly deleted it: measured against the damage
+ * the game actually deals, a stated 8% delivered 0.7% and a stated 10% just
+ * 1.3%, while 18% delivered 21.3%. It is not a curve that can be re-tuned
+ * either -- 3 is the modal hit and `3 x 0.85` rounds back to 3, so a single
+ * point of resilience flips 37% of all damage at once. Banking the fraction
+ * until it is worth a whole point brings every value within ~1 point of what
+ * it claims. See `Unit.carry`.
+ *
+ * Split into a peek and a spend because `computeDamage` has to stay PURE: the
+ * forecast panel calls it to show what a hit would do and the AI calls it
+ * dozens of times a turn, and neither may advance the defender's bank. Both
+ * read the same carry, so the forecast is exact.
+ */
+const peekResilience = (target: Unit, raw: number): number =>
+  Math.floor((target.carry.resilient ?? 0) + resilienceShare(target, raw));
+
+/**
+ * Advance the resilience bank for one landed hit.
+ *
+ * Called once, by `strike`, right after the damage it reported. Forgetting it
+ * fails closed rather than open -- a bank that never advances never reaches a
+ * whole point, so resilience simply stops applying.
+ */
+export function spendResilience(source: Unit, ability: Ability, target: Unit): void {
+  const raw = elementalDamage(source, ability, target);
+  if (raw > 0) bank(target, 'resilient', resilienceShare(target, raw));
+}
+
+/** Flat damage formula. Defense is diminishing-returns rather than subtractive. */
+export function computeDamage(source: Unit, ability: Ability, target: Unit): number {
+  const raw = elementalDamage(source, ability, target);
   // The floor is there so a heavily mitigated hit still registers, but it must
   // not apply to genuine immunity: an attack labelled IMMUNE that deals 1 is a
   // lie, and the one-point difference is worth less than the label being true.
-  if (elemental === 0) return 0;
-  return Math.max(1, Math.round(resisted));
+  if (raw === 0) return 0;
+  return Math.max(1, Math.max(1, Math.round(raw)) - peekResilience(target, raw));
 }
 
 /**
@@ -193,17 +272,32 @@ export function elementResistance(unit: Unit, element: Ability['element']): numb
   return resistanceOf(element, unit.def.resistances) + (unit.resistMods[element] ?? 0);
 }
 
+/**
+ * Add a fractional amount to a unit's bank and hand back the whole points.
+ *
+ * See `Unit.carry`. A percentage of a small number is usually less than one
+ * point, and both ways of rounding it are wrong; banking makes "12% of every
+ * hit" mean 12% however small the hits are.
+ */
+export function bank(u: Unit, key: string, amount: number): number {
+  if (amount <= 0) return 0;
+  const total = (u.carry[key] ?? 0) + amount;
+  const whole = Math.floor(total);
+  u.carry[key] = total - whole;
+  return whole;
+}
+
 /** HP an attacker recovers from a lifesteal passive, if any. */
 export function lifestealHeal(source: Unit, dealt: number): number {
   const pct = passive(source, 'lifesteal');
-  return pct > 0 ? Math.max(1, Math.round((dealt * pct) / 100)) : 0;
+  return pct > 0 ? bank(source, 'lifesteal', (dealt * pct) / 100) : 0;
 }
 
 /** Damage a melee attacker takes back from a thorns passive, if any. */
 export function thornsDamage(target: Unit, ability: Ability, dealt: number): number {
   if (ability.range > 1) return 0;
   const pct = passive(target, 'thorns');
-  return pct > 0 ? Math.max(1, Math.round((dealt * pct) / 100)) : 0;
+  return pct > 0 ? bank(target, 'thorns', (dealt * pct) / 100) : 0;
 }
 
 /**
@@ -233,6 +327,35 @@ export function canTarget(ability: Ability, from: Unit, centre: Pos, units: Unit
   if (scope === 'self') return samePos(centre, from.pos);
   if (scope === 'all') return true;
   return withinReach(ability, from, centre, units);
+}
+
+/**
+ * Stat points a buff will actually add to `target` on one track.
+ *
+ * `Ability.power` is the amount ONLY under the legacy authoring, where a buff
+ * carries no `effects` list. An ability WITH effects keeps its real numbers
+ * there -- Rally's `power` is a vestigial 20 while its effect is +20% of the
+ * caster's current ATK -- and scoring those off `power` read the 20 as twenty
+ * flat stat points. That is why Rally was the single most-used ability in
+ * simulation at 25% of every player action: the AI thought it was enormous.
+ */
+function buffStatGain(source: Unit, ability: Ability, target: Unit, stat: ModStat): number {
+  if (!ability.effects) {
+    const tracks: ModStat[] =
+      (ability.stat ?? 'attack') === 'defense'
+        ? ['physicalDefense', 'magicalDefense']
+        : ['attack'];
+    return tracks.includes(stat) ? ability.power : 0;
+  }
+  let total = 0;
+  for (const fx of ability.effects) {
+    if (fx.do !== 'modify' || !fx.stats.includes(stat)) continue;
+    // A self-buff bundled into a team ability is worth nothing to anyone else,
+    // and counting it for each ally is how a one-target effect scores five.
+    if ((fx.on ?? 'target') === 'self' && target !== source) continue;
+    total += resolveModifierAmount(source, target, stat, fx.percent, fx.of);
+  }
+  return total;
 }
 
 /**
@@ -272,7 +395,7 @@ export function scoreAction(
       if (living.length === 0 || hits.length === 0) return 0;
 
       const avgDef = living.reduce((s, e) => s + effectiveDefense(e), 0) / living.length;
-      const mitigation = 100 / (100 + avgDef);
+      const mitigation = MITIGATION_ANCHOR / (MITIGATION_ANCHOR + avgDef);
       // Modifiers run a fixed number of turns now rather than decaying, so the
       // window a buff is worth anything over is the duration itself.
       const turnsActive = DEFAULT_MODIFIER_TURNS;
@@ -283,8 +406,11 @@ export function scoreAction(
         const avgAtk = living.reduce((s, e) => s + e.def.attack, 0) / living.length;
         return hits.reduce((sum, t) => {
           const before = effectiveDefense(t);
-          const after = before + ability.power;
-          const saved = avgAtk * (100 / (100 + before) - 100 / (100 + after));
+          const after = before + buffStatGain(source, ability, t, 'physicalDefense');
+          const saved =
+            (avgAtk / ATK_PER_DAMAGE) *
+            (MITIGATION_ANCHOR / (MITIGATION_ANCHOR + before) -
+              MITIGATION_ANCHOR / (MITIGATION_ANCHOR + after));
           return sum + Math.max(0, saved) * turnsActive * EXPECTED_ACT_RATE;
         }, 0);
       }
@@ -297,7 +423,11 @@ export function scoreAction(
         const powers = t.def.abilities.filter((a) => a.kind === 'attack').map((a) => a.power);
         if (powers.length === 0) return sum;
         const avgPower = powers.reduce((a, b) => a + b, 0) / powers.length;
-        return sum + ability.power * avgPower * mitigation * turnsActive * EXPECTED_ACT_RATE;
+        const gain = buffStatGain(source, ability, t, 'attack');
+        return (
+          sum +
+          ((gain * avgPower) / ATK_PER_DAMAGE) * mitigation * turnsActive * EXPECTED_ACT_RATE
+        );
       }, 0);
     }
   }
@@ -313,11 +443,13 @@ export function scoreUpgrade(unit: Unit, enemies: Unit[]): number {
   if (living.length === 0) return 0;
 
   const avgDef = living.reduce((n, e) => n + effectiveDefense(e), 0) / living.length;
-  const mitigation = 100 / (100 + avgDef);
+  const mitigation = MITIGATION_ANCHOR / (MITIGATION_ANCHOR + avgDef);
   const powers = unit.def.abilities.filter((a) => a.kind === 'attack').map((a) => a.power);
   const avgPower = powers.length ? powers.reduce((a, b) => a + b, 0) / powers.length : 1;
 
-  const perHit = unit.def.attack * UPGRADE_STAT_BONUS * avgPower * mitigation;
+  const perHit =
+    ((unit.def.attack * UPGRADE_STAT_BONUS * avgPower) / ATK_PER_DAMAGE) * mitigation;
   const EXPECTED_REMAINING_ACTS = 5;
-  return perHit * EXPECTED_REMAINING_ACTS + 18;
+  // The flat term is a floor in DAMAGE units, so it moves with the stat scale.
+  return perHit * EXPECTED_REMAINING_ACTS + 1;
 }

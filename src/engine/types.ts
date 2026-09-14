@@ -123,6 +123,70 @@ export type Effect =
       on?: EffectTarget;
     };
 
+/**
+ * A chain symbol.
+ *
+ * Deliberately ORTHOGONAL to element, weapon and role: not every blade shares
+ * one, not every fire ability shares one. Scattered across the roster so that
+ * finding which Performers combine is its own kind of discovery, and so that
+ * the composition axis it creates pulls in a different direction from the cost
+ * spread (BATTLE_DESIGN.md §4).
+ *
+ * Ten of them, two per character. Measured against a random five-Performer
+ * team: one symbol each leaves 36% of teams unable to chain at all, three makes
+ * chains automatic at ~5 live options, and two lands on 2-3 -- reliably
+ * available, never free, and a real choice of which to run.
+ *
+ * The names mean nothing on purpose. A symbol called `flame` would be read as
+ * the fire symbol and quietly re-couple the axis to elements.
+ */
+export type ChainSymbol =
+  | 'crescent'
+  | 'ember'
+  | 'thorn'
+  | 'tide'
+  | 'anvil'
+  | 'lantern'
+  | 'veil'
+  | 'spiral'
+  | 'crown'
+  | 'quill';
+
+/**
+ * What an ability does EXTRA when it chains.
+ *
+ * The trigger belongs to the ability doing the chaining, never to the symbol.
+ * That is the mechanic's most important structural decision: the same symbol
+ * does different things depending on who chains it, so the question stops being
+ * "do I have the symbol" and becomes "whose trigger do I want to fire".
+ * Symbol-owns-the-effect would collapse into a lookup table.
+ *
+ * Three shapes, because the design's own examples need all three and no more:
+ *
+ * - `effects` APPENDS -- "deal an additional 30% of ATK", "heal self 20%".
+ * - `retarget` REDIRECTS -- "buff the whole team instead of one ally".
+ * - `amplify` DEEPENS an existing modifier -- "shred by an additional amount".
+ *
+ * `amplify` cannot be expressed as an appended `modify`, which is why it is its
+ * own field rather than sugar: modifiers are keyed by ability name, so a second
+ * modify from the same ability REFRESHES the first instead of stacking with it
+ * (see `applyModifier`). Appending would silently overwrite the shred with the
+ * bonus rather than adding to it.
+ */
+export interface ChainTrigger {
+  /** Player-facing text. Written as the clause it adds, not a sentence. */
+  text: string;
+  /** Extra effects, appended after the ability's own and resolved in order. */
+  effects?: Effect[];
+  /** Send every effect aimed at `target` somewhere else instead. */
+  retarget?: EffectTarget;
+  /**
+   * Added to the `percent` of every `modify` effect, WITH ITS SIGN. A shred of
+   * -25 amplified by -10 becomes -35; writing +10 there would weaken it.
+   */
+  amplify?: number;
+}
+
 export interface Ability {
   name: string;
   cost: number;
@@ -157,6 +221,20 @@ export interface Ability {
    * it explicitly, so nothing relies on the default.
    */
   damageType?: DamageType;
+  /**
+   * The chain symbol this ability carries, if any. Resolving it ARMS the symbol
+   * for the rest of the round; a later ability sharing it fires that ability's
+   * own `trigger`.
+   */
+  symbol?: ChainSymbol;
+  /**
+   * What this ability does extra when it chains -- that is, when its symbol was
+   * already armed by something resolved earlier this round.
+   *
+   * An ability can carry a symbol with no trigger (it only ever arms for
+   * others) or a trigger with no symbol (dead weight, and a content bug).
+   */
+  trigger?: ChainTrigger;
   /**
    * How many enemy RANKS deep this reaches: 1 is the front line only, 2 the
    * front two, and so on. Counted over ranks that still hold someone, so
@@ -211,12 +289,82 @@ export interface Ability {
  * Always-on effects. Most low-level enemies have none; elites have one and
  * bosses several.
  */
-export type Passive =
+/**
+ * A kind of die: the faces it can show.
+ *
+ * A face of **0 is a blank** -- the die rolled nothing and cannot be spent at
+ * all this turn. That is the only lever that genuinely weakens a die in this
+ * game, and it is worth saying why: a wildcard costs "any single die, whatever
+ * its value", so a `1` buys an action exactly as well as a `6`. Lowering a
+ * die's faces therefore does NOT make it weaker -- measured over all 7776 rolls
+ * of 5d6, adding a d3 beats adding a true d6 at every cost from 1 to 12,
+ * because small dice are precision tools for hitting exact sums. Blanks are
+ * what move the number of dice a turn actually has.
+ */
+export interface DieSpec {
+  id: string;
+  /** Every face, including blanks as `0`. Length is the die's side count. */
+  faces: number[];
+  /** Shown on the die's tooltip. */
+  label: string;
+}
+
+/**
+ * One die in this turn's pool.
+ *
+ * An object rather than a number, and identified by `id` rather than by its
+ * position, because the pool is MUTABLE: abilities can add dice, remove them,
+ * or change what one is showing, and anything holding an index into the pool
+ * breaks the first time one of those happens. Queued actions and the tray's
+ * selection both name dice by id for that reason.
+ */
+export interface Die {
+  /** Unique within the pool for as long as the pool lives. */
+  id: string;
+  spec: DieSpec;
+  /** The face showing right now. 0 is a blank and can never be spent. */
+  value: number;
+  /**
+   * The face it landed on, before anything altered it.
+   *
+   * Kept so the tray can say a die has been CHANGED rather than silently
+   * showing a different number -- an ability that doubles a die is only
+   * legible if the original is still visible.
+   */
+  rolled: number;
+  /** Promised to a queued action, or already spent by a resolved one. */
+  spent: boolean;
+  /** Character who contributed it; absent for the party's own standard dice. */
+  source?: string;
+}
+
+export type Passive = {
+  /**
+   * What the player calls it. Innate passives always have one -- it is how a
+   * Performer's intent is stated on their sheet, where `kind` would only say
+   * "resilient" for every durable character in the game.
+   *
+   * Optional because a passive granted by an UPGRADE is already named by the
+   * tier that granted it, and repeating that name beside it reads as two
+   * different things (see README, the `Herbalist` / `regen` duplication).
+   */
+  name?: string;
+} & (
   | { kind: 'regen'; percent: number }
   | { kind: 'thorns'; percent: number }
   | { kind: 'resilient'; percent: number }
   | { kind: 'frenzy'; percent: number }
-  | { kind: 'lifesteal'; percent: number };
+  | { kind: 'lifesteal'; percent: number }
+  /**
+   * Puts an extra die in the shared pool while this character is alive.
+   *
+   * The first passive that is not a number applied to its owner, and the reason
+   * the union needed widening: every other kind is a self-buff, which cannot
+   * express a Performer whose whole intent is that the TROUPE does more. See
+   * `ladder` for how it grows.
+   */
+  | { kind: 'extraDie'; die: DieSpec; ladder?: DieSpec[] }
+);
 
 /**
  * One pick on a character's star tree.
@@ -287,6 +435,15 @@ export interface SpriteSheet {
    * rounding has to land on the pixels that actually exist in the PNG.
    */
   pxH?: number;
+  /**
+   * What one pixel of the SHARED 128px canvas is worth in this art, in the
+   * art's own pixels -- so the renderer can snap a figure to whole multiples of
+   * it. `pxH` for art drawn on 128, `pxH / 2` for art drawn on 256.
+   *
+   * Separate from `pxH` because the two answer different questions: `pxH` is
+   * how tall the file is, `snapPx` is how big a step in it counts as clean.
+   */
+  snapPx?: number;
   /**
    * A packed idle strip: `frames` frames side by side, every one cropped to the
    * same box so only the intended parts move, and looped -- the pack step trims
@@ -385,6 +542,27 @@ export interface CharacterDef {
    * caught by it is then a planning mistake rather than bad luck.
    */
   rotatesResistance?: { immuneFor: number; weakFor: number };
+  /**
+   * Damage this creature deals grows every turn once the fight runs long.
+   *
+   * A soft enrage, and the structural answer to a stall. Mitigation is a
+   * FRACTION of incoming damage, so it scales with the ramp and can never
+   * cancel it; healing is a FLAT amount per cast, so a growing damage source
+   * beats it outright. That is the exact hole a previous balance pass fell
+   * into -- flat enemy damage is always healable, and one Sanctuary cancelled
+   * five creatures for two dice -- pointing the other way.
+   *
+   * LINEAR, not compounding: `1 + percent/100 * (turn - after)`. Compounding
+   * 5% is x2.65 by turn 20 and x7 by turn 40, which stops being an anti-stall
+   * and becomes a difficulty setting. Linear 5% is the x2-at-twenty-turns the
+   * mechanic was asked for.
+   *
+   * `after` is what keeps it honest. An intended boss fight runs ~14 turns, so
+   * a ramp starting at turn 1 makes the NORMAL fight 65% harder -- a tuning
+   * change dressed up as a mechanic. Starting it at 10 leaves the intended
+   * fight at x1.2 and puts the staller at x2.0 by turn 30.
+   */
+  ramp?: { percent: number; after: number };
 }
 
 /** A stat a modifier can move. Not max HP -- see `Modifier`. */
@@ -457,6 +635,19 @@ export interface Unit {
   upgrades: number;
   /** Remaining cooldown per ability name; absent means ready. */
   cooldowns: Record<string, number>;
+  /**
+   * Fractional HP owed by percentage passives, banked until it is worth a point.
+   *
+   * Regen, thorns and lifesteal are all percentages of numbers that are now
+   * SMALL: 4% of a 9 HP healer is 0.36, and both ways of turning that into an
+   * integer are wrong -- rounding down means the passive never fires at all,
+   * and the old `max(1, ...)` floor paid out a whole point every turn, which on
+   * a 9 HP pool is 11% a turn instead of 4%.
+   *
+   * Banking the remainder makes the percentage exact over time and leaves the
+   * tuning numbers meaning what they say at any scale. Keyed by passive kind.
+   */
+  carry: Record<string, number>;
   /**
    * Resistance changes applied during the battle, added on top of the sheet's
    * own. Percentages, same sign convention: positive resists.

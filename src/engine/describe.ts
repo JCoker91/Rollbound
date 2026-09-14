@@ -1,3 +1,4 @@
+import { describeDie } from './dice.ts';
 import type { Ability, Effect, ModStat, Passive } from './types.ts';
 import { DEFAULT_MODIFIER_TURNS } from './combat.ts';
 import { STRONG_RESIST, WEAK_RESIST, strongAgainst, weakTo } from './elements.ts';
@@ -132,9 +133,29 @@ export function describeAbility(a: Ability): string {
       return `Restores ${pct(a.power)} of ATK as HP to ${targetPhrase(a)}.`;
     case 'buff': {
       const stat = a.stat === 'defense' ? 'DEF' : 'ATK';
-      return `Grants +${a.power} ${stat} to ${targetPhrase(a)} for ${DEFAULT_MODIFIER_TURNS} turns.`;
+      // A flat amount in STAT units, and stats are single digits now, so the
+      // authored number can carry a decimal. Shown to one place.
+      const amount = Math.round(a.power * 10) / 10;
+      return `Grants +${amount} ${stat} to ${targetPhrase(a)} for ${DEFAULT_MODIFIER_TURNS} turns.`;
     }
   }
+}
+
+/**
+ * What this ability's symbol does, as one line.
+ *
+ * Two sentences at most, because this sits under an ability in a list. The
+ * distinction the wording has to carry is that carrying a symbol and having a
+ * trigger are DIFFERENT things -- an ability with a symbol and no trigger only
+ * ever helps somebody else, and a player who cannot see that will wonder why
+ * their chain did nothing.
+ */
+export function describeChain(a: Ability): string | null {
+  if (!a.symbol) return null;
+  const mark = cap(a.symbol);
+  return a.trigger
+    ? `${mark}. If ${mark} was already played this turn, ${a.trigger.text}.`
+    : `${mark}. Plays ${mark} for whoever acts after.`;
 }
 
 /** How this ability's element interacts with the matchup wheel. */
@@ -171,6 +192,11 @@ export function describePassive(p: Passive): string {
       return `Deals ${p.percent}% more damage while below half HP.`;
     case 'lifesteal':
       return `Recovers ${p.percent}% of the damage it deals as HP.`;
+    case 'extraDie':
+      // Says WHILE IT LIVES, because that is the whole counterplay: the pool is
+      // rebuilt every turn from who is still standing, so the die goes the turn
+      // after its owner does.
+      return `While this Performer is standing, the party rolls one extra die — ${describeDie(p.die)}.`;
   }
 }
 

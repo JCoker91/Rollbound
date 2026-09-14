@@ -2,7 +2,7 @@
 // Measured from the PNGs in public/sprites/; re-run the script after changing art.
 import type { SpriteSheet } from './types.ts';
 
-export type SpriteId = 'aethis' | 'backdrop_bat' | 'benjamin' | 'false_lead' | 'footlight_skitter' | 'kael' | 'maxine' | 'playbill_mimic' | 'rebar' | 'understudy_blue' | 'understudy_green' | 'understudy_orange' | 'understudy_red' | 'understudy_yellow';
+export type SpriteId = 'aethis' | 'backdrop_bat' | 'benjamin' | 'brax' | 'false_lead' | 'footlight_skitter' | 'kael' | 'maxine' | 'playbill_mimic' | 'rebar' | 'understudy_blue' | 'understudy_green' | 'understudy_orange' | 'understudy_red' | 'understudy_yellow';
 
 export interface SpriteMetrics extends Omit<SpriteSheet, 'scale' | 'nativePx'> {
   /**
@@ -32,6 +32,7 @@ export const SPRITE_METRICS: Record<SpriteId, SpriteMetrics> = {
   aethis: { src: '/sprites/aethis/aethis.png', icon: '/sprites/aethis/aethis_icon.png', aspect: 70 / 97, pxH: 97, anchorX: 0.436, nativePx: 97, nativeCanvas: 128, pixelArt: true, idle: { src: '/sprites/aethis/aethis_idle.png', frames: 8, aspect: 0.707071, pxH: 99, anchorX: 0.436, restFill: 0.984848, footPad: 0.0 } },
   backdrop_bat: { src: '/sprites/backdrop_bat/backdrop_bat.png', icon: '/sprites/backdrop_bat/backdrop_bat_icon.png', aspect: 114 / 92, pxH: 92, anchorX: 0.346, nativePx: 92, nativeCanvas: 128, pixelArt: true },
   benjamin: { src: '/sprites/benjamin/benjamin.png', icon: '/sprites/benjamin/benjamin_icon.png', aspect: 103 / 85, pxH: 85, anchorX: 0.447, nativePx: 85, nativeCanvas: 128, pixelArt: true, idle: { src: '/sprites/benjamin/benjamin_idle.png', frames: 8, aspect: 1.352941, pxH: 85, anchorX: 0.496, restFill: 0.988235, footPad: 0.0 } },
+  brax: { src: '/sprites/brax/brax.png', icon: '/sprites/brax/brax_icon.png', aspect: 224 / 211, pxH: 211, anchorX: 0.493, nativePx: 211, nativeCanvas: 256, pixelArt: true, idle: { src: '/sprites/brax/brax_idle.png', frames: 8, aspect: 1.07109, pxH: 211, anchorX: 0.496, restFill: 0.976303, footPad: 0.0 } },
   false_lead: { src: '/sprites/false_lead/false_lead.png', icon: '/sprites/false_lead/false_lead_icon.png', aspect: 226 / 203, pxH: 203, anchorX: 0.533, nativePx: 203, nativeCanvas: 128, pixelArt: true },
   footlight_skitter: { src: '/sprites/footlight_skitter/footlight_skitter.png', icon: '/sprites/footlight_skitter/footlight_skitter_icon.png', aspect: 114 / 85, pxH: 85, anchorX: 0.509, nativePx: 85, nativeCanvas: 128, pixelArt: true },
   kael: { src: '/sprites/kael/kael.png', icon: '/sprites/kael/kael_icon.png', aspect: 113 / 92, pxH: 92, anchorX: 0.478, nativePx: 92, nativeCanvas: 128, pixelArt: true, idle: { src: '/sprites/kael/kael_idle.png', frames: 8, aspect: 1.212766, pxH: 94, anchorX: 0.482, restFill: 0.984043, footPad: 0.0 } },
@@ -71,6 +72,19 @@ export const ANIMATION_CLIPS: Record<string, Record<string, AnimationClip>> = {
       "pxH": 85,
       "restFill": 0.988235,
       "src": "/sprites/benjamin/benjamin_idle.png"
+    }
+  },
+  "brax": {
+    "idle": {
+      "anchorX": 0.496,
+      "aspect": 1.07109,
+      "footPad": 0.0,
+      "frames": 8,
+      "loops": true,
+      "normalised": 1.0,
+      "pxH": 211,
+      "restFill": 0.976303,
+      "src": "/sprites/brax/brax_idle.png"
     }
   },
   "kael": {

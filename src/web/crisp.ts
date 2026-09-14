@@ -18,10 +18,23 @@
  * the only party that knows what a stage fraction resolves to.
  */
 
-/** For lengths already in CSS pixels. */
-export function crisp(px: number, pxH?: number, pixelated?: boolean): number {
-  if (!pixelated || !pxH) return px;
-  return Math.max(1, Math.round(px / pxH)) * pxH;
+/**
+ * The nearest clean scale for art `pxH` tall drawn at `px` tall.
+ *
+ * The step is `snapPx` -- what ONE pixel of the shared 128px canvas is worth in
+ * this art (see content.ts). For art drawn on 128 that is one of its own
+ * pixels, so it snaps to whole multiples of itself. For Brax on 256 each of his
+ * pixels is worth half a baseline one, so his step is half his art height and
+ * he can land at 1/2 scale -- which is what his stature asks for.
+ *
+ * Stepping by the art's own HEIGHT instead breaks both ways: it rounded Brax's
+ * 211px art to nothing when asked for 105px (under half a step), and a quarter
+ * step tried as a fix let the 128 cast drift onto 3/4 scales.
+ */
+/** For lengths already in CSS pixels. Snaps to whole multiples of `step`. */
+export function crisp(px: number, step?: number, pixelated?: boolean): number {
+  if (!pixelated || !step) return px;
+  return Math.max(1, Math.round(px / step)) * step;
 }
 
 /**
@@ -29,7 +42,7 @@ export function crisp(px: number, pxH?: number, pixelated?: boolean): number {
  * until layout. `round()` is doing exactly the same arithmetic as `crisp`, just
  * late enough to know what `cqh` resolves to.
  */
-export function crispCss(value: string, pxH?: number, pixelated?: boolean): string {
-  if (!pixelated || !pxH) return value;
-  return `round(${value}, ${pxH}px)`;
+export function crispCss(value: string, step?: number, pixelated?: boolean): string {
+  if (!pixelated || !step) return value;
+  return `round(${value}, ${step}px)`;
 }

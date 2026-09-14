@@ -168,13 +168,20 @@ function Detail({
             <span className="tag">{ROLE_LABEL[def.role]}</span>
             {/* The elements this kit can deal, not one the sheet was filed
                 under -- a dual-element Performer shows both. */}
-            {[...new Set(def.abilities.filter((a) => a.kind === 'attack').map((a) => a.element))].map(
-              (e) => (
-                <span key={e} className="tag">
-                  {e}
-                </span>
+            {/* Filtered, not just de-duplicated: an ability may have no element at
+                all (Benjamin's whole kit), and an undefined one was rendering an
+                empty tag with an undefined key. */}
+            {[
+              ...new Set(
+                def.abilities
+                  .filter((a) => a.kind === 'attack' && a.element)
+                  .map((a) => a.element!),
               ),
-            )}
+            ].map((e) => (
+              <span key={e} className="tag">
+                {e}
+              </span>
+            ))}
             <StarPips level={progress.level} />
           </div>
           <div className="stat-row">
@@ -257,11 +264,13 @@ function Detail({
   );
 }
 
+/** One stat, with whatever levels and stars added to it. Rounded for display. */
 function Stat({ label, base, live }: { label: string; base: number; live: number }) {
+  const show = (n: number) => Math.round(n * 10) / 10;
   return (
     <span>
-      {label} {live}
-      {live !== base && <em className="gain"> +{live - base}</em>}
+      {label} {show(live)}
+      {show(live) !== show(base) && <em className="gain"> +{show(live - base)}</em>}
     </span>
   );
 }

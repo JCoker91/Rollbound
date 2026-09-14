@@ -61,6 +61,31 @@ export function chosenNodes(def: CharacterDef, progress: StarProgress): StarNode
 }
 
 /**
+ * Grow a contributed die with its owner's STAR LEVEL.
+ *
+ * Deliberately the level and not a node. The tree offers three real choices and
+ * a die upgrade parked on one of them would eat a choice to hand back something
+ * the character already does -- and it would mean a player who took the other
+ * branch never sees the passive improve at all. Level applies to everyone who
+ * gets there, whatever they picked on the way.
+ *
+ * The ladder is read at the level, clamped, so a short ladder simply stops
+ * improving rather than falling off its own end.
+ */
+function applyDieLadder(def: CharacterDef, level: number): CharacterDef {
+  const passives = def.passives ?? [];
+  if (!passives.some((p) => p.kind === 'extraDie' && p.ladder)) return def;
+  return {
+    ...def,
+    passives: passives.map((p) => {
+      if (p.kind !== 'extraDie' || !p.ladder) return p;
+      const spec = p.ladder[Math.min(level, p.ladder.length - 1)];
+      return spec ? { ...p, die: spec } : p;
+    }),
+  };
+}
+
+/**
  * A copy of the character with their star picks folded in.
  *
  * Applied once when a battle starts rather than checked during combat, so every
@@ -69,7 +94,9 @@ export function chosenNodes(def: CharacterDef, progress: StarProgress): StarNode
  */
 export function applyStars(def: CharacterDef, progress: StarProgress): CharacterDef {
   const nodes = chosenNodes(def, progress);
-  if (nodes.length === 0) return def;
+  const laddered = applyDieLadder(def, progress.level);
+  if (nodes.length === 0) return laddered;
+  def = laddered;
 
   let maxHp = def.maxHp;
   let attack = def.attack;

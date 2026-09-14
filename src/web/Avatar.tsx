@@ -267,3 +267,78 @@ function Glyph({ role }: { role: Role }) {
       );
   }
 }
+
+/**
+ * A glyph per element, for places too tight for the word.
+ *
+ * Drawn rather than lettered because the matchup rows carry two of them beside
+ * a percentage in a 230px column: "lightning +50%" spends most of that width on
+ * a word the player already knows by its colour. The shapes are the obvious
+ * ones on purpose -- a flame, a droplet, a bolt -- since a glyph nobody can
+ * name is worse than the word it replaced.
+ *
+ * `currentColor` throughout, so the caller tints it with the element's colour
+ * and the icon needs no palette of its own.
+ */
+export function ElementIcon({ element, size = 13 }: { element: Element; size?: number }) {
+  const common = {
+    width: size,
+    height: size,
+    viewBox: '0 0 16 16',
+    'aria-hidden': true,
+    focusable: false as const,
+  };
+  switch (element) {
+    case 'fire':
+      return (
+        <svg {...common} fill="currentColor">
+          <path d="M8.6 1c.5 2.6 2.2 3.4 3 5.2a4.9 4.9 0 1 1-8.5 3.3c0-2 1.1-3.1 1.8-4.3.2 1 .7 1.6 1.4 1.9C5.8 4.5 7 2.3 8.6 1Z" />
+        </svg>
+      );
+    case 'water':
+      return (
+        <svg {...common} fill="currentColor">
+          <path d="M8 1.4c2.7 3.6 4.4 5.9 4.4 8a4.4 4.4 0 1 1-8.8 0c0-2.1 1.7-4.4 4.4-8Z" />
+        </svg>
+      );
+    case 'lightning':
+      return (
+        <svg {...common} fill="currentColor">
+          <path d="M9.9 1 3.8 9.3h3.1L5.6 15l6.6-8.8H8.9Z" />
+        </svg>
+      );
+    case 'earth':
+      return (
+        <svg {...common} fill="currentColor">
+          <path d="M8 2.4 14.4 13H1.6Z" />
+          <path d="M4.4 8.6 8 2.4l3.6 6.2-1.8-.7-1.8 1.1-1.8-1.1Z" opacity=".45" />
+        </svg>
+      );
+    case 'wind':
+      return (
+        <svg {...common} fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+          <path d="M1.8 5.2h6.4a2 2 0 1 0-2-2" />
+          <path d="M1.8 8.4h8.6a2 2 0 1 1-2 2" />
+          <path d="M1.8 11.6h4.6" />
+        </svg>
+      );
+    case 'light':
+      return (
+        <svg {...common} fill="currentColor">
+          <circle cx="8" cy="8" r="3.1" />
+          <path
+            d="M8 .8v2.1M8 13.1v2.1M.8 8h2.1M13.1 8h2.1M2.9 2.9l1.5 1.5M11.6 11.6l1.5 1.5M13.1 2.9l-1.5 1.5M4.4 11.6l-1.5 1.5"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+          />
+        </svg>
+      );
+    case 'dark':
+      return (
+        <svg {...common} fill="currentColor">
+          <path d="M10.6 1.4a6.6 6.6 0 1 0 0 13.2 5.6 5.6 0 0 1 0-13.2Z" />
+        </svg>
+      );
+  }
+}

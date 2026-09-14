@@ -1,8 +1,8 @@
 # Battle Design — the target system
 
 **Status: in build.** This document specifies the battle the game is being rebuilt towards.
-Most of it is now implemented (see the table); the two pieces left are **symbols and chains** (§4)
-and an **auto-battler that can price an enabler**, which are the same problem in `allocate.ts`.
+Most of it is now implemented (see the table). **Symbols and chains (§4) are built**; what is left
+is **statuses** (§6) and authoring the remaining four kits (§7).
 **Benjamin (§8) is the first Performer authored against this document**, and building him is what
 drove the phase model, modifiers, ordered effects and cooldowns in.
 
@@ -18,8 +18,8 @@ drove the phase model, modifiers, ordered effects and cooldowns in.
 | 6 | Timed stat modifiers — durations, per-track, named percentage source | **built** |
 | 6 | Status effects — paralyze, burn and friends | not built; they share the modifier clock |
 | 8 | Player-side cooldowns | **built** |
-| 4 | Symbols and chains | not built |
-| — | Auto-battler scoring for enablers | **not built, and now blocking** — see §8 |
+| 4 | Symbols and chains — arming, forward reads, the three trigger shapes | **built** |
+| 1 | No auto-battle, ever | **decided** — see §1 |
 
 Read this before touching battle code. Read **§1** before touching anything at all, because every
 other decision in this document follows from it and a change that violates it breaks the game's
@@ -61,6 +61,38 @@ satisfied by arithmetic, not by good intentions.
 > A node reading "+25% damage to enemies weak to your element" multiplies the multiplier and puts
 > 5★ back on top instantly. Flat stat nodes are fine. Synergy nodes are poison. Check every new
 > star node against this before adding it.
+
+### There is no auto-battle and no skip — DECIDED
+
+**Every stage is played by hand.** No auto button, no skip button, no headless resolve of a stage
+the player has already cleared.
+
+This follows from §1 rather than sitting beside it. If composition is the source of power, the place
+that power is *expressed* is the turn: which abilities, in which order, against a revealed intent. An
+auto button resolves exactly that decision on the player's behalf, which makes the game's whole
+subject invisible at precisely the moment it matters. A game about calculated battles cannot have a
+button that declines to calculate.
+
+The early stages being easy is fine and intended — they are where the rhythm is taught. The shape
+being aimed at is a **gate every tenth stage**: a boss the player has to gear up for, which is why
+the corridor is tuned to about `party level ≈ stage − 3` while a boss asks four levels more
+(README §8). A wall, then a downhill stretch, then the next wall. A skip button flattens that into a
+formality.
+
+**What this rules out, concretely:**
+
+- `scoreAction` / `bestPlan` / `nextDiceStep` will never need to plan a player turn well. They are
+  not on the roadmap and are not a blocker for anything.
+- Chains do **not** need `allocate.ts` fixed first. The long-standing warning that its independence
+  assumption blocks chains only applies to an AI that must *price* a chain. A player arming a symbol
+  needs the engine to arm and fire symbols during resolution, and the UI to show what is live.
+  `bestPlan` is never consulted on the player's path.
+- Idle stays what it is: an accrual rate, not a simulation. Growth between sessions comes from
+  currency and levels, and the battles themselves are always the player's.
+
+**Still live, and not covered by this:** `scoreAction` remains reachable on one narrow enemy path —
+`chooseEnemyAction` is the fallback when a declared intent's named target has died since the reveal.
+That is a genuine use and should keep working.
 
 ---
 
@@ -135,8 +167,8 @@ line they could have played instead. See §6 for what this rules out.
 
 ### Dice pool
 
-**5d6 for now.** 6d6 is worth testing, but the choice is not about feel — it is about how large the
-biggest ability costs get:
+**5d6 as the base, and RESOLVED below.** 6d6 was worth testing, but the choice was never about feel
+— it is about how large the biggest ability costs get:
 
 | cost | payable from 5d6 | payable from 6d6 |
 | --- | --- | --- |
@@ -153,6 +185,21 @@ move (2.68 → 3.10 on a mixed team). Above 12 it changes everything. So:
 
 One caution before adding the die: **6d6 makes chains cheaper to afford**, which softens the best
 tension in the design (§4).
+
+> **RESOLVED, partly — the base pool stays 5d6, and the sixth die is a CHARACTER.** Benjamin's
+> Drillmaster passive puts one in the pool while he is standing, so the sixth die is a composition
+> decision rather than a global rule, and the usable cost range stays 1–12 for a party that does not
+> field him. It is a d6 with **three blank faces**, which is +0.50 dice a turn rather than +1.00 —
+> enough to soften the chain caution above to roughly half of what this section warns about.
+>
+> A finding worth carrying into any future dice effect: **face values are not the balance lever,
+> blanks are.** A wildcard costs any single die whatever its value, so a d3 is not a weak d6 — over
+> all 7,776 rolls it beats a true d6 at every cost from 1 to 12, because small dice are precision
+> tools for exact sums. Anything meant to be a *weaker* die has to be blank some of the time.
+>
+> The pool is now `Die[]` with ids and mutation helpers (`setDieValue`, `doubleDie`, `addDie`), so
+> abilities that alter dice rather than spend them — "double a chosen die this round" — have a
+> surface to be written against. See README §5.1.
 
 Two facts to author costs against:
 
@@ -228,7 +275,7 @@ win against different targets.
 
 ---
 
-## 4. Symbols and chains
+## 4. Symbols and chains — BUILT
 
 The primary composition mechanic.
 
@@ -311,6 +358,31 @@ an existing effect's odds. Examples of the intended range:
 >
 > Comparable output, opposite use: the conversion is worthless against a lone boss and devastating
 > against a full board. A composition decision instead of a strict upgrade.
+
+> **As implemented.** `BattleState.armed` holds the symbols played so far this round, cleared at the
+> top of every turn — "armed for the rest of the round" and no longer. `commitNext` reads
+> `chainFires` **before** arming, so an ability can never chain off its own symbol; a three-ability
+> chain therefore produces two triggers, as specified.
+>
+> A trigger builds a fresh effect list rather than mutating the ability, since ability definitions
+> are shared content and a chain lasts one resolution. The three shapes in `ChainTrigger` are
+> exactly what the design's examples need: `effects` appends, `retarget` redirects, `amplify`
+> deepens. **`amplify` cannot be sugar for an appended `modify`** — modifiers are keyed by ability
+> name, so a second `modify` from Sunder would REFRESH its shred rather than deepen it.
+>
+> `chainPreview` walks the plan in order and returns which entries will fire, so the queue can show
+> the chain before anything resolves — that is what makes reordering a decision rather than a
+> guess. It lives in the engine rather than the UI because it has to agree with `commitNext`
+> exactly; two implementations of "does this chain" would drift the first time the rule changed.
+>
+> Chains are **player-side only**. Enemies act on declared intents with no order to choose, so a
+> chain among them would be neither plannable nor visible.
+>
+> Verified in isolation: a symbol arms but does not fire for its own ability; Sunder's shred goes
+> -11 to -18 on a base-44 target when chained and stays -11 when not; Rally buffs one ally alone and
+> all five chained; and the chain event is logged only when one actually fires. Driven through the
+> real UI end to end, the queue showed Rebar's Maul arming `lantern` unlit and Benjamin's Rally lit
+> with its trigger text.
 
 ---
 
@@ -514,6 +586,30 @@ a later balance pass: see Rally.
 | **Rally** | 4 | 87.0% | 1.34 | Buff one ally's Attack/P.DEF/M.DEF by a % of **Benjamin's current** stats, 3 turns. |
 | **Perfect Form** | 10 | 92.6% | 2.58 | Buff **his own** stats by a %, 3 turns, **then** deal large single-target physical damage. **2-turn cooldown.** |
 
+**In-battle upgrades — survive, sustain, multiply.**
+
+| | cost | passive | why |
+| --- | --- | --- | --- |
+| **Hold the Line** | 6 | `resilient 25` (~17% after the damage floor) | Two things ride on him standing: Rally is worth what *he* is worth, and Drillmaster's die is rebuilt each turn from who is alive. |
+| **Trouper** | 8 | `regen 9` — ~1 HP a turn on an 11 HP bar | The show goes on. |
+| **Full Company** | 12 | a **second die** in the shared pool | The capstone, and unique to him. |
+
+They replaced lifesteal / frenzy / resilient, which were three ways of saying "Benjamin personally
+fights better" on a Performer whose entire kit is about somebody else fighting better — the same
+mismatch his innate passive had.
+
+**What makes them his is a synergy that already existed and was never written down: the +10% stat
+bonus every tier grants is already team-scaled for him alone**, because Rally copies his *current*
+stats. Three tiers is +30% on every Rally for the rest of the fight. That is what leaves the passive
+slot free to answer a different question — what keeps him able to keep doing it.
+
+**Tier 1 is priced at 6 on purpose**: that is Sunder's cost, so the decision is exactly "Sunder this
+turn, or make every future Rally bigger". And **Full Company is priced as a decision, not a gain** —
+cost 12 spends ~2.6 dice plus his action and returns +0.50 dice a turn, so it pays back in about
+five turns. Reaching it means buying the two below it first, so the full line is 26 dice and three
+of his actions: four turns of the *whole party's* pool. It is only ever right in the fights that run
+long, which are exactly the fights a sixth die matters in. All of it is gone at the final curtain.
+
 **Chain triggers** sit on the two support abilities, never on the ult:
 
 - **Sunder:** shred by an additional amount.
@@ -552,13 +648,15 @@ ultimate; recasting Rally refreshes instead of stacking; Sunder shreds physical 
 leaves the magical track untouched; and a 3-turn modifier covers the turn it was cast and the two
 after it.
 
-**What he still needs:**
+**What he still needs:** nothing. Chains landed, and both his triggers are live — Sunder deepens
+its shred from -25% to -40%, Rally converts from one ally to the whole team.
 
-1. **Chains** (§4), for his two triggers.
-2. **An auto-battler that can price an enabler.** `scoreAction` values what an action does now, to
-   the target it names, so the shred, the self-buff and Rally's real magnitude are invisible to
-   it — his free basic outscores his whole kit per die, and idle play uses him as a stick. This is
-   the `allocate.ts` independence assumption chains were expected to break, reached early.
+> An earlier draft listed "an auto-battler that can price an enabler" here as a co-blocker, on the
+> reasoning that AFK play would use him as a stick. **That was wrong on the facts.** Idle rewards
+> are `ratesFor(stage) × elapsed` — no battle is simulated, and the accrual never reads the roster.
+> The player-side planner (`bestPlan` via `nextDiceStep`) is not reachable from the game at all: the
+> UI resolves the player's own queue through `commitNext`, and only ever calls `nextAiStep` during
+> the enemy phase. `scoreAction`'s myopia is real, but it cannot reach Benjamin. See §1.
 
 **Landed while building him:**
 
@@ -578,7 +676,20 @@ after it.
 **Settled:**
 
 - Composition beats stars, enforced by the §1 invariant
-- 5d6 for now; the trade for 6d6 is understood (§2)
+- **No auto-battle and no skip** — every stage is played by hand (§1)
+- **The base pool is 5d6, and a sixth die is a CHARACTER, not a rule** (§2). Benjamin contributes
+  one while he lives; his third upgrade tier contributes a second. Face values are not the balance
+  lever — **blanks are** — because a wildcard costs any single die whatever its value.
+- **The pool is mutable** — `Die[]` with ids, not `number[]`. Abilities that add, remove or change
+  dice have a surface to be written against (README §5.1). "Double a chosen die this round" is the
+  shape this was built for.
+- **Bosses escalate, ordinary mobs do not.** A linear damage ramp past a grace period, shown on the
+  creature (README §5.3). Mitigation is a fraction and scales with it; healing is flat and does not.
+- **Stats are in tenths of a damage point**, so a sheet reads whole numbers while a hit lands for 2
+  on a 12 HP bar (README §5.2).
+- **A percentage of a small integer has to be banked**, not rounded (`Unit.carry`). Regen, thorns,
+  lifesteal and resilient all do. Author new percentage effects the same way, or they will silently
+  do nothing.
 - Commit-and-lock, no stop-and-rethink, no mid-turn reaction
 - Chain triggers are authored per ability, and read forward from the arming symbol
 - Every turn is Start / Resolve / End; the bookends are simultaneous for the whole side (§2)
@@ -590,6 +701,12 @@ after it.
 
 **Open:**
 
+- **Statuses proper** — paralyze, burn and friends. The last structural piece; modifiers already
+  share their clock (§6).
+- **The other five kits.** Two shapes exist now that did not when they were written: a passive can
+  change the *pool* rather than a stat, and an upgrade tier can grant any passive at all. Their
+  tiers' +10% stat bonus is genuine filler — only Benjamin converts personal stats into team stats
+  — so their passives have to carry them.
 - Whether revealed intent can be disrupted (§5)
 - Whether action-denying statuses are deterministic or chance-based (§6 — a recommendation, not a
   decision)

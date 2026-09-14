@@ -1,10 +1,14 @@
 import type {
   Ability,
+  ChainSymbol,
+  ChainTrigger,
   CharacterDef,
   DamageType,
+  Effect,
   EffectTarget,
   Element,
   Intent,
+  Die,
   Modifier,
   ModStat,
   Side,
@@ -14,10 +18,15 @@ import { alive } from './types.ts';
 import { Rng } from './rng.ts';
 import { applyLevel } from './levels.ts';
 import { bestPlan, type Action } from './allocate.ts';
+import { byIds, rollPool, sumOf, usable, type DieEntry, STANDARD_D6 } from './dice.ts';
 import {
+  activePassives,
+  baseStat,
   canTarget,
   computeDamage,
   computeHeal,
+  spendResilience,
+  bank,
   lifestealHeal,
   scoreAction,
   thornsDamage,
@@ -79,6 +88,15 @@ export type Event =
   | { t: 'intent'; unit: string; ability: string; target: string; roll: number }
   | { t: 'rotate'; unit: string; immune: string; weak: string }
   | { t: 'fizzle'; actor: string; ability: string; reason: string }
+  | {
+      t: 'chain';
+      actor: string;
+      ability: string;
+      /** The symbol that was already armed when this resolved. */
+      symbol: ChainSymbol;
+      /** The trigger's own wording, so the log says what it actually did. */
+      text: string;
+    }
   | { t: 'upgrade'; unit: string; name: string; tier: number }
   | { t: 'end'; outcome: Outcome; turns: number };
 
@@ -87,9 +105,11 @@ export interface BattleState {
   units: Unit[];
   turn: number;
   phase: Side;
-  dice: number[];
-  /** Parallel to `dice`; true once that die has been spent this phase. */
-  diceSpent: boolean[];
+  /**
+   * This turn's pool. Mutable: dice can be added, altered, or spent, and each
+   * carries its own `spent` flag rather than living beside a parallel array.
+   */
+  dice: Die[];
   log: Event[];
   outcome: Outcome;
   rng: Rng;
@@ -106,6 +126,15 @@ export interface BattleState {
    * wrong.
    */
   plan: PlannedAction[];
+  /**
+   * Chain symbols armed so far this round, by whatever has already resolved.
+   *
+   * Player-side only, and cleared at the top of every player turn. Chains are a
+   * planning mechanic: they read forward through an ORDER the player chose, and
+   * enemies have no order to choose -- they act on declared intents, so a chain
+   * among them would be neither plannable nor visible.
+   */
+  armed: ChainSymbol[];
   /** Undrawn elements for resistance rotation; refilled when empty. */
   rotationBag: Element[];
 }
@@ -114,8 +143,8 @@ export interface BattleState {
 export interface PlannedAction {
   unit: Unit;
   ability: Ability | null;
-  /** Indices into `dice`, reserved while queued and spent on commit. */
-  dice: number[];
+  /** Die ids, reserved while queued and spent on commit. */
+  dice: string[];
   target: Pos;
 }
 
@@ -155,6 +184,7 @@ export function createBattle(
       hasActed: false,
       upgrades: 0,
       cooldowns: {},
+      carry: {},
       resistMods: {},
       pending: null,
       intent: null,
@@ -177,12 +207,12 @@ export function createBattle(
     turn: 1,
     phase: 'player',
     dice: [],
-    diceSpent: [],
     log: [],
     outcome: 'ongoing',
     rng: new Rng(seed),
     ai: null,
     plan: [],
+    armed: [],
     rotationBag: [],
   };
   beginPhase(state);
@@ -211,7 +241,15 @@ function beginPhase(s: BattleState): void {
     for (const p of u.def.passives ?? []) {
       if (p.kind !== 'regen' || !alive(u)) continue;
       const cap = unitMaxHp(u);
-      const healed = Math.min(Math.round((cap * p.percent) / 100), cap - u.hp);
+      // Nothing to bank at full health: a topped-up unit should not be storing
+      // credit for the next time it gets hit.
+      if (u.hp >= cap) {
+        u.carry.regen = 0;
+        continue;
+      }
+      // Banked, so 4% of a 9 HP pool is 4% -- a point roughly every third turn
+      // -- rather than either nothing or a point every turn. See `Unit.carry`.
+      const healed = Math.min(bank(u, 'regen', (cap * p.percent) / 100), cap - u.hp);
       if (healed > 0) {
         u.hp += healed;
         s.log.push({ t: 'heal', target: u.def.name, amount: healed, hpAfter: u.hp });
@@ -220,14 +258,19 @@ function beginPhase(s: BattleState): void {
   }
   s.ai = null;
   s.plan = [];
-  s.dice = s.rng.roll(DICE_PER_TURN);
-  s.diceSpent = s.dice.map(() => false);
-  s.log.push({ t: 'roll', side: s.phase, turn: s.turn, dice: [...s.dice] });
+  // Armed symbols last "the rest of the round" and no longer, so a chain must
+  // be rebuilt every turn rather than carried. Cleared for both sides because
+  // only the player ever arms one, and leaving stale entries would let a
+  // symbol armed last turn fire something this turn with nothing to show why.
+  s.armed = [];
+  s.dice = rollPool(poolFor(s), s.rng);
+  s.log.push({ t: 'roll', side: s.phase, turn: s.turn, dice: s.dice.map((d) => d.value) });
 
   // Enemies declare at the top of the PLAYER's phase, so the plan can be made
   // against them. Doing it at the top of the enemy phase would be too late to
   // be worth showing.
   if (s.phase === 'player') {
+    escalate(s);
     rotateResistances(s);
     chooseIntents(s);
   }
@@ -315,6 +358,80 @@ function rollForAbility(
   return { ability: nearest, roll };
 }
 
+/** The modifier a ramp writes. Named, because the player reads it. */
+export const RAMP_EFFECT = 'Escalation';
+
+/**
+ * The multiplier a ramping creature's damage is currently at.
+ *
+ * Exported because the UI has to be able to say so: the ramp is not random,
+ * but BATTLE_DESIGN's rule that a fight must be plannable applies to it all the
+ * same -- a boss quietly doubling its damage is indistinguishable from the
+ * numbers being broken. Shown on the creature, beside its intent.
+ */
+export function rampMultiplier(def: CharacterDef, turn: number): number {
+  const spec = def.ramp;
+  if (!spec) return 1;
+  return 1 + (spec.percent / 100) * Math.max(0, turn - spec.after);
+}
+
+/**
+ * Grow the damage of anything that ramps, and show the new figure.
+ *
+ * Written as an ordinary stat modifier rather than as a special case inside
+ * `computeDamage`. That buys three things for nothing: the forecast panel
+ * reports the ramped number because it reads the same stat, the roster row's
+ * existing attack chip displays it, and `computeDamage` stays pure.
+ *
+ * Refreshed rather than stacked -- `applyModifier` keys on ability name, so
+ * re-applying each turn replaces the amount instead of adding to it, and the
+ * amount is always measured off the BASE attack so a ramp and a buff compose
+ * the way two buffs do.
+ *
+ * Runs beside `rotateResistances`, at the top of the PLAYER's phase, for the
+ * same reason: a number revealed after the turn is locked informs nothing.
+ */
+function escalate(s: BattleState): void {
+  for (const u of livingOf(s, 'enemy')) {
+    if (!u.def.ramp) continue;
+    const extra = baseStat(u, 'attack') * (rampMultiplier(u.def, s.turn) - 1);
+    if (extra <= 0) continue;
+    applyModifier(s, u, {
+      ability: RAMP_EFFECT,
+      stat: 'attack',
+      amount: extra,
+      // Outlives any single turn: it is refreshed every round while the
+      // creature lives, and must never tick away between two of them.
+      turns: MAX_TURNS * 2,
+      by: 'enemy',
+    });
+  }
+}
+
+/**
+ * The dice this side rolls this turn.
+ *
+ * `DICE_PER_TURN` standard d6, plus one for every living character whose
+ * passive contributes one. Rebuilt every turn rather than held, which is the
+ * whole counterplay on a contributed die: the Performer providing it has to
+ * still be standing when the next turn starts.
+ *
+ * Enemies roll a pool they never spend -- they act on a fixed pattern, not on
+ * dice -- but they roll it all the same, because `beginPhase` is one function
+ * and a side-specific branch here would be a second place for the turn to
+ * differ between them.
+ */
+function poolFor(s: BattleState): DieEntry[] {
+  const entries: DieEntry[] = Array.from({ length: DICE_PER_TURN }, () => ({ spec: STANDARD_D6 }));
+  for (const u of teamOf(s, s.phase)) {
+    if (!alive(u)) continue;
+    for (const p of activePassives(u)) {
+      if (p.kind === 'extraDie') entries.push({ spec: p.die, source: u.def.id });
+    }
+  }
+  return entries;
+}
+
 /**
  * Re-roll the resistances of anything that rotates them, and announce it.
  *
@@ -372,9 +489,8 @@ function shuffle<T>(items: T[], rng: Rng): T[] {
   return items;
 }
 
-/** Indices of dice not yet spent this phase. */
-export const availableDice = (s: BattleState): number[] =>
-  s.dice.map((_, i) => i).filter((i) => !s.diceSpent[i]);
+/** Dice that can still pay for something -- unspent, and not blank. */
+export const availableDice = (s: BattleState): Die[] => s.dice.filter(usable);
 
 /**
  * Shared validation for queueing an action. Returns an error string, or null.
@@ -387,7 +503,7 @@ function checkAction(
   s: BattleState,
   unit: Unit,
   ability: Ability,
-  diceIndices: number[],
+  diceIds: string[],
   target: Pos,
 ): string | null {
   if (s.outcome !== 'ongoing') return 'The battle is over.';
@@ -400,11 +516,14 @@ function checkAction(
   if (cd > 0) {
     return `${ability.name} is not ready for ${cd} more turn${cd === 1 ? '' : 's'}.`;
   }
-  if (diceIndices.some((i) => s.diceSpent[i])) return 'Those dice are already committed.';
+  const picked = byIds(s.dice, diceIds);
+  if (picked.length !== diceIds.length) return 'Those dice are no longer in the pool.';
+  // One check, not two: a blank is a die that rolled nothing, and spending one
+  // is exactly as illegal as spending one already promised elsewhere.
+  if (!picked.every(usable)) return 'Those dice cannot be spent.';
 
-  const values = diceIndices.map((i) => s.dice[i]!);
-  const sum = values.reduce((a, b) => a + b, 0);
-  if (ability.wildcard ? diceIndices.length !== 1 : sum !== ability.cost) {
+  const sum = sumOf(picked);
+  if (ability.wildcard ? picked.length !== 1 : sum !== ability.cost) {
     return ability.wildcard
       ? `${ability.name} takes exactly one die.`
       : `${ability.name} costs ${ability.cost}; you selected ${sum}.`;
@@ -430,32 +549,35 @@ export function planAction(
   s: BattleState,
   unit: Unit,
   ability: Ability,
-  diceIndices: number[],
+  diceIds: string[],
   target: Pos,
 ): string | null {
   if (isPlanned(s, unit)) return `${unit.def.name} is already acting this round.`;
-  const err = checkAction(s, unit, ability, diceIndices, target);
+  const err = checkAction(s, unit, ability, diceIds, target);
   if (err) return err;
 
-  for (const i of diceIndices) s.diceSpent[i] = true;
-  s.plan.push({ unit, ability, dice: [...diceIndices], target });
+  for (const d of byIds(s.dice, diceIds)) d.spent = true;
+  s.plan.push({ unit, ability, dice: [...diceIds], target });
   return null;
 }
 
 /** Queue an upgrade purchase, which costs the character's action like a cast. */
-export function planUpgrade(s: BattleState, unit: Unit, diceIndices: number[]): string | null {
+export function planUpgrade(s: BattleState, unit: Unit, diceIds: string[]): string | null {
   if (s.outcome !== 'ongoing') return 'The battle is over.';
   if (isPlanned(s, unit)) return `${unit.def.name} is already acting this round.`;
 
   const next = (unit.def.upgrades ?? [])[unit.upgrades];
   if (!next) return `${unit.def.name} is fully upgraded.`;
-  if (diceIndices.some((i) => s.diceSpent[i])) return 'Those dice are already committed.';
 
-  const sum = diceIndices.reduce((a, i) => a + s.dice[i]!, 0);
+  const picked = byIds(s.dice, diceIds);
+  if (picked.length !== diceIds.length) return 'Those dice are no longer in the pool.';
+  if (!picked.every(usable)) return 'Those dice cannot be spent.';
+
+  const sum = sumOf(picked);
   if (sum !== next.cost) return `${next.name} costs ${next.cost}; you selected ${sum}.`;
 
-  for (const i of diceIndices) s.diceSpent[i] = true;
-  s.plan.push({ unit, ability: null, dice: [...diceIndices], target: unit.pos });
+  for (const d of picked) d.spent = true;
+  s.plan.push({ unit, ability: null, dice: [...diceIds], target: unit.pos });
   return null;
 }
 
@@ -463,12 +585,12 @@ export function planUpgrade(s: BattleState, unit: Unit, diceIndices: number[]): 
 export function unplan(s: BattleState, index: number): void {
   const entry = s.plan[index];
   if (!entry) return;
-  for (const i of entry.dice) s.diceSpent[i] = false;
+  for (const d of byIds(s.dice, entry.dice)) d.spent = false;
   s.plan.splice(index, 1);
 }
 
 export function clearPlan(s: BattleState): void {
-  for (const entry of s.plan) for (const i of entry.dice) s.diceSpent[i] = false;
+  for (const entry of s.plan) for (const d of byIds(s.dice, entry.dice)) d.spent = false;
   s.plan = [];
 }
 
@@ -555,14 +677,29 @@ export function commitNext(s: BattleState): PlannedAction | null {
     // turns and is ready on the third -- turns you cannot use it, which is how
     // a player reads the number.
     if (ability.cooldown) unit.cooldowns[ability.name] = ability.cooldown + 1;
+    // Read BEFORE arming, or an ability would chain off its own symbol.
+    const fires = chainFires(s.armed, ability);
     s.log.push({
       t: 'act',
       side: 'player',
       actor: unit.def.name,
       ability: ability.name,
-      dice: dice.map((i) => s.dice[i]!),
+      dice: byIds(s.dice, dice).map((d) => d.value),
     });
-    applyAbility(s, unit, ability, target);
+    if (fires) {
+      s.log.push({
+        t: 'chain',
+        actor: unit.def.name,
+        ability: ability.name,
+        symbol: ability.symbol!,
+        text: ability.trigger!.text,
+      });
+    }
+    // Armed whether or not it chained, and whether or not it has a trigger of
+    // its own: arming is what the symbol does for the abilities AFTER it.
+    if (ability.symbol && !s.armed.includes(ability.symbol)) s.armed.push(ability.symbol);
+
+    applyAbility(s, unit, ability, target, fires ? ability.trigger : undefined);
     checkOutcome(s);
     return entry;
   }
@@ -579,18 +716,21 @@ export function commitAction(
   s: BattleState,
   unit: Unit,
   ability: Ability,
-  diceIndices: number[],
+  diceIds: string[],
   target: Pos,
 ): string | null {
   if (s.outcome !== 'ongoing') return 'The battle is over.';
   if (unit.side !== s.phase) return 'It is not that side’s phase.';
   if (unit.hasActed) return `${unit.def.name} has already acted.`;
   if ((unit.cooldowns[ability.name] ?? 0) > 0) return `${ability.name} is still on cooldown.`;
-  if (diceIndices.some((i) => s.diceSpent[i])) return 'Those dice are already spent.';
 
-  const values = diceIndices.map((i) => s.dice[i]!);
-  const sum = values.reduce((a, b) => a + b, 0);
-  if (ability.wildcard ? diceIndices.length !== 1 : sum !== ability.cost) {
+  const picked = byIds(s.dice, diceIds);
+  if (picked.length !== diceIds.length) return 'Those dice are no longer in the pool.';
+  if (!picked.every(usable)) return 'Those dice cannot be spent.';
+
+  const values = picked.map((d) => d.value);
+  const sum = sumOf(picked);
+  if (ability.wildcard ? picked.length !== 1 : sum !== ability.cost) {
     return ability.wildcard
       ? `${ability.name} takes exactly one die.`
       : `${ability.name} costs ${ability.cost}; you selected ${sum}.`;
@@ -601,7 +741,7 @@ export function commitAction(
     return `${unit.def.name} cannot reach that far into the enemy line.`;
   }
 
-  for (const i of diceIndices) s.diceSpent[i] = true;
+  for (const d of picked) d.spent = true;
   unit.hasActed = true;
   if (ability.cooldown) unit.cooldowns[ability.name] = ability.cooldown + 1;
   s.log.push({ t: 'act', side: s.phase, actor: unit.def.name, ability: ability.name, dice: values });
@@ -620,7 +760,7 @@ export function commitAction(
 export function commitUpgrade(
   s: BattleState,
   unit: Unit,
-  diceIndices: number[],
+  diceIds: string[],
 ): string | null {
   if (s.outcome !== 'ongoing') return 'The battle is over.';
   if (unit.side !== s.phase) return 'It is not that side’s phase.';
@@ -629,14 +769,15 @@ export function commitUpgrade(
   const tiers = unit.def.upgrades ?? [];
   const next = tiers[unit.upgrades];
   if (!next) return `${unit.def.name} is fully upgraded.`;
-  if (diceIndices.some((i) => s.diceSpent[i])) return 'Those dice are already spent.';
+  const picked = byIds(s.dice, diceIds);
+  if (picked.length !== diceIds.length) return 'Those dice are no longer in the pool.';
+  if (!picked.every(usable)) return 'Those dice cannot be spent.';
 
-  const values = diceIndices.map((i) => s.dice[i]!);
-  const sum = values.reduce((a, b) => a + b, 0);
+  const sum = sumOf(picked);
   if (sum !== next.cost) return `${next.name} costs ${next.cost}; you selected ${sum}.`;
 
   const before = unitMaxHp(unit);
-  for (const i of diceIndices) s.diceSpent[i] = true;
+  for (const d of picked) d.spent = true;
   unit.upgrades++;
   unit.hp += Math.max(0, unitMaxHp(unit) - before);
   unit.hasActed = true;
@@ -674,8 +815,14 @@ function effectTargets(
  * strike lands, and one written after is not. Nothing here re-derives the
  * order from what the effects are.
  */
-function applyEffects(s: BattleState, source: Unit, ability: Ability, centre: Pos): void {
-  for (const fx of ability.effects!) {
+function applyEffects(
+  s: BattleState,
+  source: Unit,
+  ability: Ability,
+  centre: Pos,
+  override?: Effect[],
+): void {
+  for (const fx of override ?? ability.effects!) {
     const targets = effectTargets(s, source, ability, centre, fx.on ?? 'target');
 
     switch (fx.do) {
@@ -743,6 +890,10 @@ function strike(
     : ability;
 
   const base = computeDamage(source, shot, target);
+  // Advance the defender's damage-reduction bank for the hit just measured.
+  // `computeDamage` only ever PEEKS at it -- it is called by the forecast panel
+  // and by the AI, neither of which may spend anything.
+  spendResilience(source, shot, target);
   // Rolled per TARGET, not per ability, so an AoE can crit on one victim and
   // not the next -- five numbers that all crit together would read as one big
   // number rather than five hits.
@@ -786,9 +937,72 @@ function strike(
   }
 }
 
-function applyAbility(s: BattleState, source: Unit, ability: Ability, centre: Pos): void {
+/**
+ * Would this ability chain if it resolved right now?
+ *
+ * Reads forward: the symbol has to have been armed by something that ALREADY
+ * resolved this round. The ability that arms a symbol never fires its own
+ * trigger from it, so a three-ability chain produces two triggers, not three.
+ */
+export function chainFires(armed: ChainSymbol[], ability: Ability | null): boolean {
+  return !!ability?.symbol && !!ability.trigger && armed.includes(ability.symbol);
+}
+
+/**
+ * Which queued actions will fire their trigger, walking the plan in order.
+ *
+ * The whole point of an ordered, committed plan is that this is KNOWABLE before
+ * anything resolves -- so the player can see the chain they are building and
+ * reorder to change it. Computed here rather than in the UI because it has to
+ * agree with `commitNext` exactly; two implementations of "does this chain"
+ * would drift the first time the arming rule changed.
+ *
+ * Returns one entry per planned action, parallel to `plan`.
+ */
+export function chainPreview(plan: PlannedAction[], armed: ChainSymbol[] = []): boolean[] {
+  const live = [...armed];
+  return plan.map(({ ability }) => {
+    const fires = chainFires(live, ability);
+    if (ability?.symbol && !live.includes(ability.symbol)) live.push(ability.symbol);
+    return fires;
+  });
+}
+
+/**
+ * The effect list an ability runs when its trigger fires.
+ *
+ * Built rather than mutated: the ability definition is shared content and a
+ * chain lasts one resolution, so editing it in place would make every later
+ * cast permanently chained.
+ */
+function triggeredEffects(ability: Ability, trigger: ChainTrigger): Effect[] {
+  let fx = ability.effects ?? [];
+
+  if (trigger.amplify !== undefined) {
+    const by = trigger.amplify;
+    fx = fx.map((e) => (e.do === 'modify' ? { ...e, percent: e.percent + by } : e));
+  }
+
+  if (trigger.retarget) {
+    // Only what was aimed at the ability's own target moves. An effect already
+    // pinned to `self` stays on the caster -- a trigger that widened the reach
+    // of a self-buff would be changing what the ability IS, not amplifying it.
+    const to = trigger.retarget;
+    fx = fx.map((e) => ((e.on ?? 'target') === 'target' ? { ...e, on: to } : e));
+  }
+
+  return trigger.effects ? [...fx, ...trigger.effects] : fx;
+}
+
+function applyAbility(
+  s: BattleState,
+  source: Unit,
+  ability: Ability,
+  centre: Pos,
+  trigger?: ChainTrigger,
+): void {
   if (ability.effects) {
-    applyEffects(s, source, ability, centre);
+    applyEffects(s, source, ability, centre, trigger && triggeredEffects(ability, trigger));
     return;
   }
 
@@ -957,16 +1171,16 @@ function nextDiceStep(s: BattleState, team: Unit[], foes: Unit[]): AiStep | null
   while (s.ai.index < s.ai.plan.length) {
     const action = s.ai.plan[s.ai.index++]!;
     if (!alive(action.unit) || action.unit.hasActed) continue;
-    const indices = diceIndicesFor(s, action);
-    if (indices === null) continue;
+    const ids = diceIdsFor(s, action);
+    if (ids === null) continue;
 
     if (action.upgrade) {
-      if (commitUpgrade(s, action.unit, indices)) continue;
+      if (commitUpgrade(s, action.unit, ids)) continue;
       return { unit: action.unit, kind: 'act', target: action.unit.pos };
     }
 
     if (!action.ability) continue;
-    if (commitAction(s, action.unit, action.ability, indices, action.target)) continue;
+    if (commitAction(s, action.unit, action.ability, ids, action.target)) continue;
     return { unit: action.unit, kind: 'act', ability: action.ability, target: action.target };
   }
   // Plan exhausted. Returning null is what ENDS the phase -- `nextAiStep`
@@ -1073,7 +1287,14 @@ function chooseEnemyAction(s: BattleState, unit: Unit, foes: Unit[]): EnemyChoic
   return best ? { ability: best.ability, target: best.target } : null;
 }
 
-/** Resolve the acting side's whole phase at once. Used for idle auto-battle. */
+/**
+ * Resolve the acting side's whole phase at once.
+ *
+ * Headless only -- reached from `endPhase` and `simulateBattle`, and nothing the
+ * game calls. There is no auto-battle and no skip (BATTLE_DESIGN.md §1), and
+ * idle accrual is a rate rather than a simulation, so the player-side branch of
+ * `nextAiStep` has no caller in the running game.
+ */
 export function runAiPhase(s: BattleState): void {
   let guard = 0;
   while (nextAiStep(s) && guard++ < 64) {
@@ -1081,10 +1302,23 @@ export function runAiPhase(s: BattleState): void {
   }
 }
 
-function diceIndicesFor(s: BattleState, action: Action): number[] | null {
-  const indices: number[] = [];
-  for (let i = 0; i < s.dice.length; i++) if (action.diceMask & (1 << i)) indices.push(i);
-  return indices.some((i) => s.diceSpent[i]) ? null : indices;
+/**
+ * The ids a planned action's dice mask names, or null if any has gone.
+ *
+ * The mask was computed against the pool as it stood when the plan was built.
+ * Re-reading it here rather than trusting `action.dice` is what makes a stale
+ * plan fail closed: if anything has since spent or altered one of those dice,
+ * the action is skipped rather than paid for with something else.
+ */
+function diceIdsFor(s: BattleState, action: Action): string[] | null {
+  const picked: string[] = [];
+  for (let i = 0; i < s.dice.length; i++) {
+    if (!(action.diceMask & (1 << i))) continue;
+    const die = s.dice[i]!;
+    if (!usable(die)) return null;
+    picked.push(die.id);
+  }
+  return picked;
 }
 
 export interface BattleResult {

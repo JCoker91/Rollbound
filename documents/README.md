@@ -12,10 +12,9 @@ Companion documents:
 
 - **`BATTLE_DESIGN.md` — the battle system the game is being rebuilt towards. READ THIS FIRST if
   you are touching battle code.** Most of it is now implemented and §5 below describes the engine
-  as it actually stands; the two agree except where §5 says otherwise. What is left is **symbols
-  and chains** (§4 there) and an **auto-battler that can price an enabler** — the same problem in
-  `allocate.ts`. `BATTLE_DESIGN.md` §8 holds the per-Performer kit specs; **Benjamin is the only
-  one built.**
+  as it actually stands; the two agree except where §5 says otherwise. **Symbols and chains are
+  built**; what is left is **statuses** (§6 there) and the four remaining kits.
+  `BATTLE_DESIGN.md` §8 holds the per-Performer kit specs; **Benjamin is the only one built.**
 - `STAGEBOUND_STORY_REFERENCE.md` — premise, tone, terminology, and the long-term mystery.
 - `SPRITE_STYLE_GUIDE.md` — the art standard every sprite is generated against. Non-negotiable
   for anything that ships.
@@ -28,9 +27,9 @@ Companion documents:
 offline. Clearing stages raises the rate. This is the loop the game is built around.
 
 **Battle layer.** A side-view, Final Fantasy–style turn-based battler: five Performers on the left
-against up to seven enemies on the right. Each turn you roll **5d6 into a shared pool**, and
-abilities cost exact dice sums. A 9-cost ability needs two dice, which means one teammate does not
-act. **Choosing who sits out is the core decision.**
+against up to seven enemies on the right. Each turn you roll **5d6 into a shared pool** — plus
+whatever your line-up contributes — and abilities cost exact dice sums. A 9-cost ability needs two
+dice, which means one teammate does not act. **Choosing who sits out is the core decision.**
 
 **Progression.** Cast new Performers, spend duplicates on a branching star tree, spend XP on levels
 (gated so the whole Cast must keep pace), and buy temporary upgrades mid-Performance.
@@ -75,10 +74,23 @@ npm run dev          # usually http://localhost:5173
 | `python scripts/pack_sprites.py [--only NAME]` | Publish `art/` → `public/`; regenerate sprite metrics. **Runs automatically** — see [`art/` in, `public/` out](#art-in-public-out) |
 | `python scripts/make_favicon.py` | Regenerate the site icon (SVG + ICO + apple-touch) |
 
-### The simulator is abandoned
+### The simulator is not a balance authority — but it is the only instrument
 
-`npm run sim` and `npm run play` still run, and **should not be used to make decisions.** The game
-is not being designed around them.
+`npm run sim` and `npm run play` still run, and **their balance verdicts should not be used to make
+decisions.** The game is not being designed around them.
+
+**There is a line worth drawing, because the useful half gets used constantly.** The simulator is
+worthless for *"is this fight fun / fair / the right length"* — that is an AI playing a game no
+human plays. It is excellent for *"does this mechanic do what it claims"*, which is a question about
+the engine and not about the design:
+
+- `resilient 10` claimed 10% and delivered **1.3%**. Found by simulating, not by reading.
+- The dice pool reads `6 6 6 … 6 5 5 5` across the turn Benjamin falls — the contributed-die rule,
+  verified in one line.
+- Rally was **25.0% of every player action**, which is what exposed `scoreAction` reading
+  `Ability.power` as a flat stat buff for effect-list abilities.
+
+Use it to ask whether a number is real. Do not use it to ask whether a number is right.
 
 They were built before the playable game existed — the wrong order — and the cost showed up twice.
 First they measured an AI playing a game no human plays, so their verdicts were about the AI's
@@ -88,13 +100,22 @@ mechanics that are going away.
 
 The AI would also need substantial rework to play the new system at all: it scores single actions in
 isolation, with no notion of resolution order, chains, or spending a debuff against a revealed
-intent. **A weak auto-battler in a composition-driven game is worse than none**, because it ignores
-the mechanic the whole game is about.
+intent. **And it is never going to get that rework**, because there is no auto-battle and no skip —
+every stage is played by hand, decided and reasoned in `BATTLE_DESIGN.md` §1.
 
-The files are left in place (`src/cli/`, `scoreAction` in `combat.ts`) rather than deleted, because
-an idle game does eventually want auto-resolve for farming and the headless architecture is the
-right home for it. Treat them as a starting point for that, not as a measuring instrument. Safe to
-delete outright if they get in the way.
+> It is still worth keeping *honest*, though, for the reason above: a lying AI produces lying
+> measurements. `buffStatGain` was a real fix — the buff heuristic read `Ability.power` as a flat
+> stat amount, which is true only under the legacy authoring, so Rally's vestigial `power: 20` read
+> as twenty flat stat points and the auto-battler spent a quarter of every turn casting it. Fixing
+> it dropped Rally from 25.0% of player actions to 2.7% and the corridor fight from 5.2 turns to
+> 2.9. Every turn-count figure recorded in this file before that fix was inflated by it.
+
+So the player-side planner has no future use. `simulateBattle` is reached only from `src/cli/`;
+`endPhase` and `runAiPhase` are headless-only; `bestPlan` and `nextDiceStep` are reachable only
+through those. **Safe to delete whenever they get in the way** — nothing in the game calls them.
+
+One piece of it is still live and must keep working: `scoreAction` backs `chooseEnemyAction`, which
+is the fallback an enemy uses when the target it declared has died since the reveal.
 
 ### Dev tools
 
@@ -114,6 +135,190 @@ branch so they are there on every screen — hub tabs, the lab, and mid-fight:
 In the hub they sit above the nav bar; in a fight they drop to the corner, which is free there —
 the dock stops well short of the right edge. Mid-fight only the switch appears, since neither the
 lab nor a save wipe is reachable without leaving the battle first.
+
+**The test-party builder.** **Party** in the battle dev bar opens a builder: pick any Performers
+from the whole roster, set a level and star count on each, and field them. **Save roster** names the
+result and keeps it in `localStorage`, so a composition survives a reload — which is the whole
+point, since the party override is React state and dies with the page.
+
+Sheets are rebuilt from the BASE roster, never from the live party (which already has levels folded
+in and would compound), levels before stars so a star's percentage is of the levelled stat. Star
+picks are derived: **the first node of every tier, always**. A star level alone does not determine a
+sheet — each odd tier is a choice of two — and something has to choose. First is arbitrary but
+*stable*, which is what a test party needs: the same saved roster must rebuild to the same numbers
+next week, or a comparison between two runs means nothing.
+
+Stored under `stagebound.dev.rosters`, deliberately apart from the player's profile: a test party is
+not progress, and wiping one should never touch the other. Entries are validated on read rather than
+trusted — the file outlives the roster it was written against, and a member naming a since-renamed
+character is dropped rather than allowed to crash the party build.
+
+**The battle screen is a stage with two flanking rosters, over one full-width dock.**
+
+- **The rosters sit in the darkened surround** either side of the letterboxed backdrop, centred on
+  the STAGE ROW — each side's list on that side of the board. They are grid items sharing the
+  stage's cell, not absolutely positioned: abspos centred them on the *window* instead, because a
+  grid container is not a containing block by default, so `top/bottom: 0` resolved against the
+  initial one. Setting `position: relative` on the container to fix that re-anchored the stage as
+  well and collapsed the layout entirely — `align-self: center` on a grid item is the answer.
+- **The dock spans the whole width**: the **turn controls** on the left, then the selected unit's
+  sheet and a fixed **inspect slot**. Both panels stretch to fill the band. A four-ability kit lays
+  out in columns rather than scrolling sideways in a 320px track, which is what it did while the
+  dice held the middle.
+- **The dice are a pyramid** — three along the bottom, two nested in the valleys above. The trick is
+  `flex-wrap: wrap-reverse` on a container exactly three dice wide: the five wrap 3 + 2, reversing
+  puts the first line at the bottom, and centring the short line lands it at
+  `(3d + 2g − 2d − g) / 2` = half a die plus half a gap, which is exactly the offset that nests each
+  one between two below. No per-die placement, and it still reads as a pyramid at 3 + 3 if the pool
+  grows to six.
+
+**The sheet is three explicit sections**, not a column flow: identity (portrait, stats, role line,
+turn state), the kit (abilities, or an enemy's roll table), and extras (passives, upgrade tiers,
+enemy ability text). Each scrolls on its own when it runs long, so the upgrade column outgrowing its
+space does not move the abilities beside it.
+
+It was a multi-column box, picked because the content is a sequence whose groups are optional — a
+Performer has abilities and an upgrade track, an enemy has a roll table and neither. What multicol
+could not do is keep a group *whole*: balancing split the four-ability list down the middle and
+stranded the turn badge at the top of a column away from the stats it reads with. The layout was
+deciding what grouped with what, and had no way to know.
+
+**Every upgrade tier is shown**, not just the next one — bought ones green with a ✓, the next one
+live (gold when the dice cover it), later ones dimmed. Showing only the next tier hid what the pip
+track was *for*: it said "three of these exist" and nothing said what the other two were, so the
+choice to spend 6 now or hold for 12 could not be made from the panel where it is made.
+
+**The selection survives the turn.** Committing, queueing an action and buying an upgrade all used
+to `setSel(NO_SELECTION)`, so the sheet blanked at the exact moment the plan was resolving — the
+panel emptied just as you wanted to watch what your turn did to the Performer you were reading. All
+three now keep the unit and clear only what is genuinely consumed (the spent dice, the chosen
+ability). Note the commit was never the real culprit: queueing cleared it first, so by the time you
+pressed commit there was nothing left to preserve.
+
+**The sheet states elemental matchups** for allies and enemies alike — *weak* and *resists* rows of
+element-coloured chips, in the identity block under the role line. Resistance is one signed field on
+the stat block (negative is weak, positive is resistant), so both rows come from it and the sign
+decides which. Two deliberate details: the percentage is written as the **damage** change rather
+than the resistance value (a `-50` resistance reads `+50%`, because the question is "what happens
+when I hit it", and a negative number under the word *weak* is two negatives to resolve); and a unit
+with neither says **"no elemental weakness or resistance"** rather than showing nothing, because
+that is a real property — Benjamin is deliberately unaligned — and blank space reads as a panel that
+failed to load.
+
+**Every marking on a figure composes into one filter, through variables.** `filter` replaces rather
+than adds, and seven rules each set it on `.unit` — so whichever matched last or hardest won
+outright and the rest silently vanished. Which one that was depended on game state: selecting a
+Performer an enemy had named showed the *threat* glow and no selection glow at all, so the blue
+silhouette appeared for some characters and not others depending on who was being aimed at that
+round. The same collision kept dropping the grounding shadow, which `.threatened` had to restate by
+hand to stop figures floating off the stage floor.
+
+Two channels now, because they answer different questions and both can be true at once:
+
+| | set by |
+| --- | --- |
+| `--mark` | what the **player** did — selected, queued, in reach, caught by the hovered splash |
+| `--threat` | what the **enemy** declared — threatened, or aimed at by the creature under the cursor |
+
+composed as `filter: var(--ground) var(--threat) var(--mark)`. Within a channel the last matching
+rule wins, which is the priority order. The danger pulse is the one exception — an animation's
+`filter` outranks the composed one, which is right since danger is the loudest state, but it has to
+carry the grounding shadow itself.
+
+**A committed Performer glows; they are not boxed.** `queued` was an `outline`, which drew a
+rectangle around an irregular sprite and read as a box floating beside the figure. A numbered badge
+at the feet was tried next and is worse for the party than it is for enemies: the formation
+overlaps, so a label at one Performer's feet lands on the body of whoever stands in front. The
+ORDER is already stated in the queue list, where it can also be changed — the board only needs to
+say which of them are spoken for, so it is a rim glow.
+
+**Reach is shown on the cast, not with markers under them.** Choosing an ability adds `aiming` to
+the stage frame: legal targets get a rim light, everyone else (bar the caster) drops to 32%. It was
+an ellipse at each target's feet — a second object per creature, competing for the same few pixels
+the intent badges already occupy. Lighting the figures says the same thing with no new furniture,
+and it reads faster because the contrast is across the whole board rather than inside one slot. The
+gate matters: without `aiming` the board would sit half-dimmed during ordinary play.
+
+> The AoE splash highlight is written **after** the target highlight at the same specificity, so a
+> target caught by the hovered blast still turns orange. Reorder them and that feedback silently
+> disappears.
+
+**The ability list is never hidden.** A kit describes the character; it is not a menu that exists
+only while it can be used, and hiding it emptied the widest part of the sheet at the exact moment
+the turn was playing out — which is when you most want to read what they can do. While a Performer
+is queued or spent the list is marked `inert`: dimmed as one block rather than four separately
+disabled controls, since the buttons were disabled anyway (`ready` needs dice selected for that
+unit, and a committed one has none).
+
+There is **no "action available" badge**. One existed, and grew to three states — available, queued,
+spent — while the kit was being hidden and something had to say why. With the kit always shown and
+dimmed when inert, the badge said the same thing twice: `inert` already means "not acting", and the
+queue list already names who is committed and in what order. `planAction` guards it either way
+(`isPlanned`), so nothing is lost but a line of duplicate text.
+
+**Every Performer has one innate passive**, named, shown as a chip in the identity block and
+explained in the inspect slot on hover — the same slot an ability's rules use, so the sheet stays a
+list of names and one panel explains whatever is under the pointer. It sits with identity rather
+than with the upgrade tiers because it is not something you buy: it is true before any dice are
+spent, and it is the line that states what the Performer is *for*.
+
+| | passive | |
+| --- | --- | --- |
+| Benjamin | **Drillmaster** | the party rolls an extra die while he stands — see below |
+| Kael | Second Wind | frenzy 20 — the reward for being hurt makes walking in a plan |
+| Rebar | Bristling Hide | thorns 15 — a guardian's intent stated as a threat |
+| Maxine | Rime Siphon | lifesteal 10 — sustain from her own damage, not from a teammate's turn |
+| Aethis | Quiet Bloom | regen 4 — mends unasked, which frees her turn for somebody else |
+| Brax | Slagskin | resilient 10 — flat reduction, for a wall that is not the one attacking |
+
+> **The vocabulary used to be the limit, and Benjamin is why it is not any more.** `Passive` was
+> five numeric self-buffs — regen, thorns, resilient, frenzy, lifesteal — so it could say *durable*,
+> *vengeful*, *thirsty*, *regenerating* or *desperate* and nothing else. Benjamin's intent is
+> **enabling**, and none of those say it; he carried a placeholder `resilient 8` for exactly that
+> reason, which this file recorded at the time as "the nearest honest fit rather than the right
+> one".
+>
+> `extraDie` is the sixth kind and the first that is not a number applied to its owner: it puts a
+> die in the **shared pool** (§5.1). It is not the general aura mechanism — a passive that reads
+> other units is still unbuilt, and is still what the type would need to carry every intent — but it
+> settles the one character the gap was blocking, and it is the precedent for the next one.
+
+> **The passive list shows INNATE passives only.** `activePassives()` also returns the ones bought
+> upgrades granted — correct for the engine, wrong for this panel now that the tiers are all
+> visible. Rendering both printed every purchase twice under two different names: Aethis bought
+> *Herbalist* and grew a second entry called *regen* doing exactly the same thing. No Performer has
+> an innate passive today, so the list renders nothing for them and the tier list carries it alone.
+- **Nothing overlays the stage**, so the cast stands on the floor the backdrop draws.
+
+Five arrangements of the controls were tried before this one, and each failure is worth not
+repeating:
+
+| arrangement | what broke |
+| --- | --- |
+| in the dock's middle column | took the widest space in the layout; the sheet scrolled sideways |
+| floating wholly on the stage | fine at rest, but the queue grows a row per action — at three it was 312px tall with every unit behind it, and so unclickable |
+| its own `auto`-height band | the stage shrank as you queued, squeezing the artwork to a strip |
+| straddling the dock line, full width | reached the team lists, which then needed clearance they had no room for |
+| straddling, column 2 only | worked, but the overhang forced the formation off the stage floor — the cast no longer stood on the stage |
+
+One sizing constraint holds the current one together: the dock row is **37vh**, which is what lets
+the longest kit fit without scrolling in either direction. (The controls used to need ~560px so the
+dice and commit button could share a row — the three-column grid removed that constraint, and the
+width it gave back went to the sheet.)
+
+> **Sprite sizes are quantised, so "shrink them a bit" is not available.** `crispCss` snaps each
+> figure to whole multiples of `snapPx`, so Benjamin draws at 85px for any target between ~43 and
+> ~128 — the next step down is *half*. Reclaim stage space by moving the formation, not by scaling.
+
+**Hovering an ability must not move the page.** Two separate causes, both fixed and both easy to
+reintroduce:
+1. `.rules` was a block inside the sheet's multi-column flow, so hovering inserted content and every
+   column rebalanced — the whole kit jumped under the pointer. It lives in a sibling slot now, of
+   fixed width, rendered whether or not anything is hovered.
+2. The slot growing could tip the band into overflow, and the scrollbar appearing took ~4px of
+   width and reflowed the columns. `scrollbar-gutter: stable` reserves it.
+
+Verified by hovering every ability and comparing every row's position: **0 of 8 move anything.**
 
 **Flipping it costs nothing.** The flag is a live store (`useDevTools`), not a constant read at
 load, so toggling re-renders in place: a battle in progress survives the switch, and the URL is
@@ -149,7 +354,7 @@ controls return — in the top-right bar of a fight, beside **Home**:
 | Control | What it does |
 | --- | --- |
 | **Stage** dropdown | Jumps to any of stages 1–20; every tenth is marked `★ … — boss`. Sets the enemy level and the boss/corridor layout with it. |
-| **party lv** box | Re-derives all five Performers from the *base* roster at that level. Empty means "use the real save". |
+| **party lv** box | Re-derives the whole line-up from the *base* roster at that level. Empty means "use the real save". |
 | **Show log** | The full turn log for the fight. |
 | **Restart** / **New seed** | Same fight again, or a fresh roll of the dice. |
 
@@ -188,10 +393,11 @@ change.
 ```
 src/
   engine/          Pure game logic. No React, no DOM, no rendering.
-    types.ts       Shared types: Ability, CharacterDef, Unit, Passive, StarNode, SpriteSheet
+    types.ts       Shared types: Ability, CharacterDef, Unit, Passive, Die, StarNode, SpriteSheet
     rng.ts         Seeded mulberry32. Every battle is reproducible from its seed.
     formation.ts   Slots, depth reach, AoE distance. Replaced the old tile grid.
     elements.ts    Element matchup wheel
+    dice.ts        The pool: rolling, paying, and mutating dice (§5.1)
     combat.ts      Damage/heal formulas, targeting, passives, AI action scoring
     allocate.ts    Dice allocation solver — the heart of the game
     battle.ts      Battle state, turn flow, enemy AI, telegraphs, in-battle upgrades
@@ -206,11 +412,15 @@ src/
   web/
     App.tsx        Hub router, profile state, dev entry
     BattleScreen.tsx  The entire battle UI
-    Avatar.tsx     SVG role badges and creature glyphs
+    Avatar.tsx     SVG role badges, creature glyphs, and ElementIcon
     Figure.tsx     Character renderer for menus
     clipAnimation.ts  Sprite-strip keyframe generation and clip geometry
     animationData.ts  Loads the authored art/actors/*/*.anim.json settings
-    crisp.ts       Rounds figures to whole multiples of the art's own pixels
+    crisp.ts       Rounds figures to whole multiples of one baseline-canvas pixel
+    narrate.ts     Turn sentences and floater classes — pure string mapping
+    dev.ts         Dev-mode flag (?dev=1)
+    DevBadge.tsx   The dev overlay's own control
+    devRoster.ts   Dev-only saved test parties (localStorage)
     screens/       Home, Characters, Summon, Inventory, Events, AnimationLab
     styles.css     Battle screen styles
     hub.css        Hub styles
@@ -230,7 +440,8 @@ art/               THE ONLY PLACE ART IS UPLOADED
   enemies/creatures/  One flat 128px PNG per enemy — packed like a v2 actor
 public/            ENTIRELY GENERATED — see below
 documents/
-  README.md                    This file
+  README.md                    This file — what IS, and why
+  BATTLE_DESIGN.md             The battle system's design doc, and the kit specs
   SPRITE_STYLE_GUIDE.md        The art standard
   STAGEBOUND_STORY_REFERENCE.md  Premise, tone, terminology
 ```
@@ -294,9 +505,9 @@ The favicon files are the one hand-managed exception, and they are generated too
 These three separations are load-bearing. Breaking them will hurt.
 
 **1. The engine never imports React.** Everything in `src/engine/` is pure. This is what keeps game
-rules out of components, lets a server later resolve idle stage clears with the exact same code, and
-leaves the door open for auto-resolve. It is also what made the abandoned simulator possible — but
-the principle earns its keep without it, so keep it.
+rules out of components and lets a server later verify or resolve progression with the exact same
+code. It is also what made the abandoned simulator possible — but the principle earns its keep
+without it, so keep it.
 
 **2. Progression is folded into character sheets once, before a battle starts.**
 
@@ -330,7 +541,8 @@ replaced Kael sheet once kept the old aspect ratio in `content.ts` and rendered 
 
 ### 5.1 The dice economy
 
-Five d6 into a shared pool each turn. Abilities cost an exact sum; wildcards take any single die.
+Five d6 into a shared pool each turn, plus any die a Performer contributes. Abilities cost an exact
+sum; wildcards take any single die.
 **This survived the battle-system rewrite untouched** — it is the game's identity and is entirely
 format-independent.
 
@@ -352,6 +564,55 @@ characters acting = 5 − Σ (dice each ability uses − 1)
 ```
 
 Every die an ability consumes beyond its first benches exactly one teammate.
+
+#### The pool is a list of DICE, not of numbers
+
+`BattleState.dice` is `Die[]` — each with an `id`, a `spec` (its faces), the `value` it is showing,
+the `rolled` face it landed on, and its own `spent` flag. It replaced a `number[]` beside a parallel
+`boolean[]` of what had been spent, which was exactly enough while the pool was five identical d6
+rolled once a turn and touched by nothing.
+
+Three rules, in `dice.ts`:
+
+- **Dice are named by `id`, never by index.** Two parallel arrays and a stored index are the same
+  bug waiting in two places. Queued actions and the tray's selection both hold ids, so the pool can
+  be added to, thinned, or reordered without invalidating a plan built against it.
+- **A blank (`value === 0`) is not a small die, it is an absent one.** It can never be spent, on a
+  wildcard or on a sum, and `payingMasks` will not return a mask that touches one. That filtering
+  used to live in each caller and was missed in one of them.
+- **`rolled` is kept beside `value`.** An ability that changes a die has to be legible as having
+  changed it, or the pool quietly shows a different number than the one that was rolled. The tray
+  draws the original struck through in the corner.
+
+Bitmasks are still how subsets are searched — the right shape for "every subset summing to exactly
+7" — but they are computed fresh against the current pool and converted to ids before storage.
+`setDieValue`, `doubleDie` and `addDie` are the mutation surface; the shape an ability like *"double
+a chosen die this round"* needs is already there.
+
+#### Contributed dice
+
+A passive may put a die in the pool: `{ kind: 'extraDie', die: DieSpec, ladder?: DieSpec[] }`. It is
+the first passive that is not a percentage applied to its owner, which is what forced the union to
+widen — the other five kinds are self-buffs and cannot express a Performer whose intent is that the
+*troupe* does more.
+
+`poolFor` rebuilds the pool every turn from who is **still alive**, which is the whole counterplay:
+the die is gone the turn after its owner falls. Verified in simulation — the player's pool reads
+`6 6 6 … 6 5 5 5` across the turn Benjamin goes down.
+
+> **Faces are the balance, and blanks are the only lever.** A wildcard costs any single die whatever
+> its value, so *lowering* a die's numbers does not weaken it. Over all 7,776 rolls of 5d6:
+>
+> | added die | cost 1 | 3 | 6 | 10 | 12 | +dice/turn |
+> | --- | --- | --- | --- | --- | --- | --- |
+> | nothing (5d6) | 59.8 | 78.2 | 97.4 | 92.6 | 89.9 | — |
+> | true d6 | 66.5 | 85.5 | 99.1 | 97.9 | 98.3 | +1.00 |
+> | d3 | **73.2** | **92.8** | **99.6** | 98.1 | 97.9 | +1.00 |
+> | d6, 3 blanks (1–3) | 66.5 | 85.5 | 98.5 | 95.3 | 93.9 | **+0.50** |
+>
+> A d3 *beats* a true d6 at every cost from 1 to 12 — small dice are precision tools for exact sums.
+> Only blanks move the number of dice a turn actually has. A "d3 now, true d6 later" progression is
+> therefore a downgrade path, and the blank count is what a ladder should ramp.
 
 ### 5.2 Formation and combat
 
@@ -444,6 +705,56 @@ reads `range > 1` as its melee test.
   matchups. Lightning was added with the elemental Understudies and only moved one existing edge:
   earth used to beat water and now grounds lightning, with lightning conducting into water. Both
   read without explanation, which is the test a matchup wheel has to pass.
+- **The stat scale is small on purpose.** A level-1 Performer has about **12 HP**; the average hit
+  across a whole battle is **2.8**, so it takes ~4.6 of them to drop a Performer and 2.5 to drop an
+  Understudy. Basics land for 1–2, ultimates for 4–7. An HP bar the player can count is worth more than one reading
+  780, and −3 of 11 registers as an event in a way −53 of 780 never did. Two things carried the old
+  balance across the change: `DEF` and `MITIGATION_ANCHOR` were divided by the **same** number, so
+  every mitigation percentage is exactly what it was; and everything scaling off ATK — damage,
+  heals, lifesteal, thorns — moved together, so their ratios held. Heal powers were then trimmed
+  ~35%, because damage is rounded *after* mitigation shrinks it while heals are not mitigated at
+  all, so at this scale rounding is all downside for one and all upside for the other (left alone,
+  a heal was worth 1.4× what it used to be against the same hit).
+- **ATK and DEF are in TENTHS of a damage point** (`ATK_PER_DAMAGE = 10`). That is what lets a sheet
+  read `ATK 26 · P.DEF 50` while the hit it pays for lands as 2 on an 11 HP bar. Small HP forces
+  damage to be a small integer, and a stat that moved in whole damage points would have no
+  resolution left — ATK 2 to ATK 3 is a 50% step where the roster was authored at 37%, and +10% of
+  it rounds to nothing. So the stat is measured in a finer unit than its output and the formula
+  divides once, at the end. **Every stat on every sheet is a whole number**, which is what let the
+  fractional-stat plumbing this replaced be deleted: `baseStat`, `applyLevel`, star nodes and
+  `resolveModifierAmount` all round again.
+
+  > Anything comparing a stat against a damage figure has to divide. The AI's buff heuristics do,
+  > and that was where a real bug was hiding — see `buffStatGain`.
+- **Percentage passives bank their remainder** (`Unit.carry`). 4% of a 9 HP healer is 0.36, and
+  both roundings are wrong: down means regen never fires at all, and a `max(1, …)` floor pays a
+  whole point every turn — 11% of the pool instead of 4%. Banking the fraction until it is worth a
+  point makes the tuning number mean what it says. Regen, thorns, lifesteal and `resilient` all use
+  it, and they still need it after the units change: those bank fractions of **HP and of damage**,
+  which really are small integers.
+- **`resilient` was the worst case of it, and it was silently broken.** It multiplied damage before
+  rounding, and damage is usually 1, 2 or 3. Measured against the damage the game actually deals, a
+  stated 8% delivered **0.7%** and a stated 10% delivered **1.3%**, while 18% delivered 21.3%.
+  Re-tuning could not have fixed it: 3 is the modal hit and `3 × 0.85` rounds back to 3, so a single
+  point of resilience flips 37% of all damage at once — a cliff, not a curve.
+
+  | stated | was | now |
+  | --- | --- | --- |
+  | 8% | 0.7% | 5.4% |
+  | 10% | 1.3% | 6.7% |
+  | 15% | 7.8% | 10.0% |
+  | 18% | 21.3% | 12.1% |
+  | 30% | 27.9% | 20.0% |
+
+  Smooth and monotonic now. It under-delivers by a predictable third because **27% of hits are
+  already 1** and the `max(1, …)` floor will not take one to zero — that is correct ("you always
+  take at least 1") and, unlike the old behaviour, consistent. Author against the right column.
+
+  > Split into `peekResilience` and `spendResilience` because **`computeDamage` has to stay pure**:
+  > the forecast panel calls it to show what a hit *would* do and the AI calls it dozens of times a
+  > turn, and neither may advance the defender's bank. `strike` spends it once, where the hit lands.
+  > Both read the same carry, so the forecast is exact. Forgetting the spend fails closed — a bank
+  > that never advances never reaches a whole point, so resilience just stops applying.
 - **Stats are one offensive number and two defensive tracks.** `attack` drives physical hits,
   magical hits *and* healing, so anything that raises ATK is worth the same to a blade, a staff and
   a healer. Defence splits into `physicalDefense` / `magicalDefense`, which is why a shred can be
@@ -461,7 +772,7 @@ reads `range > 1` as its melee test.
   where an attacker flips from useful to useless, and makes many small hits worthless against
   armour.
 - **`K` is anchored to the ATTACKER's `powerScale`, and that is the whole trick.** With a fixed
-  `K = 100` the formula quietly expires: stats grow with level but the constant does not, so
+  `K` the formula quietly expires: stats grow with level but the constant does not, so
   mitigation drifted 0.69 → 0.24 between level 1 and 80 and the *same* fight stretched from 7.5
   hits to 22. Scaling `K` with the attacker holds an even fight at a constant length —
   **9.4 hits at level 1 and at level 80** — and because `DEF` still carries the defender's scale, a
@@ -483,8 +794,8 @@ the level it declares without having to remember to.
   swing steel, staves cast, and every attack in content sets its type explicitly so nothing relies
   on the default. True has to be *priced* rather than balanced — as a full-strength type it would
   never be wrong, and the never-wrong option erases the decision. At ~55% power its crossover sits
-  at **exactly DEF 80**: worse than typed against a mob, better only against something armoured on
-  both tracks.
+  at **exactly DEF 8** — eight times `MITIGATION_ANCHOR` / 10: worse than typed against a mob,
+  better only against something armoured on both tracks.
 - **A guard buff and a defensive star node raise both tracks.** Splitting them would halve every
   defensive ability without adding a decision worth making; per-type warding is elemental
   resistance's job, which is a separate axis.
@@ -578,8 +889,8 @@ construction. Kits still authored the old way (`kind` + `power`) fall back to th
 
 **Cooldowns work for the player now.** `Unit.cooldowns` and its per-turn countdown were always
 side-agnostic, but only the enemy path ever set or read them, so a player ultimate with a cooldown
-could be cast every turn. `checkAction`, `commitAction` and the auto-battler's planner all respect
-it — the planner too, or idle play would quietly get a better kit than manual play. A cooldown is
+could be cast every turn. `checkAction` and `commitAction` respect it, which is what the player
+meets; `bestPlan` respects it too, though nothing reachable from the game calls that. A cooldown is
 set to `cooldown + 1` on use because Start Turn counts every cooldown down including the turn it
 was cast on, so **a 2-turn cooldown locks out the next two turns** and is ready on the third.
 
@@ -604,6 +915,51 @@ This is the single most important content distinction.
   named target has since died, which is itself a legitimate answer to the reveal.
 - **Trash mobs** get one ability and usually no passive. **Elites** get passives. **Bosses** get
   several, with hidden activation odds.
+- **Bosses escalate.** `CharacterDef.ramp` grows the creature's damage every turn past a grace
+  period — **linear**, `1 + percent/100 × (turn − after)`. The False Lead runs 5% after turn 10:
+  ×1.20 at turn 14, ×1.50 at 20, ×2.00 at 30.
+
+  This is the structural answer to the turtle, and it is the inverse of the failure recorded in §8.
+  Mitigation (`resilient`, defence buffs) is a **fraction** of incoming damage, so it scales with
+  the ramp and can never cancel it; healing is a **flat** amount per cast, so a growing damage
+  source beats it outright. Flat enemy damage is always healable — a ramping one is not.
+
+  When it was built, simulation at stage 10 showed exactly what it was for: 7.3% of level-10 attempts
+  ended in a **draw** at the 40-turn cap, and the ramp turned every one of those into a loss while
+  leaving every level at or above the gate byte-identical.
+
+  **That measurement no longer reproduces, and the reason is worth recording.** Those long fights
+  were partly an AI bug: `scoreAction` read `Ability.power` as a flat stat buff for abilities whose
+  real numbers live in `effects`, so the auto-battler valued Rally at twenty flat stat points and
+  spent a quarter of every turn casting it. With `buffStatGain` reading the actual effect, Rally
+  fell from 25.0% of all player actions to 2.7%, the AI attacks instead of buff-looping, and the
+  stage-10 fight runs 13.2 turns rather than 19.5 — below the ramp's grace period, so it barely
+  fires:
+
+  | party | win, no ramp | win, ramp | draw, either | avg turns |
+  | --- | --- | --- | --- | --- |
+  | Lv 10 | 100% | 99.3% | 0.0% | 13.2 |
+  | Lv 13 (the gate's level) | 100% | 100% | 0.0% | 10.0 |
+  | Lv 16 | 100% | 100% | 0.0% | 8.5 |
+  | Lv 20 | 100% | 100% | 0.0% | 6.6 |
+
+  **The mechanic stays anyway**, because the thing it guards against is a *player* strategy the AI
+  never played: a composition built on defence buffs and healing, which can extend a fight far past
+  anything the auto-battler produces. `after: 10` now sits just past a cleanly-played fight, which
+  is where the grace period belongs. Re-measure it against a deliberately defensive party rather
+  than against the AI.
+
+  Three decisions worth keeping. **Linear, not compounding**: 5% compounding is ×2.65 by turn 20 and
+  ×7 by turn 40, which stops being an anti-stall and becomes a difficulty setting. **`after` is what
+  keeps it honest** — starting at turn 1 makes the *normal* fight 65% harder, a tuning change
+  dressed as a mechanic. **Bosses only**: a corridor fight ends in ~6 turns and would never reach it.
+
+  It is written as an ordinary **stat modifier** on the creature's attack rather than a special case
+  in `computeDamage`, which buys three things free: the forecast panel reports the ramped number
+  because it reads the same stat, the roster row's attack chip shows it, and `computeDamage` stays
+  pure. And it is **shown** — a `×1.15` badge above the intent die, plus a line on the sheet.
+  BATTLE_DESIGN's rule that a fight must be plannable applies to a ramp as much as to a dice roll: a
+  boss quietly doubling its damage is indistinguishable from the numbers being broken.
 - **Telegraphed attacks**: an ability with `telegraph: 1` announces its target area this turn and
   lands at the start of its next phase. Distinct from an intent — a telegraph is a wind-up you have
   a whole turn to answer, an intent is what happens at the end of this one.
@@ -614,13 +970,25 @@ This is the single most important content distinction.
 `Ability.priority` is the older selector and is now vestigial; the current kits still carry it and
 are about to be rebuilt anyway.
 
-Passives available: `regen`, `thorns`, `resilient`, `frenzy`, `lifesteal`, `swift`.
+Passives available: `regen`, `thorns`, `resilient`, `frenzy`, `lifesteal` — all percentages applied
+to their owner — plus `extraDie`, which is not (see §5.1, *Contributed dice*).
 
 ### 5.4 In-battle upgrades
 
 Three tiers per player character at **6 / 8 / 12 dice**. Each grants +10% cumulative stats and
 unlocks a passive. Costs the character's action, same as casting. The max-HP gain is granted as
 healing, so upgrading mid-fight does not leave you at a smaller fraction of a bigger bar.
+
+**A tier grants any `Passive`, including `extraDie`** — `activePassives` folds bought tiers in
+alongside innate ones and `poolFor` reads that list, so a tier can put another die in the shared
+pool with no new machinery. Benjamin's third does.
+
+**The stat half is not filler, and for one character it is the whole point.** Rally copies
+Benjamin's *current* stats onto an ally — the whole team when it chains — so every tier he buys is
++10% on every Rally for the rest of the fight. Nobody else converts personal stats into team stats,
+which is what makes "spend a turn investing in yourself" his enabling play rather than a selfish
+one. Worth knowing before authoring anyone else's: for the other five, the stat bonus really is a
+flat personal gain and the passive has to carry the tier.
 
 ### 5.5 Star tree (permanent, spends duplicates)
 
@@ -993,21 +1361,96 @@ idle scene).
 
 ## 8. Current state
 
-**Battle balance is not tracked, and deliberately so.** The simulator that used to report it is
-abandoned (§2) and the system it measured is being replaced (`BATTLE_DESIGN.md`). For the record,
-its last reading was a **100% player win rate with 4.94 of 5 survivors over 300 battles** — the
-party out-damaged enemies roughly 2:1 per action, had 14% more HP, and healed on top. Do not tune
-against that. The kits and the enemies are both being rebuilt.
+**Battle balance is still not tracked, and deliberately so.** The corridor fight reads a 100% win
+rate at 2.9 turns; it is an AI playing a game no human plays, against enemies that have one ability
+each and kits that are all disposable but Benjamin's. **Do not tune against it.** What the simulator
+*is* good for, and the line between the two, is in §2.
 
-The diagnosis is still useful as a warning, because the same trap is easy to re-create: enemy
-damage was **flat** (312 per turn, every turn), and flat damage is always healable — one Sanctuary
-healed 315 for two dice, so a single Performer spending two of five dice cancelled five enemies.
-`BATTLE_DESIGN.md` addresses this structurally, via simultaneous enemy phases that cannot be healed
-through mid-burst, rather than by raising enemy numbers into a sustain cliff.
+One diagnosis from the old system is still worth keeping as a warning, because the trap is easy to
+re-create: enemy damage was **flat** (312 per turn, every turn), and flat damage is always healable
+— one Sanctuary healed 315 for two dice, so a single Performer spending two of five dice cancelled
+five enemies. Two things now answer it structurally rather than by raising enemy numbers into a
+sustain cliff: simultaneous enemy phases that cannot be healed through mid-burst, and the boss
+damage **ramp** (§5.3), which is the same lesson inverted — a *growing* damage source cannot be
+healed through at all.
 
-**Cast** — all five have sprites and idle animations, and **all five are 3★**, the common tier, as
-tutorial unlocks: Benjamin (elementless blade, **rebuilt**), Kael (wind blade), Rebar (light
-shield), Maxine (water staff, artillery), Aethis (earth staff, healer).
+**Cast — six, all with sprites and idle animations.** Five 3★ as tutorial unlocks: Benjamin
+(elementless blade, **fully rebuilt**), Kael (wind blade), Rebar (light shield), Maxine (water
+staff, artillery), Aethis (earth staff, healer). Plus **Brax**, the first 5★ and the first actor on
+a 256px canvas — an earth/fire tank with a **placeholder kit**, fieldable so compositions can be
+tested rather than balanced.
+
+**Every Performer has a named innate passive**, shown on the sheet with its rules text on hover.
+Five are numbers applied to their owner; Benjamin's is not (see below).
+
+| | passive | |
+| --- | --- | --- |
+| Benjamin | **Drillmaster** | the party rolls an extra die while he stands |
+| Kael | Second Wind | `frenzy 20` |
+| Rebar | Bristling Hide | `thorns 15` |
+| Maxine | Rime Siphon | `lifesteal 10` |
+| Aethis | Quiet Bloom | `regen 4` |
+| Brax | Slagskin | `resilient 10` |
+
+**Every stat was rescaled down.** A level-1 Performer now has **9–20 HP** (about 12 on average),
+ATK 18–27 and DEF 20–100, both in **tenths of a damage point**. The mechanics are in §5.2. The
+level-1 roster, against a Red Understudy (7 HP, P.DEF 40, M.DEF 20) — basics land for 1–2 and
+ultimates for 4–7, on a bar you can count:
+
+| | HP | ATK | P.DEF | M.DEF | basic | signature | ultimate |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Benjamin | 11 | 26 | 50 | 30 | −1 | −2 | −4 |
+| Kael | 12 | 27 | 60 | 40 | −1 | −2 | −3 |
+| Rebar | 15 | 19 | 80 | 50 | −1 | −1 | +2 hp |
+| Maxine | 9 | 27 | 20 | 40 | −2 | −4 | −7 |
+| Aethis | 9 | 18 | 30 | 40 | −1 | +1 hp | +2 hp |
+| Brax | 20 | 21 | 100 | 70 | −1 | — | −2 |
+
+**Chains are live.** Every ability may carry a symbol; playing one arms it for the rest of the
+round, and a later ability sharing it fires that ability's own trigger. Benjamin carries `anvil`
+(Quick Cut, Sunder) and `lantern` (Rally, Perfect Form), with triggers on Sunder and Rally per
+`BATTLE_DESIGN.md` §8. The other four carry **symbols but no triggers** — their kits are disposable
+and inventing trigger effects for abilities about to be rewritten is work thrown away, but without a
+second carrier nothing could arm Benjamin's and the mechanic would be unreachable in play. They
+enable chains without benefiting from them, which is the "completes other people's chains" role
+Rebar was always meant to have. Give them triggers when their kits are authored.
+
+**Brax fills the 5★ summon tier**, which was previously empty — and his canvas is the interesting
+part. **Stature is `body / canvas`, so a bigger canvas is a detail
+budget and not a size multiplier** — at 211/256 he stands 0.82 of a canvas and renders 1.24×
+Benjamin, exactly as a 128px actor with a 105px body would. The pipeline now reads canvas size off
+the file (`BY_CANVAS`) rather than assuming 128; measured against the old fixed divisor he came out
+at 1.63 of canvas and would have been drawn two and a half times everyone's height.
+
+**Benjamin's passive is Drillmaster: the troupe rolls a sixth die while he is standing.** It
+replaced a placeholder `resilient 8`, which said the opposite of everything else his kit does —
+Rally reads *his* stats and hands them to somebody else, Sunder's shred is for whoever acts after
+him, Quick Cut arms a chain he may not be the one to cash. The die is a d6 with **three blank
+faces** and the rest 1–3 (+0.50 dice a turn against a true die's +1.00), and it improves with his
+**star level** rather than with a node — a tree that offers three real choices should not spend one
+of them on something the character already does, and a level applies to everyone who gets there
+whatever they picked on the way:
+
+| stars | faces | +dice/turn |
+| --- | --- | --- |
+| 0–1 | three blanks, 1–3 | +0.50 |
+| 2–3 | two blanks, 1–4 | +0.67 |
+| 4 | one blank, 1–5 | +0.83 |
+| 5 | a true d6 | +1.00 |
+
+Measured effect in the corridor sim: actions per phase 3.34 → 3.51.
+
+**His in-battle upgrade line is built too — survive, sustain, multiply** (`BATTLE_DESIGN.md` §8):
+*Hold the Line* (6, `resilient 25`), *Trouper* (8, `regen 9`), *Full Company* (12, **a second die in
+the pool**). They replaced lifesteal / frenzy / resilient, three more ways of saying "Benjamin
+personally fights better" on a Performer whose kit is about somebody else fighting better.
+
+The thing that makes them his was a synergy that already existed and was never written down: **the
++10% stat bonus every tier grants is already team-scaled for him alone**, because Rally copies his
+*current* stats. Three tiers is +30% on every Rally for the rest of the fight, and it takes him from
+`ATK 26 · P.DEF 50` to `ATK 34 · P.DEF 65`. That is what frees the passive slot to answer a
+different question — what keeps him able to keep doing it — and both answers point the same way,
+because Rally's worth and Drillmaster's die both end the turn he does.
 
 **Benjamin is the only redesigned kit.** He is specced in `BATTLE_DESIGN.md` §8 and built: Quick
 Cut (wildcard), Sunder (6, damage then a physical-defence shred), Rally (4, buffs an ally by a % of
@@ -1112,33 +1555,44 @@ sheet from the base roster, so any stage can be tried at any level without grind
   field — while the engine did something else entirely. The generator claims it "can never drift
   out of sync with what the engine actually does", and adding a second way to author an ability is
   exactly how that claim breaks.
-- **The auto-battler cannot evaluate an enabler.** `scoreAction` is myopic and greedy: it scores the
-  damage an action deals *now*, to the target it names. Benjamin's kit is worth things that land
-  later or on somebody else, and the solver cannot see any of it. Measured value per die at level 5:
 
-  | | cost | dice | score | per die |
-  | --- | --- | --- | --- | --- |
-  | Quick Cut | wildcard | 1.00 | 71 | **71** |
-  | Sunder | 6 | 1.42 | 97 | 68 |
-  | Perfect Form | 10 | 2.58 | 176 | 68 |
-  | Rally | 4 | 1.34 | 36 | **27** |
+  > **The same trap caught the AI, and it went unnoticed for far longer.** `scoreAction`'s buff
+  > branch read `Ability.power` as a flat stat amount — true only under the legacy authoring — so
+  > Rally's vestigial `power: 20` scored as twenty flat stat points and the auto-battler spent a
+  > quarter of every turn casting it. Fixed with `buffStatGain`. **Two readers of the same
+  > ambiguous field, and both of them got it wrong.** Anywhere else that reads `power` off an
+  > ability with an `effects` list is suspect; the forecast panel's heal line was a third case, and
+  > it was printing a multiplier where an HP figure belonged.
+- **Percentage passives at this scale need `Unit.carry`, and `resilient` is the cautionary tale.**
+  A stated 10% was delivering 1.3% because damage is usually 1–3 and it multiplied before rounding.
+  Nothing in the game *said* so; the number looked reasonable on the sheet and the passive simply
+  did not work. See §5.2 for the before/after table. **When a percentage meets a small integer,
+  measure it rather than reading it** — and if you author a new percentage effect, bank it.
+- **A 1-damage hit cannot be reduced**, by resilience or by anything else: the `max(1, …)` floor
+  will not take one to zero, and 27% of hits are already 1. Every damage-reduction number therefore
+  under-delivers by about a third. That is correct behaviour, but it is a permanent tax and the
+  stated numbers should be authored knowing it.
+- ~~**The auto-battler cannot evaluate an enabler.**~~ **Resolved as a non-issue — do not fix it.**
+  `scoreAction` is genuinely myopic (it scores the damage an action deals *now*, to the target it
+  names, so Benjamin's shred and self-buff are invisible and his free basic outscores his whole kit
+  per die). But it cannot reach anything a player sees, and there will never be an auto-battler to
+  care:
 
-  Sunder and Perfect Form are scored on their damage alone — the defense shred and the self-buff
-  are invisible — and Rally is valued off the legacy flat `power` rather than what it actually
-  grants. So the free basic beats everything and the AI plays Benjamin as a stick: in a 400-battle
-  sim he casts Quick Cut 5.0% of the time, Rally 1.0%, and Perfect Form **0.1%**.
+  | claim made | what is actually true |
+  | --- | --- |
+  | "idle is a real game mode, so AFK uses him as a stick" | Idle rewards are `ratesFor(stage) × elapsed`. **No battle is simulated**, and accrual never reads the roster. |
+  | "the player-side planner matters" | `bestPlan`/`nextDiceStep` are reachable only via `runAiPhase` ← `endPhase`/`simulateBattle` ← `src/cli/`. The UI resolves the player's queue with `commitNext` and calls `nextAiStep` only during the enemy phase. |
+  | "this is the `allocate.ts` assumption chains will break" | Only for an AI that must *price* a chain. A player arming a symbol needs resolution-time arm/fire in `battle.ts` and a UI preview. `bestPlan` is never consulted. |
 
-  This is the `allocate.ts` independence assumption that §4's chains were expected to break, and
-  Benjamin reached it first. It matters beyond tuning, because idle is a real game mode: a Performer
-  the auto-battler cannot use is useless in AFK play however well he reads by hand. The fix is the
-  same one chains need — score an action against the plan it belongs to, one level up, rather than
-  in isolation.
+  There is no auto-battle and no skip (`BATTLE_DESIGN.md` §1), so **chains are not blocked by this
+  and neither is Benjamin.** The one live use of `scoreAction` is `chooseEnemyAction`, the fallback
+  when an enemy's declared target dies before the enemy phase — that path should keep working.
 - **Stage progression does not exist.** `profile.stage` is always 1; winning does not advance it or
   grant rewards. The battle and idle layers are not yet connected. **Unaffected by the battle
   redesign — safe to build now.**
 - **Party is the first five owned characters**, in roster order. No lineup management UI.
-- **The summon screen advertises rates it cannot deliver.** Rarity runs **3–5**, and all five
-  starters are 3★, so the 4★ and 5★ tiers are empty. `summon()` falls back to the whole pool for an
+- **The summon screen advertises rates it cannot deliver.** Rarity runs **3–5**. Brax now fills the
+  5★ tier, but **4★ is still empty**. `summon()` falls back to the whole pool for an
   empty tier, which means the screen shows 4% / 26% / 70% and hands out 3★ characters 100% of the
   time. Not a code bug — the rate table and the disclosure are still the same value, which is the
   property that matters — but it breaks the "displayed odds cannot drift from applied odds"
@@ -1241,18 +1695,55 @@ sheet from the base roster, so any stage can be tried at any level without grind
     item's default, meaning its content's min-content size) let the stat row's four figures push
     the panel to **490px** anyway. It takes `min-width: 0`, placed after the shared reset, to hold
     the declared width.
-- **The battle narrates itself.** A message box above the dice reads "Benjamin uses Cross Slash on
-  Red Understudy!" as each action resolves. It sits in the dock, not over the artwork: the
-  conventional place for a message box is the bottom of the scene, but the bottom of *this* scene
-  is where the front rank stands and where enemy intents are drawn at their feet — a box there
-  would cover the two things the sentence is about. Its slot holds its height whether or not
-  anything is being said, so the dice never jump.
+- **The battle narrates itself.** A Final Fantasy–style message box reads "Benjamin uses Cross
+  Slash on Red Understudy!" as each action resolves — bordered, centred, 560px, at the **foot of
+  the stage**. It was first put in the dock to keep it off the artwork, on the reasoning that the
+  bottom of *this* scene is where the front rank stands; but it only appears while the turn is
+  resolving, when there is nothing to click behind it anyway, and reserving a dock row for it cost
+  the band ~56px permanently. Over the stage it costs nothing.
+  > Two layout notes. `justify-self: center` on the wrapper sizes the item to its **content**, so
+  > the box's own `width: min(560px, 84%)` resolved against the text and came out 243px — it takes
+  > `justify-self: stretch` plus flex centring. And the whole thing is paced for **reading**, not
+  > for animation: at the original 620ms per step the next unit overwrote the sentence before it
+  > could be finished, so a five-action round was a blur. `BEAT_MS` is 1500 (enemies 1700, since
+  > their actions are the ones you did not choose), and the damage floaters were lengthened to
+  > match.
   Phrasing follows `scope`, since naming a slot for an ability that hit five creatures reads as a
   bug, and the target is looked up among **all** units rather than the living ones — by the time an
   action resolves its target may be down, and that is exactly the line you want when they die to
   it. `actionLine` and `floaterClass` live in `narrate.ts` rather than in the component: they are
   pure mappings with a wrong answer available for every input, and reading sentences off a screen
   one battle at a time is not a test.
+- **Elements are drawn, not spelled.** `ElementIcon` in `Avatar.tsx` carries seven `currentColor`
+  SVG glyphs, and the sheet's weakness/resistance rows are the glyph plus a signed percentage rather
+  than the element's name. A word costs a whole chip's width to say something the colour and shape
+  say faster, and the name is still one hover away in the `title`. The same glyph is what the
+  stage's matchup badge uses, so the two read as one fact in two places.
+- **Two badge columns sit above every enemy, stacked in one anchored element.**
+  `.unit-marks` holds the boss's escalation multiplier and — only while an elemental attack is being
+  aimed, and only on creatures it can reach — how that creature takes it: the element's glyph and a
+  signed percentage, red for *takes more*, blue for *takes less*. Same visual language as the
+  sheet's matchup chips, because it is the same fact.
+  **Neutral shows nothing at all**; a row of zeroes over every creature is noise, and the absence is
+  the information. An ability with no element shows no markers either — absent is not neutral, it
+  means the elemental layer does not apply (Benjamin's whole kit).
+  > They are one column rather than two independently-anchored badges. Both were placed against the
+  > same slot point, which is fine right up until a ramping boss is also a legal target and they are
+  > drawn on top of each other. "Usually they do not coincide" is not a layout.
+- **The commit button is pinned to the foot of the tray**, and the tray can no longer exceed its
+  band. It was the last item in a centred stack, so every queued action pushed it down: at five
+  actions the tray stood 388px inside a 317px band and the button sat *below the window's edge*.
+  Three things were wrong and all three had to be fixed — a grid item's default `min-height: auto`
+  is its content's height, so the fixed band was not fixed; the queue carried a `max-height` with
+  `overflow-y: auto`, which hid the fifth row; and the hints block is authored *after* the controls
+  in the DOM, so even once pinned it sat below the button and shoved it back up by its own height.
+  `min-height: 0` on the band, explicit `order` on the four rows, and `margin-top: auto` on the
+  controls. The button now measures 800–836 whether nothing or five actions are queued.
+  > **Not floated.** A floating button would have to go over the artwork, and the bottom of this
+  > scene is where the front rank stands — the same reason the narration box could not live there.
+  > Anchored to the foot of its own panel it never moves at all, which is the property that was
+  > actually wanted. The dice also came down from 74px to 58px: the pool grew to six when
+  > contributed dice arrived, and the second full row has to come out of somewhere.
 - **Floating numbers are coloured by element and flagged on a critical.** Colour says *what hit
   you*, which the number cannot; deliberately not the matchup, because a number that turned green
   for "resisted" would collide with healing. A critical is drawn as a different **event** rather
@@ -1295,18 +1786,25 @@ sheet from the base roster, so any stage can be tried at any level without grind
 1. **Rebuild the art at 128px** — Kael, Rebar and Aethis, each with a single idle. Benjamin and
    Maxine are done. The pipeline is ready; see the pre-flight list in §3.
 2. **Build the new battle system** — `BATTLE_DESIGN.md`. **Enemy intent, the turn loop, damage
-   types, elemental resistance, turn phases and timed modifiers are done.** Remaining, largest
-   first: **symbols and chains** (§4), an **auto-battler that can price an enabler** (see §9 — the
-   same `allocate.ts` limitation, and the blocker on both), then **statuses** proper (paralyze,
-   burn and friends; modifiers already share their clock).
+   types, elemental resistance, turn phases, timed modifiers and symbols/chains are done.**
+   Remaining: **statuses** proper (paralyze, burn and friends; modifiers already share their
+   clock).
 3. **Redesign every Performer's kit** against that document. Damage types, symbols and costs
    authored deliberately against the payability table. The current kits are disposable.
-   **Benjamin is built** (`BATTLE_DESIGN.md` §8) — and building him landed most of the remaining
-   engine work: Start/End turn phases, timed per-track modifiers, percentage modifiers resolved
-   against a named source, ordered effect lists, player-side cooldowns and elementless attacks.
-   What he still needs is chains, and an auto-battler that can see what an enabler is worth.
+   **Benjamin is finished** (`BATTLE_DESIGN.md` §8) — four abilities, two chain triggers, an innate
+   passive and three upgrade tiers. Building him landed most of the remaining engine work: Start/End
+   turn phases, timed per-track modifiers, percentage modifiers resolved against a named source,
+   ordered effect lists, player-side cooldowns, elementless attacks, and — for his passive — the
+   whole mutable dice pool (§5.1).
+   **The other five still need everything**, and two shapes are now available that were not when
+   their kits were written: a passive can change the *pool* rather than a stat, and an upgrade tier
+   can grant any passive at all. Note that the tiers' +10% stat bonus is genuine filler for all five
+   of them — only Benjamin converts personal stats into team stats — so their passives have to carry
+   their tiers.
 4. **Enemy kits** — mobs currently have one 1.0-power attack each, which is why party actions were
-   worth 2:1. Enemies need 1–4 abilities with hidden activation odds.
+   worth 2:1. Enemies need 1–4 abilities with hidden activation odds. **The boss has a ramp**
+   (§5.3) and the False Lead has a rotating resistance; ordinary mobs have neither and should not
+   get either — both are boss-shaped mechanics.
 5. **Enemy art** — they are role badges on a painted stage; the most visible gap.
 6. **Stage progression** — winning advances `profile.stage`, grants rewards, raises the idle rate.
    The missing link between the two halves of the game, and **independent of the battle redesign**,
@@ -1315,6 +1813,8 @@ sheet from the base roster, so any stage can be tried at any level without grind
 
 **Deliberately dropped:**
 
+- **Auto-battle and skip.** Every stage is played by hand — reasoned in `BATTLE_DESIGN.md` §1. The
+  player-side planner (`bestPlan`, `nextDiceStep`) has no future use and is safe to delete.
 - **The balance simulator** (§2). Not the measuring instrument this game is designed around.
 - **Enemy difficulty tuning in the current system.** The system is being replaced; tuning it now
   produces numbers that describe mechanics that are going away.
@@ -1343,6 +1843,11 @@ sheet from the base roster, so any stage can be tried at any level without grind
 - Windows + Git Bash. **Bash heredocs mangle backslashes and break on some quoted content** —
   several edits failed silently this way. Prefer the Write tool, or Python scripts with explicit
   UTF-8, for anything containing escapes or unusual characters.
+- **A Python edit script that omits `encoding='utf-8'` on `write_text` can truncate the file it is
+  editing.** `UnicodeEncodeError` is raised *during* the write on Windows' cp1252 default, after
+  the file has been opened for writing — so the original content is gone and only the prefix
+  survives. It cost a test script mid-session. Always pass the encoding on both `read_text` and
+  `write_text`, and assert the match count before writing.
 - **PowerShell `$_` is eaten by Bash.** Killing stray processes needs the PowerShell tool, not a
   `powershell -Command` string from Bash.
 - `dist/` is deleted on every build. **Never leave source art there.**
@@ -1367,7 +1872,19 @@ sheet from the base roster, so any stage can be tried at any level without grind
   consecutive identical values, so it could not detect a doubled frame — which was exactly the bug
   (`animation-direction: alternate` with `steps()` holds both endpoints twice).
 - Screenshot the UI rather than assuming. It caught the invisible AoE preview, the ellipse button,
-  and several sprite scale problems.
+  and several sprite scale problems — and a badge that reported the right text at the right
+  coordinates while being drawn *underneath* the creature it described.
+- **`getBoundingClientRect` is not proof a thing is visible.** Check the computed `z-index` too. A
+  badge measured 45×20 at the correct position and was invisible: the block set `z-index` twice and
+  the second declaration won. **A duplicated property inside one CSS rule is silent** — no warning
+  from the browser, none from the build.
+- **React's `onMouseEnter` does not fire from a synthetic `mouseenter` event.** React delegates
+  through `mouseover`, so a CDP-driven hover test has to dispatch `pointerover`/`mouseover`, or use
+  the `onFocus` path if there is one. A hover probe that silently does nothing looks exactly like a
+  handler that is not wired up.
+- **Console errors collected over a CDP session are cumulative and include stale HMR failures.** An
+  error naming a symbol you just added is usually the *previous* module still in memory; reload and
+  re-check before chasing it. Two red herrings this session.
 
 **Verification habits that paid off**
 

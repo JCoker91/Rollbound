@@ -1,6 +1,12 @@
-import type { Ability, Pos, Unit, Upgrade } from './types.ts';
+import type { Ability, Die, Pos, Unit, Upgrade } from './types.ts';
 import { alive } from './types.ts';
 import { scoreAction, canTarget, scoreUpgrade } from './combat.ts';
+// The pool's own concerns -- what a subset costs, which dice a mask names --
+// live in `dice.ts`. Re-exported here because this module was where callers
+// found them before the pool grew an identity.
+import { countBits, maskToDice, maskToIds, payingMasks } from './dice.ts';
+
+export { countBits, maskToDice, maskToIds, payingMasks };
 
 export interface Action {
   unit: Unit;
@@ -9,7 +15,8 @@ export interface Action {
   upgrade?: Upgrade;
   /** Slot the ability is aimed at. */
   target: Pos;
-  dice: number[];
+  /** Which dice pay for it, by id. Never by index -- the pool is mutable. */
+  dice: string[];
   diceMask: number;
   score: number;
 }
@@ -18,32 +25,6 @@ export interface Plan {
   actions: Action[];
   diceUsed: number;
   totalScore: number;
-}
-
-/** Every dice subset that exactly pays `cost`, as bitmasks. */
-export function payingMasks(dice: number[], ability: Ability): number[] {
-  const out: number[] = [];
-  for (let mask = 1; mask < 1 << dice.length; mask++) {
-    let sum = 0, count = 0;
-    for (let i = 0; i < dice.length; i++) {
-      if (mask & (1 << i)) { sum += dice[i]!; count++; }
-    }
-    // Wildcards ignore the value entirely and eat exactly one die.
-    if (ability.wildcard ? count === 1 : sum === ability.cost) out.push(mask);
-  }
-  return out;
-}
-
-export function maskToDice(mask: number, dice: number[]): number[] {
-  const out: number[] = [];
-  for (let i = 0; i < dice.length; i++) if (mask & (1 << i)) out.push(dice[i]!);
-  return out;
-}
-
-export function countBits(mask: number): number {
-  let c = 0;
-  while (mask) { mask &= mask - 1; c++; }
-  return c;
 }
 
 /**
@@ -72,7 +53,7 @@ function bestTarget(
 
 interface Option { mask: number; action: Omit<Action, 'dice' | 'diceMask'> }
 
-function optionsFor(unit: Unit, dice: number[], allies: Unit[], enemies: Unit[]): Option[] {
+function optionsFor(unit: Unit, dice: Die[], allies: Unit[], enemies: Unit[]): Option[] {
   const byMask = new Map<number, Option>();
 
   // Buying the next upgrade tier competes for the same dice as an ability.
@@ -118,7 +99,7 @@ function optionsFor(unit: Unit, dice: number[], allies: Unit[], enemies: Unit[])
  * Used for enemy AI and for auto-battling idle stages. The player-facing UI uses
  * `payingMasks` directly to show legal choices instead.
  */
-export function bestPlan(team: Unit[], dice: number[], foes: Unit[]): Plan {
+export function bestPlan(team: Unit[], dice: Die[], foes: Unit[]): Plan {
   const actors = team.filter(alive);
   const optionSets = actors.map((u) => optionsFor(u, dice, team, foes));
 
@@ -139,7 +120,7 @@ export function bestPlan(team: Unit[], dice: number[], foes: Unit[]): Plan {
 
     for (const opt of optionSets[i]!) {
       if (opt.mask & usedMask) continue;
-      current.push({ ...opt.action, dice: maskToDice(opt.mask, dice), diceMask: opt.mask });
+      current.push({ ...opt.action, dice: maskToIds(opt.mask, dice), diceMask: opt.mask });
       recurse(i + 1, usedMask | opt.mask, score + opt.action.score, diceUsed + countBits(opt.mask));
       current.pop();
     }

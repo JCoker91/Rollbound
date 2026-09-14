@@ -5,13 +5,15 @@ import {
   planAction,
   planUpgrade,
   commitNext,
+  isPlanned,
   movePlanned,
   unplan,
-  isPlanned,
   type PlannedAction,
   commitUpgrade,
+  rampMultiplier,
   startEnemyPhase,
   finishEnemyPhase,
+  chainPreview,
   nextAiStep,
   livingOf,
   MAX_TURNS,
@@ -19,10 +21,20 @@ import {
 } from '../engine/battle.ts';
 import { BOSS_EVERY, ROSTER, sceneFor } from '../engine/content.ts';
 import { useDevTools } from './dev.ts';
+import { MAX_STARS } from '../engine/stars.ts';
+import {
+  buildParty,
+  deleteRoster,
+  saveRoster,
+  useDevRosters,
+  type DevMember,
+} from './devRoster.ts';
 import { applyLevel, levelOf, MAX_LEVEL } from '../engine/levels.ts';
 import { payingMasks } from '../engine/allocate.ts';
+import { altered, describeDie } from '../engine/dice.ts';
+import { elementResistance } from '../engine/combat.ts';
+import { matchupLabel, RESIST_CAP } from '../engine/elements.ts';
 import {
-  activePassives,
   canTarget,
   computeDamage,
   effectiveDefense,
@@ -30,29 +42,33 @@ import {
   damageTypeOf,
   statScale,
   unitAttack,
+  computeHeal,
   unitMaxHp,
   unitsHit,
 } from '../engine/combat.ts';
 import {
   describeAbility,
+  describeChain,
   describeCost,
   describeElement,
   describeEnemyUsage,
   describePassive,
 } from '../engine/describe.ts';
-import { columnRank, type Slot } from '../engine/formation.ts';
+import { columnRank, STANDARD_PARTY_SLOTS, type Slot } from '../engine/formation.ts';
 import { actionLine, floaterClass, type Floater } from './narrate.ts';
 import {
   ROLE_LABEL,
   alive,
   type Ability,
+  type Die,
+  type Passive,
   type CharacterDef,
   type Element,
   type Pos,
   type SpriteSheet,
   type Unit,
 } from '../engine/types.ts';
-import { Avatar, themeOf } from './Avatar.tsx';
+import { Avatar, ElementIcon, themeOf } from './Avatar.tsx';
 import { crispCss } from './crisp.ts';
 import {
   clipAnimName,
@@ -140,15 +156,45 @@ interface Selection {
   unit: Unit | null;
   /** Only ever an ability the current `dice` pay for exactly. */
   ability: Ability | null;
-  /** Indices into battle.dice. */
-  dice: number[];
+  /** Die ids, never indices -- the pool is mutable and can be added to. */
+  dice: string[];
 }
 
 const NO_SELECTION: Selection = { unit: null, ability: null, dice: [] };
 
+/**
+ * A stat, as the sheet shows it.
+ *
+ * Stats are whole numbers again now that ATK and DEF are measured in tenths of
+ * a damage point (`ATK_PER_DAMAGE`), so this is normally a no-op. It stays
+ * because an authored `Ability.power` may still carry a decimal and the buff
+ * rows read it directly -- one place that rounds beats four that forget to.
+ */
+const stat = (n: number): string => String(Math.round(n * 10) / 10);
+
 
 /** Must match the floater CSS animation length. */
-const FLOATER_MS = 1000;
+const FLOATER_MS = 1500;
+
+/*
+ * How long one resolved action stays on screen.
+ *
+ * Paced for READING, not for animation. Every step writes a new line into the
+ * message box -- "Benjamin uses Quick Cut!" -- and at the old 620ms the next
+ * unit had already overwritten it before the sentence could be finished, so a
+ * five-action round was a blur of text nobody could follow. A beat is roughly
+ * how long it takes to read a short sentence and glance at the damage floater
+ * it explains.
+ *
+ * The enemy beat is slightly longer because their actions are the ones you did
+ * NOT choose, so they are the ones actually worth reading.
+ */
+const BEAT_MS = 1500;
+const ENEMY_BEAT_MS = 1700;
+/** The pause on handing the turn between sides, with the box cleared. */
+const HANDOVER_MS = 800;
+/** Between pressing Commit and the first action landing. */
+const COMMIT_LEAD_MS = 400;
 
 export function BattleScreen({
   party: basePartyProp,
@@ -173,6 +219,15 @@ export function BattleScreen({
    * stage 10 means actually having a level 12 team.
    */
   const [devLevel, setDevLevel] = useState<number | null>(null);
+  /**
+   * A hand-built test party, or null to fall back to `devLevel`/the real save.
+   *
+   * Outranks `devLevel` because it is strictly more specific: it names who is
+   * on the team AND what level each of them is, where the level box only ever
+   * said "everyone, at this level".
+   */
+  const [devParty, setDevParty] = useState<DevMember[] | null>(null);
+  const [rosterOpen, setRosterOpen] = useState(false);
   const devMode = useDevTools();
   const [battle, setBattle] = useState<BattleState>(() => {
     const s = sceneFor(1);
@@ -185,6 +240,8 @@ export function BattleScreen({
   const [sel, setSel] = useState<Selection>(NO_SELECTION);
   const [hover, setHover] = useState<Pos | null>(null);
   const [preview, setPreview] = useState<Ability | null>(null);
+  /** A hovered innate passive, shown in the same slot as an ability's rules. */
+  const [previewPassive, setPreviewPassive] = useState<Passive | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [narration, setNarration] = useState<string | null>(null);
@@ -208,10 +265,11 @@ export function BattleScreen({
 
   // Re-levelled from the BASE roster, not from the passed-in party: the party
   // already has levels folded in, and levelling it again would compound.
-  const party = useMemo(
-    () => (devLevel === null ? basePartyProp : ROSTER.slice(0, 5).map((d) => applyLevel(d, devLevel))),
-    [devLevel, basePartyProp],
-  );
+  const party = useMemo(() => {
+    if (devParty) return buildParty(devParty);
+    if (devLevel === null) return basePartyProp;
+    return ROSTER.slice(0, 5).map((d) => applyLevel(d, devLevel));
+  }, [devParty, devLevel, basePartyProp]);
 
   const encounter = battle.encounter;
   const over = battle.outcome !== 'ongoing';
@@ -246,15 +304,27 @@ export function BattleScreen({
 
   // ---------------------------------------------------------------- dice gate
 
-  /** Dice subsets that pay for an ability without reusing an already-spent die. */
+  /**
+   * Dice subsets that pay for an ability.
+   *
+   * The filtering for spent and blank dice used to live here; it is inside
+   * `payingMasks` now, because "a mask may only name dice you can spend" is a
+   * property of the pool rather than of whoever is asking it.
+   */
   function masksFor(ability: Ability): number[] {
-    return payingMasks(battle.dice, ability).filter((m) => {
-      for (let i = 0; i < battle.dice.length; i++) {
-        if (m & (1 << i) && battle.diceSpent[i]) return false;
-      }
-      return true;
-    });
+    return payingMasks(battle.dice, ability);
   }
+
+  /**
+   * Who lent a die, by name. The pool stores a character id; the tray says
+   * "Benjamin", because an id on a tooltip is a leak rather than a label.
+   */
+  const sourceName = (id: string): string =>
+    battle.units.find((u) => u.def.id === id)?.def.name ?? id;
+
+  /** The value of a die by id -- 0 for a blank, and for one that has gone. */
+  const dieValue = (id: string): number => battle.dice.find((d) => d.id === id)?.value ?? 0;
+  const pickedSum = (): number => sel.dice.reduce((n, id) => n + dieValue(id), 0);
 
   /** Could SOME subset of this roll pay for it? Greys out what is impossible. */
   const affordable = useMemo(() => {
@@ -263,7 +333,7 @@ export function BattleScreen({
     for (const a of sel.unit.def.abilities) out.set(a.name, masksFor(a).length > 0);
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sel.unit, battle.turn, battle.phase, battle.dice, battle.diceSpent.join()]);
+  }, [sel.unit, battle.turn, battle.phase, battle.dice, battle.dice.map((d) => `${d.id}:${d.value}:${d.spent}`).join()]);
 
   /**
    * Abilities the dice in hand pay for EXACTLY -- the gate that makes dice the
@@ -272,7 +342,7 @@ export function BattleScreen({
   const matched = useMemo(() => {
     const out = new Set<string>();
     if (!sel.unit || sel.unit.side !== 'player' || sel.dice.length === 0) return out;
-    const sum = sel.dice.reduce((n, i) => n + (battle.dice[i] ?? 0), 0);
+    const sum = pickedSum();
     for (const a of sel.unit.def.abilities) {
       if (!(affordable.get(a.name) ?? false)) continue;
       if (a.wildcard ? sel.dice.length === 1 : sum === a.cost) out.add(a.name);
@@ -281,8 +351,7 @@ export function BattleScreen({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sel.unit, sel.dice, affordable, battle.turn, battle.phase]);
 
-  const diceCover = (cost: number): boolean =>
-    sel.dice.length > 0 && sel.dice.reduce((n, i) => n + (battle.dice[i] ?? 0), 0) === cost;
+  const diceCover = (cost: number): boolean => sel.dice.length > 0 && pickedSum() === cost;
 
   // ------------------------------------------------------------- target sets
 
@@ -345,7 +414,7 @@ export function BattleScreen({
     }
     restart(seed, stage);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [devLevel]);
+  }, [devLevel, devParty]);
 
   /** Which enemy the cursor is over, so its intent can be picked out. */
   const hoveredEnemyId = useMemo(() => {
@@ -398,15 +467,25 @@ export function BattleScreen({
    * already decided by the seeded RNG -- this only reveals them, so it can never
    * change the outcome and is safe to interrupt.
    */
-  function playDiceRoll(values: number[]) {
+  function playDiceRoll(pool: Die[]) {
     stopDiceRoll();
     const STAGGER = 170;
     const SPIN = 500;
+    // Tumble through the die's OWN faces, so a die with blanks is visibly a
+    // different die while it is in the air rather than only once it lands.
+    const faces = pool.map((d) => d.spec.faces);
+    const values = pool.map((d) => d.value);
 
     setRoll(values.map(() => ({ phase: 'pending' as const, face: 1 })));
     rollInterval.current = window.setInterval(() => {
-      setRoll((prev) =>
-        prev && prev.map((d) => (d.phase === 'tumbling' ? { ...d, face: 1 + Math.floor(Math.random() * 6) } : d)),
+      setRoll(
+        (prev) =>
+          prev &&
+          prev.map((d, i) => {
+            if (d.phase !== 'tumbling') return d;
+            const f = faces[i] ?? [1, 2, 3, 4, 5, 6];
+            return { ...d, face: f[Math.floor(Math.random() * f.length)] ?? 1 };
+          }),
       );
     }, 55);
 
@@ -518,16 +597,19 @@ export function BattleScreen({
     setError(null);
   }
 
-  function toggleDie(i: number) {
-    if (battle.diceSpent[i] || busy || over) return;
+  function toggleDie(id: string) {
+    const die = battle.dice.find((d) => d.id === id);
+    // A blank is not a small die, it is an absent one: it can never be picked,
+    // on a wildcard or on a sum.
+    if (!die || die.spent || die.value === 0 || busy || over) return;
     // Updater form: several toggles can land in one React batch, and reading the
     // closed-over selection would make all but the first compute from stale dice.
     setSel((s) => ({
       ...s,
-      dice: s.dice.includes(i) ? s.dice.filter((d) => d !== i) : [...s.dice, i],
-      // A chosen ability can never survive a die toggle -- every die is 1-6, so
-      // adding or removing one always shifts the total, and a wildcard needs
-      // exactly one die so it always moves off that count.
+      dice: s.dice.includes(id) ? s.dice.filter((d) => d !== id) : [...s.dice, id],
+      // A chosen ability can never survive a die toggle -- a die is worth at
+      // least 1, so adding or removing one always shifts the total, and a
+      // wildcard needs exactly one die so it always moves off that count.
       ability: null,
     }));
     setError(null);
@@ -548,7 +630,12 @@ export function BattleScreen({
     const err = planAction(battle, sel.unit, sel.ability, sel.dice, target.pos);
     if (err) setError(err);
     else {
-      setSel(NO_SELECTION);
+      // The unit stays selected; only the spent dice and the chosen ability go.
+      // Emptying the sheet the instant an action was queued blanked the panel
+      // mid-turn, which is the same complaint as blanking it on commit -- and
+      // it is why there was never anything left for the commit to preserve.
+      setSel((prev) => ({ unit: prev.unit, ability: null, dice: [] }));
+      setPreviewPassive(null);
       setError(null);
     }
     bump();
@@ -560,8 +647,9 @@ export function BattleScreen({
     const err = planUpgrade(battle, sel.unit, sel.dice);
     if (err) setError(err);
     else {
-      setSel(NO_SELECTION);
+      setSel((prev) => ({ unit: prev.unit, ability: null, dice: [] }));
       setPreview(null);
+      setPreviewPassive(null);
       bump();
     }
   }
@@ -578,11 +666,17 @@ export function BattleScreen({
    */
   function handleEndPhase() {
     if (busy || over) return;
-    setSel(NO_SELECTION);
+    // Keep whoever is selected, drop only what the commit consumes.
+    //
+    // The dice and the chosen ability are genuinely spent, so they go. The UNIT
+    // is not -- clearing it emptied the sheet at the exact moment the turn was
+    // resolving, so the panel went blank just as you wanted to watch what your
+    // plan did to the Performer you had been reading.
+    setSel((prev) => ({ unit: prev.unit, ability: null, dice: [] }));
     setError(null);
     setBusy(true);
     bump();
-    playerTimer.current = window.setTimeout(stepPlan, 220);
+    playerTimer.current = window.setTimeout(stepPlan, COMMIT_LEAD_MS);
   }
 
   /** Resolve one queued action, then the next, then hand over to the enemies. */
@@ -597,14 +691,14 @@ export function BattleScreen({
       startEnemyPhase(battle);
       setNarration(null);
       bump();
-      enemyTimer.current = window.setTimeout(stepEnemy, 420);
+      enemyTimer.current = window.setTimeout(stepEnemy, HANDOVER_MS);
       return;
     }
 
     lunge(step.unit.def.id, step.unit.side);
     setNarration(actionLine(step.unit, step.ability, step.target, battle.units));
     bump();
-    playerTimer.current = window.setTimeout(stepPlan, 620);
+    playerTimer.current = window.setTimeout(stepPlan, BEAT_MS);
   }
 
   function stepEnemy() {
@@ -626,12 +720,23 @@ export function BattleScreen({
     lunge(step.unit.def.id, step.unit.side);
     setNarration(actionLine(step.unit, step.ability, step.target, battle.units));
     bump();
-    enemyTimer.current = window.setTimeout(stepEnemy, 700);
+    enemyTimer.current = window.setTimeout(stepEnemy, ENEMY_BEAT_MS);
   }
 
   // ------------------------------------------------------------------ derived
 
-  const diceSum = sel.dice.reduce((a, i) => a + (battle.dice[i] ?? 0), 0);
+  /**
+   * The ability being aimed, when it is an attack that the element wheel
+   * applies to.
+   *
+   * An ability with no element is not neutral -- the elemental layer simply
+   * does not apply to it -- so Benjamin's whole kit correctly shows no matchup
+   * markers at all rather than a row of zeroes.
+   */
+  const aiming =
+    sel.ability && sel.ability.kind === 'attack' && sel.ability.element ? sel.ability : null;
+
+  const diceSum = pickedSum();
   /** A hero is up with dice picked but no ability chosen yet. */
   const diceOnly =
     !sel.ability && sel.dice.length > 0 && sel.unit?.side === 'player' && !sel.unit.hasActed
@@ -642,6 +747,16 @@ export function BattleScreen({
     !over && sel.dice.length === 0 && sel.unit?.side === 'player' && !sel.unit.hasActed;
   /** Rules text follows the hovered ability, falling back to the chosen one. */
   const shownAbility = preview ?? sel.ability;
+  /** Whether the selected Performer can still be given an action this round. */
+  const canAct =
+    !!sel.unit &&
+    sel.unit.side === 'player' &&
+    !sel.unit.hasActed &&
+    !isPlanned(battle, sel.unit) &&
+    !over;
+  // Recomputed on every plan change, which is what makes reordering legible:
+  // move an action above its arming symbol and its chain marker goes out.
+  const chained = chainPreview(battle.plan, battle.armed);
   const nextTier =
     sel.unit && sel.unit.side === 'player' ? (sel.unit.def.upgrades ?? [])[sel.unit.upgrades] : undefined;
   const upgradeMasks = nextTier ? masksFor({ cost: nextTier.cost } as Ability) : [];
@@ -653,7 +768,7 @@ export function BattleScreen({
     <div className="game battle">
       <style>{IDLE_KEYFRAMES}</style>
       <div className="stage" style={{ backgroundImage: `url(${encounter.background})` }}>
-        <div className="stage-frame">
+        <div className={`stage-frame ${sel.ability ? 'aiming' : ''}`}>
         {battle.units.filter(alive).map((u) => {
           const slot = slotFor(u, encounter.partySlots, encounter.enemySlots, battle.units);
           if (!slot) return null;
@@ -731,6 +846,64 @@ export function BattleScreen({
             );
           })}
 
+        {/* Escalation, called out on the creature itself.
+            The ramp is not random, but BATTLE_DESIGN's rule that a fight must
+            be plannable applies to it all the same: a boss quietly doubling its
+            damage is indistinguishable from the numbers being broken. Shown in
+            BOTH phases, unlike intent -- it is the one number that is still
+            true while the enemies are resolving.
+
+            Stacked above the intent die in ONE column per creature rather than
+            placed individually. Two badges anchored to the same point is two
+            badges on top of each other the first time a ramping boss is also
+            aimed at, and "usually they do not coincide" is not a layout. */}
+        {livingOf(battle, 'enemy').map((u) => {
+          const slot = slotAt(u.pos, encounter);
+          if (!slot) return null;
+          const mult = rampMultiplier(u.def, battle.turn);
+          // The matchup is aiming-time information: it answers "which of these
+          // should I point this at", so it is shown only while there is
+          // something to point, and only on the ones that can be reached.
+          const aimed =
+            aiming && aiming.element && targets.has(pk(u.pos)) ? elementResistance(u, aiming.element) : null;
+          // `aimed` of 0 is a real answer -- neutral -- and it is the answer
+          // that gets NO badge, so an empty marker column must not be left
+          // behind for it.
+          const shows = mult > 1 || (aimed !== null && aimed !== 0);
+          if (!shows) return null;
+          return (
+            <span
+              key={`marks-${u.def.id}`}
+              className="unit-marks"
+              style={{ left: `${slot.xPct * 100}%`, top: `${slot.yPct * 100}%` }}
+            >
+              {mult > 1 && (
+                <span
+                  className="escalation"
+                  title={`${u.def.name} is escalating: ${Math.round((mult - 1) * 100)}% more damage`}
+                >
+                  ×{mult.toFixed(2)}
+                </span>
+              )}
+              {aimed !== null && aimed !== 0 && (
+                <span
+                  className={`matchup ${aimed < 0 ? 'weak' : 'resists'}`}
+                  title={`${u.def.name} — ${matchupLabel(aimed)} against ${aiming!.element}`}
+                >
+                  <span className="glyph">
+                    <ElementIcon element={aiming!.element!} size={11} />
+                  </span>
+                  {aimed <= -100
+                    ? '×2+'
+                    : aimed >= RESIST_CAP
+                      ? 'immune'
+                      : `${aimed < 0 ? '+' : '−'}${Math.abs(aimed)}%`}
+                </span>
+              )}
+            </span>
+          );
+        })}
+
         {floaters.map((f) => {
           const slot = slotAt(f.at, encounter);
           if (!slot) return null;
@@ -785,6 +958,9 @@ export function BattleScreen({
                   onChange={(e) => setDevLevel(e.target.value === '' ? null : Number(e.target.value))}
                 />
               </label>
+              <button className={devParty ? 'primary' : ''} onClick={() => setRosterOpen(true)}>
+                {devParty ? `Party (${devParty.length})` : 'Party'}
+              </button>
               <button onClick={() => setShowLog(true)}>Show log</button>
               <button onClick={() => restart(seed)}>Restart</button>
               <button onClick={() => restart(Math.floor(Math.random() * 100000))}>New seed</button>
@@ -793,17 +969,37 @@ export function BattleScreen({
         </div>
       </div>
 
-      <div className="hud hud-left">
+      {/* The two rosters flank the stage, in the darkened surround either side of
+          the letterboxed backdrop -- space that was otherwise doing nothing,
+          and which puts each side's list on that side's half of the board. */}
+      <div className="hud hud-party">
         <TeamPanel title={`Your team (${livingOf(battle, 'player').length}/${players.length})`}
           units={players} selected={sel.unit} onSelect={selectUnit} />
+      </div>
+
+      <div className="hud hud-foes">
         <TeamPanel title={`Enemies (${livingOf(battle, 'enemy').length}/${enemies.length})`}
           units={enemies} selected={sel.unit} onSelect={selectUnit} />
       </div>
 
-      {sel.unit && (
-        <div className="hud hud-right">
+      <div className="hud hud-right">
+        {!sel.unit && (
+          // The band is the widest thing in the dock and it is empty until
+          // something is picked. Saying so beats leaving what reads as a
+          // rendering fault.
+          <div className="panel detail-empty">
+            <span>Select a Performer or an enemy to see their sheet.</span>
+          </div>
+        )}
+        {sel.unit && (
           <div className="panel detail">
-            <h3 className="portrait-head">
+            {/* Three deliberate sections rather than one flat list.
+                They used to flow through a multi-column box, which split the
+                ability list across columns and stranded the turn badge at the
+                top of a column away from the stats it belongs with -- the
+                layout was deciding what grouped with what, and it had no idea. */}
+            <div className="sheet-id">
+              <h3 className="portrait-head">
               {sel.unit.def.sprite ? (
                 <SpritePortrait sheet={sel.unit.def.sprite} height={54} />
               ) : (
@@ -816,9 +1012,9 @@ export function BattleScreen({
               <span>
                 HP {sel.unit.hp}/{unitMaxHp(sel.unit)}
               </span>
-              <span>ATK {unitAttack(sel.unit)}</span>
-              <span>P.DEF {effectiveDefense(sel.unit, 'physical')}</span>
-              <span>M.DEF {effectiveDefense(sel.unit, 'magical')}</span>
+              <span>ATK {stat(unitAttack(sel.unit))}</span>
+              <span>P.DEF {stat(effectiveDefense(sel.unit, 'physical'))}</span>
+              <span>M.DEF {stat(effectiveDefense(sel.unit, 'magical'))}</span>
               {sel.unit.upgrades > 0 && (
                 <span className="boosted">+{Math.round((statScale(sel.unit) - 1) * 100)}%</span>
               )}
@@ -827,15 +1023,88 @@ export function BattleScreen({
               {ROLE_LABEL[sel.unit.def.role]} · {elementsOf(sel.unit.def).join('/')} ·{' '}
               {rankLabel(sel.unit, battle)}
             </div>
-
-            {sel.unit.side === 'player' && !over && (
-              <div className="turn-state">
-                <span className={sel.unit.hasActed ? 'used' : 'left'}>
-                  {sel.unit.hasActed ? 'action spent' : 'action available'}
-                </span>
+            {sel.unit.def.ramp && (
+              <div className="ramp-note">
+                <strong>Escalation</strong> · +{sel.unit.def.ramp.percent}% damage each turn past
+                turn {sel.unit.def.ramp.after} · now{' '}
+                <em>×{rampMultiplier(sel.unit.def, battle.turn).toFixed(2)}</em>
               </div>
             )}
 
+            {/*
+              What this unit takes MORE and LESS of, for allies and enemies
+              alike. Resistance is a signed percentage on the sheet -- negative
+              is weak, positive is resistant -- so both lists come from one
+              field and the sign decides which side it lands on.
+
+              Shown even when empty: "no elemental weakness" is a real property
+              here rather than missing data. Benjamin is deliberately unaligned,
+              and a blank space would read as the panel failing to load rather
+              than as the answer.
+            */}
+            <div className="matchups">
+              {(() => {
+                const entries = Object.entries(sel.unit!.def.resistances ?? {}) as [Element, number][];
+                const weak = entries.filter(([, v]) => v < 0).sort((a, b) => a[1] - b[1]);
+                const resist = entries.filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+                if (!weak.length && !resist.length) {
+                  return <span className="dim">no elemental weakness or resistance</span>;
+                }
+                const row = (label: string, list: [Element, number][], cls: string) =>
+                  list.length > 0 && (
+                    <div className={`matchup-row ${cls}`}>
+                      <span className="lbl">{label}</span>
+                      {list.map(([el, v]) => (
+                        // The glyph carries the element, the number the size of
+                        // it. `title` keeps the name reachable for anyone who
+                        // does not read the shape at a glance.
+                        <span
+                          key={el}
+                          className="chip"
+                          style={{ borderColor: ELEMENT_COLOR[el] }}
+                          title={`${el} — ${v < 0 ? `takes ${-v}% more` : `takes ${v}% less`}`}
+                        >
+                          <span className="glyph" style={{ color: ELEMENT_COLOR[el] }}>
+                            <ElementIcon element={el} />
+                          </span>
+                          <em>{v < 0 ? `+${-v}%` : `−${v}%`}</em>
+                        </span>
+                      ))}
+                    </div>
+                  );
+                return (
+                  <>
+                    {row('weak', weak, 'weak')}
+                    {row('resists', resist, 'resist')}
+                  </>
+                );
+              })()}
+            </div>
+
+            {/*
+              The innate passive sits with IDENTITY, not with the upgrade tiers:
+              it is what the Performer is for, and it is true before any dice are
+              spent. Name only -- the rules go to the inspect slot on hover, the
+              same place an ability's do, so the sheet stays a list of names and
+              one panel explains whichever you are pointing at.
+            */}
+            {(sel.unit.def.passives ?? []).map((pas) => (
+              <button
+                key={pas.name ?? pas.kind}
+                className={`passive-chip ${previewPassive === pas ? 'on' : ''}`}
+                onMouseEnter={() => setPreviewPassive(pas)}
+                onMouseLeave={() => setPreviewPassive(null)}
+                onFocus={() => setPreviewPassive(pas)}
+                onBlur={() => setPreviewPassive(null)}
+              >
+                <span className="tag">passive</span>
+                <strong>{pas.name ?? pas.kind}</strong>
+              </button>
+            ))}
+
+            </div>
+
+            <div className="sheet-kit">
             {/* An enemy's whole d20 table, with this round's roll marked.
                 The badge on the stage is only a number; this is what makes it
                 mean something, and it is why the roll is worth showing at all
@@ -861,8 +1130,19 @@ export function BattleScreen({
               </ul>
             )}
 
-            {sel.unit.side === 'player' && !sel.unit.hasActed && !over && (
-              <ul className="abilities">
+            {/*
+              Always shown, even while the Performer's action is queued or
+              already resolved. The kit is a description of the character, not a
+              menu that only exists when it can be used -- hiding it emptied the
+              widest part of the sheet at the moment the turn was playing out,
+              which is exactly when you want to read what they can do.
+
+              `inert` says they cannot be clicked right now. The buttons were
+              disabled anyway -- `ready` needs dice selected for this unit, and a
+              committed one has none -- so this is about how they READ.
+            */}
+            {sel.unit.side === 'player' && (
+              <ul className={`abilities ${canAct ? '' : 'inert'}`}>
                 {sel.unit.def.abilities.map((a) => {
                   // Three states. `locked` is hopeless: no subset of this roll can
                   // pay for it. `ready` means the dice in hand cover it now.
@@ -874,17 +1154,19 @@ export function BattleScreen({
                     // Hover lives on the <li>: disabled buttons swallow mouse events.
                     <li key={a.name} onMouseEnter={() => setPreview(a)} onMouseLeave={() => setPreview(null)}>
                       <button
-                        className={`ability ${ok ? '' : 'locked'} ${active ? 'active' : ''} ${ready ? 'ready' : ''}`}
+                        className={`ability ${!canAct || ok ? '' : 'locked'} ${active ? 'active' : ''} ${ready ? 'ready' : ''}`}
                         onClick={() => chooseAbility(a)}
-                        disabled={!ready}
+                        disabled={!canAct || !ready}
                         title={
-                          !ok
-                            ? `No dice in this roll can total ${a.cost}`
-                            : !ready
-                              ? a.wildcard
-                                ? 'Select any single die'
-                                : `Select dice totalling ${a.cost}`
-                              : undefined
+                          !canAct
+                            ? `${sel.unit!.def.name} is not acting again this round`
+                            : !ok
+                              ? `No dice in this roll can total ${a.cost}`
+                              : !ready
+                                ? a.wildcard
+                                  ? 'Select any single die'
+                                  : `Select dice totalling ${a.cost}`
+                                : undefined
                         }
                       >
                         <span className="cost">{a.wildcard ? '✳' : a.cost}</span>
@@ -908,16 +1190,18 @@ export function BattleScreen({
               </ul>
             )}
 
-            {sel.unit.side === 'player' && activePassives(sel.unit).length > 0 && (
-              <div className="passive-list">
-                {activePassives(sel.unit).map((pas, i) => (
-                  <div key={`${pas.kind}-${i}`} className="kit-row passive">
-                    <strong>{pas.kind}</strong>
-                    <p>{describePassive(pas)}</p>
-                  </div>
-                ))}
-              </div>
-            )}
+            </div>
+
+            <div className="sheet-extra">
+            {/*
+              A Performer's innate passive is shown as a NAMED CHIP up in the
+              identity block, not as a row here. Two reasons it does not live in
+              this column: it is not something you buy, and `activePassives`
+              also returns the passives bought upgrades granted -- listing those
+              printed every purchase twice under two different names (Aethis
+              bought "Herbalist" and grew a second entry called "regen" doing
+              exactly the same thing).
+            */}
 
             {sel.unit.side === 'player' && !over && (
               <div className="upgrades">
@@ -928,28 +1212,52 @@ export function BattleScreen({
                   <span className="dim">upgrades</span>
                 </div>
 
-                {nextTier ? (
-                  <button
-                    className={`upgrade-btn ${upgradeReady ? 'ready' : ''} ${upgradeMasks.length === 0 ? 'locked' : ''}`}
-                    onClick={handleUpgrade}
-                    disabled={sel.unit.hasActed || !upgradeReady}
-                    title={
-                      upgradeMasks.length === 0
-                        ? `No dice combination totals ${nextTier.cost}`
-                        : !upgradeReady
-                          ? `Select dice totalling ${nextTier.cost}`
-                          : undefined
-                    }
-                  >
-                    <span className="cost">{nextTier.cost}</span>
-                    <span className="body">
-                      <strong>{nextTier.name}</strong>
-                      <em>+10% stats · {describePassive(nextTier.passive)}</em>
-                    </span>
-                  </button>
-                ) : (
-                  <span className="dim">Fully upgraded</span>
-                )}
+                {/*
+                  Every tier, always -- bought ones lit, the next one live, the
+                  rest dimmed. Showing only the next tier hid what the track was
+                  FOR: the pips said "three of these exist" and nothing said what
+                  the other two were, so the choice to spend 6 now or hold for 12
+                  could not be made from the panel it is made in.
+                */}
+                {(sel.unit.def.upgrades ?? []).map((tier, i) => {
+                  const bought = i < sel.unit!.upgrades;
+                  const isNext = i === sel.unit!.upgrades;
+                  const payable = isNext && upgradeMasks.length > 0;
+                  return (
+                    <button
+                      key={tier.name}
+                      className={[
+                        'upgrade-btn',
+                        bought ? 'bought' : '',
+                        isNext ? 'next' : '',
+                        isNext && upgradeReady ? 'ready' : '',
+                        isNext && !payable ? 'locked' : '',
+                        !bought && !isNext ? 'future' : '',
+                      ].filter(Boolean).join(' ')}
+                      onClick={handleUpgrade}
+                      disabled={
+                        !isNext || sel.unit!.hasActed || isPlanned(battle, sel.unit!) || !upgradeReady
+                      }
+                      title={
+                        bought
+                          ? 'Already bought'
+                          : !isNext
+                            ? 'Buy the earlier tiers first'
+                            : !payable
+                              ? `No dice combination totals ${tier.cost}`
+                              : !upgradeReady
+                                ? `Select dice totalling ${tier.cost}`
+                                : undefined
+                      }
+                    >
+                      <span className="cost">{bought ? '✓' : tier.cost}</span>
+                      <span className="body">
+                        <strong>{tier.name}</strong>
+                        <em>+10% stats · {describePassive(tier.passive)}</em>
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
             )}
 
@@ -976,39 +1284,73 @@ export function BattleScreen({
                 ))}
               </div>
             )}
+            </div>
+          </div>
+        )}
 
-            {shownAbility && (
+        {/*
+          The hovered ability's rules sit OUTSIDE `.detail`, in a slot of their
+          own. Inside it they were items in a multi-column flow, so hovering
+          inserted a block and the browser rebalanced every column -- the whole
+          kit jumped, and the panel changed height, on every pointer move across
+          the ability list. A sibling of fixed width cannot disturb what it sits
+          beside.
+
+          Rendered whether or not anything is hovered, for the same reason: a
+          slot that appears and disappears is just a slower version of the same
+          jump.
+        */}
+        {sel.unit && (
+          <div className="panel inspect">
+            {previewPassive ? (
+              <div className="rules">
+                <strong>{previewPassive.name ?? previewPassive.kind}</strong>
+                <p className="sub">Passive — always on</p>
+                <p>{describePassive(previewPassive)}</p>
+              </div>
+            ) : shownAbility ? (
               <div className="rules">
                 <strong>{shownAbility.name}</strong>
                 <p>{describeAbility(shownAbility)}</p>
                 <p className="sub">{describeCost(shownAbility)}</p>
                 {describeElement(shownAbility) && <p className="sub">{describeElement(shownAbility)}</p>}
+                {describeChain(shownAbility) && (
+                  <p className="sub chain">{describeChain(shownAbility)}</p>
+                )}
               </div>
+            ) : (
+              <p className="inspect-hint">Hover an ability or passive for its rules.</p>
             )}
 
             {sel.ability && hoveredUnit && targets.has(pk(hoveredUnit.pos)) && (
               <ForecastPanel battle={battle} source={sel.unit} ability={sel.ability} centre={hoveredUnit.pos} />
             )}
           </div>
+        )}
+      </div>
+
+      {/* The turn's own voice, over the stage rather than in the dock.
+          It belongs with the action it describes, and the dock is where you
+          read numbers rather than watch. Only mounted while something is being
+          said -- it overlays the apron, which is empty floor, so there is
+          nothing to reserve space for. */}
+      {narration && (
+        <div className="hud hud-narration">
+          <div className="narration">{narration}</div>
         </div>
       )}
 
       <div className="hud hud-bottom">
-        {/* Reserved whether or not anything is being said, so the tray below
-            does not jump every time an action starts and finishes. */}
-        <div className="narration-slot">
-          {narration && <div className="panel narration">{narration}</div>}
-        </div>
 
         <div className="panel tray">
           {battle.phase === 'player' && !busy ? (
             <DiceTray
               dice={battle.dice}
-              spent={battle.diceSpent}
               selected={sel.dice}
               onToggle={toggleDie}
               disabled={over}
               roll={roll}
+              nameFor={sourceName}
             />
           ) : (
             <div className="dice-placeholder">
@@ -1027,10 +1369,22 @@ export function BattleScreen({
           {battle.plan.length > 0 && !busy && (
             <ol className="queue">
               {battle.plan.map((entry, i) => (
-                <li key={`${entry.unit.def.id}-${i}`}>
+                <li key={`${entry.unit.def.id}-${i}`} className={chained[i] ? 'chains' : ''}>
                   <span className="ord">{i + 1}</span>
                   <span className="who">{entry.unit.def.name}</span>
-                  <span className="what">{entry.ability?.name ?? 'Upgrade'}</span>
+                  <span className="what">
+                    {entry.ability?.name ?? 'Upgrade'}
+                    {/* The symbol is on every carrier, lit only where it fires.
+                        Showing it on the arming action too is what makes the
+                        reorder buttons legible -- you can see WHY moving this
+                        above that one turns the chain on. */}
+                    {entry.ability?.symbol && (
+                      <em className={`sym ${chained[i] ? 'on' : ''}`} title={describeChain(entry.ability) ?? ''}>
+                        {entry.ability.symbol}
+                      </em>
+                    )}
+                  </span>
+                  {chained[i] && <span className="trigger">{entry.ability!.trigger!.text}</span>}
                   <button
                     className="quiet"
                     title="Resolve earlier"
@@ -1132,6 +1486,14 @@ export function BattleScreen({
             <LogPanel battle={battle} full />
           </div>
         </div>
+      )}
+
+      {rosterOpen && devMode && (
+        <RosterPanel
+          current={devParty}
+          onApply={setDevParty}
+          onClose={() => setRosterOpen(false)}
+        />
       )}
     </div>
   );
@@ -1235,7 +1597,10 @@ function UnitChip({
     // has to come from whichever one is actually being drawn.
     const crispHeight = crispCss(
       `${(box ? box.boxH : h) * 100}cqh`,
-      box ? idle!.pxH : sheet.pxH,
+      // The SNAP STEP, not the file height: for art drawn on a larger canvas
+      // those differ, and stepping by the file height rounds it to nothing.
+      // The strip and the still share a step, since both are that actor's art.
+      sheet.snapPx,
       sheet.pixelated,
     );
     const body = idle && box ? (
@@ -1311,37 +1676,69 @@ function UnitChip({
   );
 }
 
+/**
+ * The pool, as buttons.
+ *
+ * Three states a die can be in that all read as "not available", and they are
+ * deliberately drawn differently: SPENT is promised to something in the queue
+ * and can be got back by unqueueing it, BLANK is a face this die actually
+ * rolled and nothing will change it this turn, and a CONTRIBUTED die is
+ * available but belongs to somebody -- if that Performer falls it is not here
+ * next turn. One grey for all three would hide the only one the player can act
+ * on.
+ */
 function DiceTray({
   dice,
-  spent,
   selected,
   onToggle,
   disabled,
   roll,
+  nameFor,
 }: {
-  dice: number[];
-  spent: boolean[];
-  selected: number[];
-  onToggle: (i: number) => void;
+  dice: Die[];
+  selected: string[];
+  onToggle: (id: string) => void;
   disabled: boolean;
   roll: { phase: 'pending' | 'tumbling' | 'settled'; face: number }[] | null;
+  nameFor: (id: string) => string;
 }) {
   return (
     <div className="dice">
-      {dice.map((v, i) => {
+      {dice.map((die, i) => {
         const anim = roll?.[i];
         // While a die is in the air it shows a random face, not its real value.
-        const face = anim && anim.phase !== 'settled' ? anim.face : v;
+        const face = anim && anim.phase !== 'settled' ? anim.face : die.value;
         const locked = anim !== undefined && anim.phase !== 'settled';
+        const blank = die.value === 0;
+        const settled = !anim || anim.phase === 'settled';
+        const classes = [
+          'die',
+          die.spent ? 'spent' : '',
+          selected.includes(die.id) ? 'picked' : '',
+          die.source ? 'contributed' : '',
+          blank && settled ? 'blank' : '',
+          altered(die) ? 'altered' : '',
+          anim ? anim.phase : '',
+        ];
+        const who = die.source ? nameFor(die.source) : null;
         return (
           <button
-            key={i}
-            className={`die ${spent[i] ? 'spent' : ''} ${selected.includes(i) ? 'picked' : ''} ${anim ? anim.phase : ''}`}
-            onClick={() => onToggle(i)}
-            disabled={disabled || spent[i] || locked}
+            key={die.id}
+            className={classes.filter(Boolean).join(' ')}
+            onClick={() => onToggle(die.id)}
+            disabled={disabled || die.spent || locked || blank}
+            title={
+              who
+                ? `${die.spec.label} — ${who}. ${describeDie(die.spec)}.` +
+                  (blank && settled ? ' Rolled a blank this turn.' : '')
+                : `${describeDie(die.spec)}.`
+            }
           >
-            <span className="pip">{DIE_PIPS[face]}</span>
-            <span className="val">{anim && anim.phase !== 'settled' ? ' ' : v}</span>
+            <span className="pip">{blank && settled ? '·' : DIE_PIPS[face]}</span>
+            <span className="val">
+              {!settled ? ' ' : blank ? '—' : die.value}
+            </span>
+            {altered(die) && settled && <span className="was">{die.rolled}</span>}
           </button>
         );
       })}
@@ -1379,7 +1776,7 @@ function TeamPanel({
                   inferable from the stat line in the detail panel. */}
               <span className="lv">Lv {levelOf(u.def)}</span>
               <span className="hp">
-                {alive(u) ? `${u.hp}/${u.def.maxHp}` : 'down'}
+                {alive(u) ? `${u.hp}/${unitMaxHp(u)}` : 'down'}
                 {/* Net attack modifier, buffs and shreds together, so a row
                     says at a glance whether this unit is currently running hot
                     or has been cut down. */}
@@ -1387,7 +1784,7 @@ function TeamPanel({
                   <span className={modifierTotal(u, 'attack') > 0 ? 'buff' : 'shred'}>
                     {' '}
                     {modifierTotal(u, 'attack') > 0 ? '+' : ''}
-                    {modifierTotal(u, 'attack')}
+                    {stat(modifierTotal(u, 'attack'))}
                   </span>
                 )}
               </span>
@@ -1429,7 +1826,10 @@ function ForecastPanel({
           );
         }
         if (ability.kind === 'heal') {
-          const amt = Math.min(ability.power, t.def.maxHp - t.hp);
+          // Was reading the ability's POWER -- a multiplier on ATK -- as if it
+          // were an HP amount. At the old scale that printed a plausible number
+          // and nobody caught it; at this one it printed "+0.63".
+          const amt = Math.min(computeHeal(source, ability), unitMaxHp(t) - t.hp);
           return (
             <div key={t.def.id} className="line heal">
               {t.def.name} <strong>+{amt}</strong>
@@ -1438,7 +1838,7 @@ function ForecastPanel({
         }
         return (
           <div key={t.def.id} className="line buff">
-            {t.def.name} <strong>+{ability.power} atk</strong>
+            {t.def.name} <strong>+{stat(ability.power)} atk</strong>
           </div>
         );
       })}
@@ -1458,7 +1858,7 @@ function LogPanel({ battle, full = false }: { battle: BattleState; full?: boolea
       case 'heal':
         return `      +${e.amount} ${e.target}`;
       case 'buff':
-        return `      +${e.amount} atk ${e.target}`;
+        return `      +${stat(e.amount)} atk ${e.target}`;
       case 'ko':
         return `      ✖ ${e.unit} down`;
       case 'telegraph':
@@ -1473,6 +1873,187 @@ function LogPanel({ battle, full = false }: { battle: BattleState; full?: boolea
     <div className="card log">
       <h3>Battle log</h3>
       <pre>{lines.join('\n')}</pre>
+    </div>
+  );
+}
+
+/**
+ * Dev-only party builder.
+ *
+ * Testing a composition means fielding exactly the Performers you want at
+ * exactly the levels you want, which through the real game means grinding to
+ * it. This is the shortcut, and saving is what keeps it from having to be
+ * redone after every reload.
+ *
+ * The working set is local state so that half-built parties are never written
+ * to storage; only Save commits, and only Apply reaches the battle.
+ */
+/** Battle line-up size. The party slots are the authority on it. */
+const PARTY_SIZE = STANDARD_PARTY_SLOTS.length;
+
+function RosterPanel({
+  current,
+  onApply,
+  onClose,
+}: {
+  current: DevMember[] | null;
+  onApply: (members: DevMember[] | null) => void;
+  onClose: () => void;
+}) {
+  const saved = useDevRosters();
+  const [members, setMembers] = useState<DevMember[]>(
+    () => current ?? ROSTER.slice(0, 5).map((d) => ({ id: d.id, level: 1, stars: 0 })),
+  );
+  const [name, setName] = useState('');
+
+  const picked = (id: string) => members.find((m) => m.id === id);
+  const full = members.length >= PARTY_SIZE;
+
+  function toggle(id: string) {
+    setMembers((prev) =>
+      prev.some((m) => m.id === id)
+        ? prev.filter((m) => m.id !== id)
+        : prev.length >= PARTY_SIZE
+          ? prev
+          : [...prev, { id, level: 1, stars: 0 }],
+    );
+  }
+
+  const edit = (id: string, patch: Partial<DevMember>) =>
+    setMembers((prev) => prev.map((m) => (m.id === id ? { ...m, ...patch } : m)));
+
+  /** Applied to every SELECTED member, which is the common case when sweeping
+      a stage for the level it becomes winnable at. */
+  const setAll = (patch: Partial<DevMember>) =>
+    setMembers((prev) => prev.map((m) => ({ ...m, ...patch })));
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal roster-panel" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <strong>Test party</strong>
+          <span className="dim">
+            {members.length}/{PARTY_SIZE} chosen · order is the battle line-up
+          </span>
+          <button onClick={onClose}>Close</button>
+        </div>
+
+        <div className="roster-pool">
+          {ROSTER.map((d) => {
+            const m = picked(d.id);
+            return (
+              <div key={d.id} className={`roster-slot ${m ? 'on' : ''}`}>
+                <button
+                  className="pick"
+                  disabled={!m && full}
+                  title={!m && full ? `Party is full (${PARTY_SIZE})` : undefined}
+                  onClick={() => toggle(d.id)}
+                >
+                  <span className="nm">{d.name}</span>
+                  <span className="dim">
+                    {d.rarity}★ {d.role}
+                  </span>
+                </button>
+                {m && (
+                  <div className="tune">
+                    <label>
+                      lv
+                      <input
+                        type="number"
+                        min={1}
+                        max={MAX_LEVEL}
+                        value={m.level}
+                        onChange={(e) => edit(d.id, { level: Math.max(1, Number(e.target.value) || 1) })}
+                      />
+                    </label>
+                    <label>
+                      ★
+                      <input
+                        type="number"
+                        min={0}
+                        max={MAX_STARS}
+                        value={m.stars}
+                        onChange={(e) => edit(d.id, { stars: Number(e.target.value) || 0 })}
+                      />
+                    </label>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="roster-bulk">
+          <span className="dim">all chosen →</span>
+          <button onClick={() => setAll({ level: 1, stars: 0 })}>lv 1</button>
+          <button onClick={() => setAll({ level: 20 })}>lv 20</button>
+          <button onClick={() => setAll({ level: 40 })}>lv 40</button>
+          <button onClick={() => setAll({ stars: MAX_STARS })}>5★</button>
+        </div>
+
+        <div className="roster-save">
+          <input
+            placeholder="roster name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && name.trim()) {
+                saveRoster(name, members);
+                setName('');
+              }
+            }}
+          />
+          <button
+            className="primary"
+            disabled={!name.trim() || members.length === 0}
+            onClick={() => {
+              saveRoster(name, members);
+              setName('');
+            }}
+          >
+            Save roster
+          </button>
+        </div>
+
+        {saved.length > 0 && (
+          <ul className="roster-saved">
+            {saved.map((r) => (
+              <li key={r.name}>
+                <button className="load" onClick={() => setMembers(r.members.map((m) => ({ ...m })))}>
+                  {r.name}
+                </button>
+                <span className="dim">
+                  {r.members.length} · lv {r.members.map((m) => m.level).join('/')}
+                </span>
+                <button className="quiet" title="Delete" onClick={() => deleteRoster(r.name)}>
+                  ✕
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <div className="roster-foot">
+          <button
+            onClick={() => {
+              onApply(null);
+              onClose();
+            }}
+          >
+            Use real save
+          </button>
+          <button
+            className="primary"
+            disabled={members.length === 0}
+            onClick={() => {
+              onApply(members);
+              onClose();
+            }}
+          >
+            Field this party
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

@@ -43,7 +43,7 @@ export function Figure({
   // Rounded to a whole multiple of the art's own pixels. `height` is already in
   // CSS pixels here, so this is a plain multiplication -- the battle screen sizes
   // in stage fractions instead and has to do the same rounding in CSS.
-  const h = crisp(height * sheet.scale, sheet.pxH, sheet.pixelated);
+  const h = crisp(height * sheet.scale, sheet.snapPx, sheet.pixelated);
   const w = h * sheet.aspect;
   return (
     <span

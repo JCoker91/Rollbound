@@ -81,10 +81,19 @@ HUMANOID_H_RANGE = (37, 50)
 # canvas`, so measuring a 128px sprite against the 64px constant would render it
 # at double the size of everyone else.
 SPECS = {
+    # v3 is v2 doubled, for an actor whose detail will not fit on 128. Every
+    # threshold is exactly 2x so the two describe the SAME character standing
+    # the same height -- the canvas is a detail budget, not a size multiplier,
+    # and stature stays `body / canvas` either way.
+    3: {'native': 256, 'ground': 224, 'height': (164, 184), 'margin': 16},
     2: {'native': 128, 'ground': 112, 'height': (82, 92), 'margin': 8},
     1: {'native': NATIVE, 'ground': GROUND_LINE_NATIVE, 'height': HUMANOID_H_RANGE,
         'margin': SAFE_MARGIN_NATIVE},
 }
+
+# Canvas size -> spec. Read off the art rather than declared anywhere, so a new
+# size is one entry here and nothing else.
+BY_CANVAS = {s['native']: n for n, s in SPECS.items() if n != 1}
 
 # Superseded sheets kept beside the live ones. `animations/` is scanned
 # indiscriminately, so without this a deprecated sheet becomes a clip named
@@ -170,7 +179,10 @@ OUTLINE: dict[str, int] = {}
 # the ring is what the current look depends on and a new upload should not have
 # to be added to a dict to get it. Off for v1, whose smoothed sheets are drawn
 # a third of their file size and have no pixel grid for a ring to sit on.
-OUTLINE_DEFAULT = {2: 1, 1: 0}
+# 2px at 256, so the ring reads the same WEIGHT as 1px at 128 -- the canvas is
+# doubled, so an outline that stayed 1px would look half as bold beside the rest
+# of the cast once both are drawn at the same height on stage.
+OUTLINE_DEFAULT = {3: 2, 2: 1, 1: 0}
 
 
 def outline_width(name: str) -> int:
@@ -237,6 +249,18 @@ def spec_of(name: str) -> int:
     public/ -- so the presence of `<name>_LQ.png` is what distinguishes them,
     and it is checked first.
     """
+    # MEASURED, not declared. An actor's canvas is a fact about their file, and
+    # asking the file is what let Brax arrive at 256 without a content change --
+    # before this, a 256 sprite was measured against the 128 grid and came out
+    # at 1.63 of canvas against Benjamin's 0.66, which would have drawn him two
+    # and a half times everyone's height.
+    src = (CREATURES if is_creature(name) else ACTORS) / name / f'{name}.png'
+    if src.exists():
+        with Image.open(src) as im:
+            found = BY_CANVAS.get(im.width)
+        if found:
+            return found
+
     # Creatures are only ever authored against v2; there is no legacy enemy art.
     if is_creature(name):
         return 2
@@ -262,7 +286,7 @@ def leftovers(name: str) -> list[str]:
     """v1 files still sitting beside migrated v2 art. Reported, never deleted --
     this script owns public/, not the folder art is uploaded to."""
     d = ACTORS / name
-    if spec_of(name) != 2:
+    if spec_of(name) == 1:
         return []
     return [f'{name}{suffix}.png' for suffix in SUPERSEDED if (d / f'{name}{suffix}.png').exists()]
 
@@ -1487,7 +1511,9 @@ def prepare(name: str) -> tuple[int, list[str]]:
     # ship a pre-scaled duplicate. The 128px canvas IS the finished asset, and
     # the browser enlarges it with the same nearest-neighbour step for free.
     hq_path = src / f'{name}_HQ.png'
-    if spec_of(name) == 2:
+    # Any v2-or-later spec ships its own canvas as the board; only v1 has the
+    # _LQ/_HQ split below.
+    if spec_of(name) >= 2:
         board = ref.crop(box)
         pixel_art = True
     elif hq_path.exists():
