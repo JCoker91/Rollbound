@@ -1281,6 +1281,40 @@ aside {
   text-overflow: ellipsis;
 }
 
+/*
+ * Status chips on a roster row: frost count, frozen, asleep.
+ *
+ * Deliberately tiny and beside the name rather than over the sprite -- the
+ * stage is already carrying intent badges at every creature's feet, and a
+ * second floating layer there is how the ability-name labels became unreadable
+ * the first time.
+ */
+.chip {
+  flex: none;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.chip.frost {
+  color: #bfe6ff;
+  background: rgba(86, 194, 255, 0.18);
+  border: 1px solid rgba(86, 194, 255, 0.45);
+}
+
+.chip.frozen {
+  color: #eaf7ff;
+  background: rgba(86, 194, 255, 0.55);
+}
+
+.chip.asleep {
+  color: #d7c9f5;
+  background: rgba(195, 156, 255, 0.22);
+}
+
 /* Level, sitting between the name and the health. Dim and tabular, because it
    is a reference number you scan down the column rather than read. */
 .lv {

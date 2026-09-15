@@ -204,6 +204,16 @@ const DRILL_DIE: DieSpec[] = [
  * Percentage passives still do not round per tick: see `Unit.carry`. Those bank
  * fractions of HP and of DAMAGE, which really are small integers.
  */
+/*
+ * ORDER IS THE FORMATION. Units take party slots in the order they are
+ * supplied (`STANDARD_PARTY_SLOTS` lists them front, front, middle, middle,
+ * back, back), so roster order decides who stands where and therefore who a
+ * range-1 enemy ability can reach.
+ *
+ * Rebar sits second so a tank is in the front rank by default. That is a
+ * stopgap: choosing the arrangement is the "party / lineup management" roadmap
+ * item, and until that screen exists this list is the only way to say it.
+ */
 export const ROSTER: CharacterDef[] = [
   {
     id: 'benjamin', name: 'Benjamin', rarity: 3, role: 'blade',
@@ -392,6 +402,105 @@ export const ROSTER: CharacterDef[] = [
     ),
   },
   {
+    id: 'rebar', name: 'Rebar', rarity: 3, role: 'shield',
+    // Ice, so fire is what he is built to stand in front of -- and that lands on
+    // the existing wheel rather than fighting it, since water already beats
+    // fire. No light anywhere on him any more.
+    resistances: aligned('water'),
+    /*
+     * The Ice Wall. The roster's tank, and its introduction to statuses.
+     *
+     * A tank in a game with no movement and no taunt does its job by STANDING
+     * somewhere: enemy `range: 1` reaches the party's frontmost occupied rank,
+     * so putting Rebar there is what makes front-row attacks hit him instead of
+     * the artillery. Everything in the kit assumes he is there.
+     *
+     * High HP and physical defence, low attack, and magical defence left
+     * deliberately soft -- he is the answer to a physical front-row attacker,
+     * not to everything, which is the whole point of wanting a second tank.
+     */
+    maxHp: 22, attack: 15, physicalDefense: 95, magicalDefense: 35,
+    // On all fours, so his sheet is as wide as it is tall and the anchor sits
+    // dead centre between four paws -- unlike the humans, who stand off-centre
+    // under an outstretched weapon.
+    sprite: sprite('rebar'),
+    // Tanking that helps on turns he is not the one being hit: a weaker
+    // attacker is weaker against the whole party, not just against him.
+    passives: [{ name: 'Bristling Hide', kind: 'thorns', percent: 15 }],
+    abilities: [
+      {
+        symbol: 'lantern', name: 'Maul', cost: 0, wildcard: true, kind: 'attack',
+        damageType: 'physical', element: 'water', range: 1, power: 0.9,
+        effects: [
+          { do: 'damage', power: 0.9 },
+          { do: 'modify', stats: ['attack'], percent: -10, of: 'targetBase', turns: 3 },
+        ],
+      },
+      {
+        // The drawback is nearly free exactly when he is doing his job. He is in
+        // the front rank, front-row attacks are common, so something wakes him
+        // almost immediately -- and it only bites when nobody wanted to hit him,
+        // which is when a tank had nothing to do anyway.
+        //
+        // Cost 2 is a fragile 70.4% payable against 97.4% at six. That is on
+        // purpose: a heal you reach for when you are hurt should not be a thing
+        // you can plan around every turn.
+        symbol: 'thorn', name: 'Hibernate', cost: 2, kind: 'heal', range: 1, power: 0.9,
+        effects: [
+          { do: 'heal', power: 0.9, on: 'self' },
+          { do: 'sleep', on: 'self' },
+        ],
+      },
+      {
+        // The tank you bring against a fire damage dealer. Parked on 6, the most
+        // payable cost in the game, because a guard that arrives a turn late is
+        // worth nothing.
+        symbol: 'thorn', name: 'Frost Armor', cost: 8, kind: 'buff', range: 1, power: 25,
+        effects: [
+          {
+            do: 'modify', stats: ['physicalDefense', 'magicalDefense'],
+            percent: 25, of: 'targetBase', turns: 3, on: 'self',
+            // While it is up, anyone who hits him with steel walks away frosted.
+            riposte: { damageType: 'physical', frost: 1 },
+          },
+          { do: 'resist', element: 'fire', percent: 50, turns: 3, on: 'self' },
+        ],
+      },
+      {
+        // Its value is the frost, not the damage -- he has the lowest attack on
+        // the roster, so a 3-dice nuke off it would be poor. What it buys is
+        // one stack on every enemy at once, advancing five freeze counters in a
+        // single action, which nothing else in the game can do.
+        symbol: 'lantern', name: 'Avalanche', cost: 12, kind: 'attack',
+        damageType: 'magical', element: 'water', range: 3, scope: 'all', power: 0.6,
+        effects: [
+          { do: 'damage', power: 0.6 },
+          { do: 'frost', stacks: 1 },
+        ],
+      },
+    ],
+    upgrades: [
+      { name: 'Warded Plate', cost: 6, passive: { kind: 'resilient', percent: 16 } },
+      { name: 'Bristling Barding', cost: 8, passive: { kind: 'thorns', percent: 30 } },
+      { name: 'Ursine Endurance', cost: 12, passive: { kind: 'regen', percent: 8 } },
+    ],
+    starTree: starTree(
+      [
+        node('rebar-pelt', 'Thick Pelt', [{ kind: 'stat', stat: 'maxHp', percent: 12 }]),
+        node('rebar-plate', 'Gilded Plate', [{ kind: 'stat', stat: 'defense', percent: 14 }]),
+      ],
+      // The identity rung: soak the hit, or make taking it hurt.
+      [
+        node('rebar-ward', 'Sanctified Ward', [{ kind: 'passive', passive: { kind: 'resilient', percent: 12 } }]),
+        node('rebar-barbs', 'Spiked Barding', [{ kind: 'passive', passive: { kind: 'thorns', percent: 24 } }]),
+      ],
+      [
+        node('rebar-avalanche', 'Deeper Winter', [{ kind: 'ability', ability: 'Avalanche', power: 0.2 }]),
+        node('rebar-armor', 'Lasting Rime', [{ kind: 'ability', ability: 'Frost Armor', cost: -1 }]),
+      ],
+    ),
+  },
+  {
     id: 'kael', name: 'Kael', rarity: 3, role: 'blade',
     resistances: aligned('wind'),
     // Heavier and slower than the support he replaces: an axe bruiser who wants
@@ -428,65 +537,6 @@ export const ROSTER: CharacterDef[] = [
       [
         node('kael-storm', 'Wider Tempest', [{ kind: 'ability', ability: 'Tempest Fall', power: 0.35 }]),
         node('kael-rally', 'Longer Rally', [{ kind: 'ability', ability: 'War Cry', range: 2 }]),
-      ],
-    ),
-  },
-  {
-    id: 'rebar', name: 'Rebar', rarity: 3, role: 'shield',
-    resistances: aligned('light'),
-    // The roster's only tank, and its only light unit. Where the stone wall he
-    // replaced held one tile, Rebar is a guardian who RELOCATES: Ironpaw Charge
-    // stacks a 3-tile dash on his own move, so a move-3 body threatens six tiles
-    // and can put itself between the enemy and whoever is about to die.
-    // Attack is deliberately low -- his heals scale off ATK, so the ceiling on
-    // Sanctuary is the same knob that keeps his damage honest.
-    maxHp: 15, attack: 19, physicalDefense: 80, magicalDefense: 50,
-    // On all fours, so his sheet is as wide as it is tall and the anchor sits
-    // dead centre between four paws -- unlike the humans, who stand off-centre
-    // under an outstretched weapon.
-    sprite: sprite('rebar'),
-    // A guardian's intent stated as a threat: hitting him costs you.
-    passives: [{ name: 'Bristling Hide', kind: 'thorns', percent: 15 }],
-    abilities: [
-      { symbol: 'lantern', name: 'Maul', cost: 0, wildcard: true, kind: 'attack', damageType: 'physical', power: 0.9, element: 'light', range: 1 },
-      // TODO: this was a 3-tile gap-closer and it was Rebar's whole identity.
-      // With no movement it is a plain cheap melee hit and he needs a new one.
-      { symbol: 'lantern', name: 'Ironpaw Charge', cost: 2, kind: 'attack', damageType: 'physical', power: 1.1, element: 'light', range: 1 },
-      // His signature, and parked on 6 on purpose: the most reliable cost in the
-      // game (97.4%), because a guard buff is worthless if it arrives a turn late.
-      { symbol: 'thorn', name: 'Aegis', cost: 6, kind: 'buff', power: 35, element: 'light', range: 3, scope: 'all', stat: 'defense' },
-      // The roster's only AoE heal. 11 is uncontested by every other kit and
-      // eats 2-3 dice, so a full-team heal benches one or two teammates to cast.
-      //
-      // Radius 1, not 2, after a sweep: at radius 2 it caught the whole party
-      // regardless of formation and became the most-used ability in the GAME
-      // (11.5% of all player actions, out-scoring every nuke) -- absurd for an
-      // 11-cost. Radius 1 puts it at 7.3% and makes it a reward for clustering,
-      // which the Seraph's radius-2 Judgment is there to punish.
-      { symbol: 'thorn', name: 'Sanctuary', cost: 11, kind: 'heal', power: 0.86, element: 'light', range: 2, scope: 'all' },
-    ],
-    upgrades: [
-      { name: 'Warded Plate', cost: 6, passive: { kind: 'resilient', percent: 16 } },
-      { name: 'Bristling Barding', cost: 8, passive: { kind: 'thorns', percent: 30 } },
-      { name: 'Ursine Endurance', cost: 12, passive: { kind: 'regen', percent: 8 } },
-    ],
-    starTree: starTree(
-      [
-        node('rebar-pelt', 'Thick Pelt', [{ kind: 'stat', stat: 'maxHp', percent: 12 }]),
-        node('rebar-plate', 'Gilded Plate', [{ kind: 'stat', stat: 'defense', percent: 14 }]),
-      ],
-      // The identity rung: soak the hit, or make taking it hurt.
-      [
-        node('rebar-ward', 'Sanctified Ward', [{ kind: 'passive', passive: { kind: 'resilient', percent: 12 } }]),
-        node('rebar-barbs', 'Spiked Barding', [{ kind: 'passive', passive: { kind: 'thorns', percent: 24 } }]),
-      ],
-      // ...and the payoff rung follows the same split: lean further into keeping
-      // the team alive, or into being the thing that arrives and hits.
-      [
-        node('rebar-sanctuary', 'Greater Sanctuary', [{ kind: 'ability', ability: 'Sanctuary', power: 0.23 }]),
-        node('rebar-charge', 'Thundering Charge', [
-          { kind: 'ability', ability: 'Ironpaw Charge', power: 0.4 },
-        ]),
       ],
     ),
   },

@@ -1,4 +1,13 @@
-import type { Ability, DamageType, ModSource, ModStat, Passive, Pos, Unit } from './types.ts';
+import type {
+  Ability,
+  DamageType,
+  ModKey,
+  ModSource,
+  ModStat,
+  Passive,
+  Pos,
+  Unit,
+} from './types.ts';
 import { alive, UPGRADE_STAT_BONUS } from './types.ts';
 import { resistanceOf, resistMultiplier } from './elements.ts';
 import { samePos, withinReach } from './formation.ts';
@@ -51,7 +60,7 @@ export function baseStat(unit: Unit, stat: ModStat): number {
 }
 
 /** Everything currently modifying one stat, buffs and shreds together. */
-export function modifierTotal(unit: Unit, stat: ModStat): number {
+export function modifierTotal(unit: Unit, stat: ModKey): number {
   let total = 0;
   for (const m of unit.modifiers) if (m.stat === stat) total += m.amount;
   return total;
@@ -269,7 +278,14 @@ export function computeDamage(source: Unit, ability: Ability, target: Unit): num
  */
 export function elementResistance(unit: Unit, element: Ability['element']): number {
   if (!element) return 0;
-  return resistanceOf(element, unit.def.resistances) + (unit.resistMods[element] ?? 0);
+  return (
+    resistanceOf(element, unit.def.resistances) +
+    // The boss rotation's layer: set wholesale each round, no duration.
+    (unit.resistMods[element] ?? 0) +
+    // Timed resistance from abilities, sharing the modifier list so it expires
+    // by the same rule as everything else.
+    modifierTotal(unit, element)
+  );
 }
 
 /**

@@ -1,8 +1,9 @@
 # Battle Design — the target system
 
 **Status: in build.** This document specifies the battle the game is being rebuilt towards.
-Most of it is now implemented (see the table). **Symbols and chains (§4) are built**; what is left
-is **statuses** (§6) and authoring the remaining four kits (§7).
+Most of it is now implemented (see the table). Symbols and chains (§4) and the first statuses (§6)
+are built. **What is left is enemy kits and the remaining four Performers** — the mechanics are
+largely in place and the content is not.
 **Benjamin (§8) is the first Performer authored against this document**, and building him is what
 drove the phase model, modifiers, ordered effects and cooldowns in.
 
@@ -16,7 +17,10 @@ drove the phase model, modifiers, ordered effects and cooldowns in.
 | 3 | Damage types, split defenses | **built** |
 | 3 | Elementless abilities (`element` optional) | **built** |
 | 6 | Timed stat modifiers — durations, per-track, named percentage source | **built** |
-| 6 | Status effects — paralyze, burn and friends | not built; they share the modifier clock |
+| 6 | Statuses — frost, freeze, sleep | **built** |
+| 6 | More statuses — burn, paralyze, blind | not built; they share the clock above |
+| 2 | Party formation is three ranks; enemy `range` reads it | **built** |
+| 2 | Movement as an ability (`move` effect) | **built**; no kit uses it yet |
 | 8 | Player-side cooldowns | **built** |
 | 4 | Symbols and chains — arming, forward reads, the three trigger shapes | **built** |
 | 1 | No auto-battle, ever | **decided** — see §1 |
@@ -426,7 +430,7 @@ because intent is visible, and one that would give support Performers something 
 
 ---
 
-## 6. Status effects and modifiers — MODIFIERS BUILT
+## 6. Status effects and modifiers — BUILT
 
 Two families, one clock, different lifespans:
 
@@ -510,6 +514,69 @@ anything, so a DoT is worth exactly the damage it says.
 
 That keeps action denial where it belongs — on statuses priced for it — instead of arriving as a
 hidden second effect on every burn.
+
+### Frost and freeze — BUILT
+
+The first status, and the shape every one after it should follow.
+
+**Frost is a stacking resource, not an effect.** It does nothing by itself. Stacks accumulate on a
+creature, and when they reach that creature's threshold it **freezes**: the stacks are spent, the
+threshold rises, and it loses its next action.
+
+| | |
+| --- | --- |
+| first freeze | 3 stacks |
+| second | 6 |
+| third | 9 |
+| decay | 1 per round, at the End Turn of the side that did *not* put it there |
+
+**Why the stacks are consumed.** Without consumption the rising bar is decorative: after freezing at
+3 you would still be holding 3, so the next freeze costs 3 more, and so does the one after. Spending
+them is what makes 3 / 6 / 9 an escalation rather than three numbers.
+
+**Why it decays.** Otherwise frost is a grenade — bank it to one below the bar on turn two and throw
+it whenever a boss announces something frightening. Decay turns it into upkeep, so a frost team has
+to keep paying to hold a target near the threshold.
+
+Decay also has a consequence worth authoring around: **one Performer applying one stack a turn nets
+zero.** Frost only accumulates if several are feeding it, or if abilities apply more than one. That
+is the composition goal enforcing itself, and it means application rates are the balance lever:
+
+| stacks applied per round | net | rounds to 1st freeze | to 2nd | to 3rd |
+| --- | --- | --- | --- | --- |
+| 2 | 1 | 3 | +6 | +9 |
+| **3–4** | **2–3** | **1–2** | **+2–3** | **+3–5** |
+
+Below about 3 a round, a frost team gets one freeze a fight and the escalation never matters.
+
+**Freeze costs an ACTION, not a turn**, and that one word is load-bearing. Frost applied during the
+player's turn cancels the enemy phase that follows, including a declared intent. Frost applied
+*reactively* — Rebar's Frost Armor, landing while a creature is mid-swing — has already missed this
+turn, so it takes the next one instead of being wasted. One rule, both directions, no special cases.
+
+A frozen creature **declares no intent**, so the empty slot where an intent would be is the payoff:
+the player sees the boss is out this round and spends the turn on something other than bracing.
+
+**Why uniform thresholds instead of per-enemy resistance.** A boss is as easy to freeze as a mob the
+first time and progressively harder after. That puts the escalation in the fight's *shape* rather
+than in a stat block, and it avoids the two bad answers to stun-lock — bosses immune (deletes a
+playstyle) or bosses merely resistant (a bigger number, same conversation).
+
+**Why not chance.** An earlier sketch had stacks granting a rising *chance* to freeze. That is the
+one thing §2 forbids: randomness landing after the commit, on the plan's linchpin, with no other
+line the player could have taken. It also would not have solved the problem — a 75% stun-lock still
+stun-locks, it just occasionally reads as the game cheating. The limiter is cost and consumption,
+which the player can see and plan against.
+
+### Sleep — BUILT
+
+Asleep until damaged. A unit that is asleep cannot be planned and loses its action; **any** damage
+wakes it.
+
+Self-inflicted, so far. That makes it a drawback that is nearly free exactly when its owner is doing
+their job — a tank in the front rank gets woken almost immediately — and expensive only when nobody
+wanted to hit them, which is when a tank had nothing to do anyway. A cost that scales itself with
+how well the character is being used is worth more than a flat one.
 
 ### Chance-based effects, and the line to hold
 
@@ -669,6 +736,54 @@ its shred from -25% to -40%, Rally converts from one ally to the whole team.
 - A real End Turn phase, with expiry at the end of the turn and regen and cooldowns at the start.
 - Elementless attacks. `Ability.element` was required, so "no element" could not be said.
 
+### Rebar — the Ice Wall
+
+**Goal:** stand in the front rank and make the fight go worse for whoever hits him.
+
+A tank in a game with no movement and no taunt does its job by **standing somewhere**. Enemy
+`range: 1` reaches the party's frontmost occupied rank, so putting Rebar there is what makes
+front-row attacks land on him instead of on the artillery. Everything in the kit assumes he is
+there, and nothing in it has to be explained to a new player beyond "he is the one in front".
+
+He is also the roster's introduction to statuses, the way Benjamin was its introduction to
+modifiers.
+
+| | cost | payable | effect |
+| --- | --- | --- | --- |
+| **Maul** | wildcard | — | Physical damage, **then** −10% of the target's ATK for 3 turns. |
+| **Hibernate** | 2 | 70.4% | Heal himself, **then** sleep until damaged. |
+| **Frost Armor** | 8 | 91.8% | +25% to both defences and **+50 Fire resistance** for 3 turns; while it lasts, physical attackers take 1 frost. |
+| **Avalanche** | 12 | 89.9% | Magical ice damage to every enemy, **then** 1 frost to every enemy. |
+
+Stats: **HP 22, ATK 15, P.DEF 95, M.DEF 35.** The soft magical defence is deliberate — he is the
+answer to a physical front-row attacker, not to everything, which is the whole reason to want a
+second tank alongside him.
+
+**Maul is the quiet best thing in the kit.** An ATK shred protects the entire party, not just him,
+and it works on turns he is not the one being hit. Tanking that helps while you are ignored is rarer
+than tanking that helps while you are focused.
+
+**Hibernate's drawback pays for itself.** See §6 — sleep is cheap precisely when he is doing his
+job. Cost 2 is also, deliberately, one of the least reliable numbers on 5d6 (70.4% against 97.4% at
+six): a heal you reach for when you are hurt should not be something you can plan around every turn.
+
+**Frost Armor is the fight-specific button** — the tank you bring against a fire damage dealer, and
+dead weight against anyone else. That narrowness is the point; it is the FFBE texture where a fight
+demands a particular defensive answer rather than a generically bigger one. Ice resisting fire also
+lands on the existing wheel rather than fighting it, since water already beats fire.
+
+**Avalanche's value is the frost, not the damage.** He has the lowest ATK on the roster, so a
+3-dice nuke off it would be poor. What it buys is one stack on *every* enemy at once — five freeze
+counters advanced in a single action, which nothing else in the game can do.
+
+**Verified in isolation:** the ATK shred lands and is keyed to Maul; Frost Armor raises both
+defences and takes Fire resistance 25 → 75; frost accrues 1/3 → 2/3 → freeze, spending the stacks
+and moving the bar to 6; a frozen enemy declares no intent and loses exactly one action; Hibernate
+heals, sleeps, and refuses to be planned while asleep; damage wakes him.
+
+**What he still needs:** a chain trigger on one of his abilities, and enemies worth being a tank
+against — see §9.
+
 ---
 
 ## 9. Settled, and still open
@@ -698,8 +813,26 @@ its shred from -25% to -40%, Rally converts from one ally to the whole team.
 - Modifiers refresh within an ability and stack across abilities, resolved to a flat amount at
   cast time from a named source (§6)
 - Enemy intent is revealed each round; activation odds stay hidden
+- **Positioning is a team-building axis.** Three ranks a side; enemy `range` reads the party's
+  frontmost *occupied* rank, so hiding everyone in the back just makes the back the front. A tank
+  is valuable for standing somewhere before it has a single tank ability.
+- **Frost stacks are a shared resource** (§6), not one character's counter. Rebar builds and spends
+  them on control; other Performers are meant to read the same number and do something else with
+  it — damage on freeze, or a shred per stack.
+- **Action-denial is deterministic and visible.** Frost shows its count and its threshold, so
+  freezing is a decision made before the dice are spent rather than a roll after.
 
-**Open:**
+**Open, and in priority order:**
+
+1. **Enemy kits.** Every mechanic built recently needs enemies worth using it on. Mobs have one
+   ability each; nothing checks a tank, nothing punishes a formation, nothing is worth freezing.
+   This is now the bottleneck on *everything* — see §9's note on what front-row attacks are for.
+2. **Party / lineup management.** Positioning is implemented and unreachable: roster order is the
+   formation, and there is no screen to change it. Rebar stands in front because he was moved to
+   second in a list.
+3. **The remaining four kits** — Kael, Maxine, Aethis, Brax.
+
+**Still open:**
 
 - **Statuses proper** — paralyze, burn and friends. The last structural piece; modifiers already
   share their clock (§6).

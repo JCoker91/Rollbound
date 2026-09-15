@@ -59,6 +59,7 @@ import { actionLine, floaterClass, type Floater } from './narrate.ts';
 import {
   ROLE_LABEL,
   alive,
+  freezeThreshold,
   type Ability,
   type Die,
   type Passive,
@@ -1746,6 +1747,40 @@ function DiceTray({
   );
 }
 
+/**
+ * Frost, freeze and sleep, in the smallest form that still says the thing.
+ *
+ * A status the player cannot see is a status they cannot plan around, and
+ * frost in particular is a running total they are spending dice to move -- so
+ * it shows the count AND the bar it is counting toward. `3/6` is a decision;
+ * a snowflake is decoration.
+ */
+function StatusChips({ u }: { u: Unit }) {
+  if (!alive(u)) return null;
+  return (
+    <>
+      {u.statuses.frozen > 0 && (
+        <span className="chip frozen" title="Frozen — loses its next action">
+          ✻
+        </span>
+      )}
+      {u.statuses.asleep && (
+        <span className="chip asleep" title="Asleep until damaged">
+          z
+        </span>
+      )}
+      {u.statuses.frost > 0 && (
+        <span
+          className="chip frost"
+          title={`Frost ${u.statuses.frost} of ${freezeThreshold(u)} — freezes at the threshold, which then rises`}
+        >
+          {u.statuses.frost}/{freezeThreshold(u)}
+        </span>
+      )}
+    </>
+  );
+}
+
 function TeamPanel({
   title,
   units,
@@ -1770,6 +1805,7 @@ function TeamPanel({
                 <Avatar def={u.def} size={26} side={u.side} />
               )}
               <span className="nm">{u.def.name}</span>
+              <StatusChips u={u} />
               {/* Level, on both sides. The enemy's is the whole reason to show
                   it -- how far ahead or behind the stage is running is the
                   first thing you want to know, and it was previously only

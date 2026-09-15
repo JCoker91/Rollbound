@@ -554,16 +554,30 @@ format-independent.
   deliberate drawbacks.
 - **Cost collision is the real balance lever.** Teams whose ability costs overlap starve each other
   for dice; teams with spread costs act far more often. **Cost spread earns a seat as surely as raw
-  stats do** — Rebar's 2/6/11 barely overlaps anyone, so he acts on turns nobody else can.
+  stats do**. Rebar's rebuild took him to 2 / 8 / 12, which is uncontested at every step — a
+  cheap heal, a mid guard and an expensive ultimate that collide with nobody, so he acts on
+  turns the rest of the party cannot afford to.
 
-**Every character has a wildcard "basic"** costing any single die. This removed dead rolls entirely
-without removing the tension. The relationship is exact:
+**Every character has exactly one wildcard "basic"** costing any single die. This removed dead
+rolls entirely without removing the tension, and it is the design rather than an exception — a
+Performer can always do *something*, whatever the roll.
+
+**The tension is breadth against power, not participation.** Five basics means all five act and
+none of them hit hard. One expensive ability eats two or three dice and benches a teammate to pay
+for it. The relationship is exact:
 
 ```
-characters acting = 5 − Σ (dice each ability uses − 1)
+characters acting = pool size − Σ (dice each ability uses − 1)
 ```
 
-Every die an ability consumes beyond its first benches exactly one teammate.
+Every die an ability consumes beyond its first benches exactly one teammate. Measured
+`acting/phase` sits near **2.9 of 5**, which is the AI choosing power over breadth roughly twice a
+turn — not a shortage of things to spend dice on.
+
+> A stale comment in `types.ts` used to read *"keep wildcards rare; two wildcards on one team
+> pushes 'all 5 act' to 70%"*, written when they were scarce. Every Performer now carries one, so a
+> five-person team has five, and the warning was steering kit design against the actual design.
+> Corrected — but worth knowing the sentence existed, because it argues for the opposite game.
 
 #### The pool is a list of DICE, not of numbers
 
@@ -616,8 +630,36 @@ the die is gone the turn after its owner falls. Verified in simulation — the p
 
 ### 5.2 Formation and combat
 
-The tile grid is gone. There is **no movement, no terrain, and no line of sight** — a Performer
-occupies one fixed slot for the whole battle.
+The tile grid is gone. There is **no terrain and no line of sight**, and nobody moves for free — a
+Performer holds one slot unless an ability moves them.
+
+**Both sides are three ranks**, and this is a team-building axis rather than decoration:
+
+- `withinReach` computes the *defender's* side and counts **their occupied ranks**, so an enemy's
+  `range: 1` means "the party's frontmost occupied rank". The rule is symmetric and always was; the
+  party used to be two ranks deep, which left it with nothing to bite on.
+- **Occupied**, so hiding everyone in the back just makes the back the front. The formation cannot
+  be gamed by evacuating it, which is what lets "attack the front row" be a common enemy shape.
+- **A tank is therefore valuable for standing somewhere**, before it has a single tank ability.
+  That is why Rebar's kit assumes he is in the front rank and never mentions taunting.
+
+**Which Performer stands where is the party's own order** (`STANDARD_PARTY_SLOTS` is listed in fill
+order: front, front, middle, middle, back, back). So arranging the formation is exactly the "choose
+which five perform, and in what order" roadmap item — **the mechanic is built and the screen to
+drive it is not.** Rebar stands in front because he was moved to second in `ROSTER`, which is a
+stopgap and commented as one.
+
+**Movement is an ability, not a universal action** — a `move` effect shifting whole ranks, priced
+at a wildcard die like a basic, so moving costs you the attack you did not make. One unit **swaps**
+with whoever is in the slot it wants; a group **shifts**, and anyone who cannot go stays. The two
+are different on purpose: swapping each member of a group in turn shuffles the formation instead of
+moving it.
+
+> **A group move does nothing in a full party, and that is correct.** Six units in six slots is a
+> rigid body — every destination is occupied and the back rank has nothing behind it. Movement in a
+> packed formation is reorganisation, not translation, so the useful group shape is a **rank
+> exchange** rather than a shift. No kit uses `move` yet; design the semantics with the character
+> that needs it.
 
 **Slots carry two coordinate systems, deliberately kept apart:**
 
@@ -894,6 +936,33 @@ meets; `bestPlan` respects it too, though nothing reachable from the game calls 
 set to `cooldown + 1` on use because Start Turn counts every cooldown down including the turn it
 was cast on, so **a 2-turn cooldown locks out the next two turns** and is ready on the third.
 
+### 5.2c Statuses — frost, freeze, sleep
+
+`Unit.statuses` holds `frost`, `freezes`, `frozen`, `asleep`. The rules and the reasoning are in
+`BATTLE_DESIGN.md` §6; what a reader of the code needs:
+
+- **Frost is a shared resource, not an effect.** It does nothing on its own. Reaching
+  `3 × (freezes + 1)` freezes the target, **spends** the stacks and raises the bar. Consumption is
+  what makes 3 / 6 / 9 an escalation — leaving them on would make every freeze after the first cost
+  the same three.
+- **It decays 1 a round**, at the End Turn of the side that did *not* apply it. So one Performer
+  applying one stack a turn nets **zero** — frost only accumulates as a team effort, which is the
+  composition goal enforcing itself. Application rates are the balance lever: below ~3 a round a
+  frost team gets one freeze a fight.
+- **Freeze costs an action, not a turn.** Frost landing on your turn cancels the enemy phase that
+  follows, including a declared intent; frost landing reactively, mid-swing, takes the next action
+  instead of being wasted. One rule, both directions.
+- **A frozen enemy declares no intent**, which is the payoff — the player sees the gap before
+  planning and spends the turn elsewhere.
+- **Sleep wakes on any damage**, and a sleeping unit cannot be planned.
+- `Modifier.riposte` is the one reactive hook: *"frost the attacker when the holder takes damage of
+  this type."* It rides on the modifier so it expires with the buff, and no code anywhere has to
+  know the string "Frost Armor".
+
+`Modifier.stat` is a `ModKey` — a `ModStat` **or** an `Element`. Timed elemental resistance shares
+the modifier list rather than living in a parallel structure, because it wants identical behaviour
+and the two unions are disjoint. None of the duration machinery had to be written twice.
+
 ### 5.3 Enemies are NOT built like player characters
 
 This is the single most important content distinction.
@@ -1075,14 +1144,18 @@ redesign should use, and Benjamin is the worked example.
 Benjamin's rebuild moved him off 3/5/9:
 
 ```
- 1: Aethis     2: Kael, Rebar   3: Maxine          4: Kael, Benjamin
- 5: Aethis     6: Rebar, Benjamin   7: Kael, Maxine    8: Aethis
-10: Maxine, Benjamin   11: Rebar
+ 1: Aethis                    2: Rebar, Kael          3: Maxine
+ 4: Benjamin, Kael            5: Aethis, Brax         6: Benjamin
+ 7: Kael, Maxine              8: Rebar, Aethis, Brax
+10: Benjamin, Maxine, Brax   12: Rebar
 ```
 
-Costs 3, 5 and 9 lost a claimant and 4, 6 and 10 gained one. That collision is real but temporary:
-Benjamin took the best seats deliberately because he is the tutorial Performer, and the other four
-will be authored around him rather than the other way round.
+**Costs 8 and 10 now have three claimants each**, which is the most crowded the roster has been.
+That is a consequence of authoring two kits deliberately and leaving four placeholders in place:
+Benjamin and Rebar took the seats their designs wanted (6 and 12 respectively are uncontested by
+anyone authored), and the four disposable kits are still sitting where a different system put them.
+**Re-check this table as each remaining kit is written** — it is the cheapest balance lever in the
+game and it is currently drifting.
 
 **`acting/phase` currently measures 2.9 of 5**, not the 3.60 recorded during the side-view rewrite.
 The pool is tighter than that older figure suggests, and any kit-design argument resting on 3.60
@@ -1375,10 +1448,21 @@ damage **ramp** (§5.3), which is the same lesson inverted — a *growing* damag
 healed through at all.
 
 **Cast — six, all with sprites and idle animations.** Five 3★ as tutorial unlocks: Benjamin
-(elementless blade, **fully rebuilt**), Kael (wind blade), Rebar (light shield), Maxine (water
+(elementless blade, **rebuilt**), Rebar (ice tank, **rebuilt**), Kael (wind blade), Maxine (water
 staff, artillery), Aethis (earth staff, healer). Plus **Brax**, the first 5★ and the first actor on
 a 256px canvas — an earth/fire tank with a **placeholder kit**, fieldable so compositions can be
 tested rather than balanced.
+
+**Two kits are authored against `BATTLE_DESIGN.md`; four are not.**
+
+| | drove into the engine |
+| --- | --- |
+| **Benjamin** — Utility Vanguard (§8) | turn phases, timed modifiers, ordered effect lists, player cooldowns, elementless attacks, the mutable dice pool |
+| **Rebar** — Ice Wall (§8) | statuses (frost, freeze, sleep), three-rank positioning, timed elemental resistance, reactive `riposte`, the `move` effect |
+
+That pattern is worth continuing deliberately: each authored kit has paid for a mechanic, and
+authoring the next one is how the next mechanic gets specified by something that needs it rather
+than invented in the abstract.
 
 **Every Performer has a named innate passive**, shown on the sheet with its rules text on hover.
 Five are numbers applied to their owner; Benjamin's is not (see below).
@@ -1550,6 +1634,22 @@ sheet from the base roster, so any stage can be tried at any level without grind
 > - *Rebar has no identity* → symbols give a guardian a home: a Performer whose symbol is common,
 >   who exists to complete other people's chains.
 
+- **Defence is not yet distinguishing anyone.** An understudy basic deals **1 damage to Rebar's 95
+  P.DEF and 1 to Maxine's 20**. At the rescaled stat sizes, enemy attacks are too weak for
+  mitigation to show, so Rebar's tanking comes entirely from having 22 HP against her 9. That is an
+  enemy-kit problem rather than a stat problem, and it means *no defensive design can currently be
+  evaluated* — including the one just built.
+- **Front-row attacks barely exist.** Positioning works and almost nothing uses it: mobs have one
+  ability each, and the reason to arrange a formation is that enemies punish a bad one. Until enemy
+  kits land, a tank standing in front is theory.
+- **A group `move` does nothing in a full party**, correctly — six units in six slots is rigid. See
+  §5.2; the useful group shape is a rank exchange, not a shift.
+- **Rules text drifts whenever behaviour lives outside the effect list.** This has now happened
+  twice: `describeAbility` described Benjamin's Sunder as a plain hit while the engine shredded
+  defence, and later described Rebar's Frost Armor as a plain guard buff while the engine also
+  frosted every attacker. The generator's promise is that it *cannot* drift from the engine.
+  **Rule: if a behaviour is not an entry in `effects`, the describer has to be taught about it
+  explicitly** — a `riposte`, a passive rider, anything carried on a modifier.
 - **Rules text now reads the effect list** (`describeAbility`). It briefly did not, and the ability
   panel confidently described Sunder as a plain hit and Rally as "+20 ATK" — the legacy `power`
   field — while the engine did something else entirely. The generator claims it "can never drift
@@ -1781,35 +1881,59 @@ sheet from the base roster, so any stage can be tried at any level without grind
 
 ## 10. Roadmap
 
-**Next up, roughly in order:**
+**The bottleneck has moved.** For a long time the battle *mechanics* were the missing piece. They
+mostly are not any more — turn phases, modifiers, chains, statuses, positioning and cooldowns are
+all in. **What is missing is content that uses them**, and specifically enemies. Every defensive
+mechanic built recently is currently unevaluable because mobs have one weak attack each: a tank
+cannot be judged, a formation cannot be punished, and nothing is worth freezing.
 
-1. **Rebuild the art at 128px** — Kael, Rebar and Aethis, each with a single idle. Benjamin and
-   Maxine are done. The pipeline is ready; see the pre-flight list in §3.
-2. **Build the new battle system** — `BATTLE_DESIGN.md`. **Enemy intent, the turn loop, damage
-   types, elemental resistance, turn phases, timed modifiers and symbols/chains are done.**
-   Remaining: **statuses** proper (paralyze, burn and friends; modifiers already share their
-   clock).
-3. **Redesign every Performer's kit** against that document. Damage types, symbols and costs
-   authored deliberately against the payability table. The current kits are disposable.
-   **Benjamin is finished** (`BATTLE_DESIGN.md` §8) — four abilities, two chain triggers, an innate
-   passive and three upgrade tiers. Building him landed most of the remaining engine work: Start/End
-   turn phases, timed per-track modifiers, percentage modifiers resolved against a named source,
-   ordered effect lists, player-side cooldowns, elementless attacks, and — for his passive — the
-   whole mutable dice pool (§5.1).
-   **The other five still need everything**, and two shapes are now available that were not when
-   their kits were written: a passive can change the *pool* rather than a stat, and an upgrade tier
-   can grant any passive at all. Note that the tiers' +10% stat bonus is genuine filler for all five
-   of them — only Benjamin converts personal stats into team stats — so their passives have to carry
-   their tiers.
-4. **Enemy kits** — mobs currently have one 1.0-power attack each, which is why party actions were
-   worth 2:1. Enemies need 1–4 abilities with hidden activation odds. **The boss has a ramp**
-   (§5.3) and the False Lead has a rotating resistance; ordinary mobs have neither and should not
-   get either — both are boss-shaped mechanics.
+**Next up, in order:**
+
+1. **Enemy kits.** The blocker on everything else. Enemies need 1–4 abilities with d20 activation
+   bands, and the shapes to aim for are now specified by what the player side can answer:
+   - **Front-row single-target attacks**, common, so standing in front means something and a tank
+     earns its slot (§5.2).
+   - **AoE**, so leaning on one tank is punished and defence buffs and heals have a job.
+   - **A physical/magical mix**, so a single defensive answer is never sufficient — this is the
+     FFBE texture the design is chasing: bring the right tank, or two, plus a buffer.
+   - **Something worth freezing** — a wind-up, a ramp, a telegraphed ultimate that losing costs the
+     enemy dearly. Freeze is built and has nothing to deny.
+   The boss ramp (§5.3) and the False Lead's rotating resistance stay boss-shaped; ordinary mobs
+   should get neither.
+2. **Party / lineup management.** Positioning is built and unreachable — roster order *is* the
+   formation and there is no screen to change it. This is now a mechanic with no interface rather
+   than a convenience feature.
+3. **The remaining four kits** — Kael, Maxine, Aethis, Brax — against `BATTLE_DESIGN.md`. Author
+   them one at a time and let each one specify the next mechanic, which is how the last two went.
+   Shapes now available that were not when their kits were written: a passive can change the
+   **pool** rather than a stat (Benjamin), a passive can be a **reactive rider** (Rebar's riposte),
+   an upgrade tier can grant any passive, and **frost is a shared resource** waiting for a second
+   reader — damage on freeze, or a shred per stack, were both explicitly left for a later character.
+   Note the tiers' +10% stat bonus is genuine filler for all four, since only Benjamin converts
+   personal stats into team stats — so their passives have to carry their tiers.
+4. **Rebuild the art at 128px** — Kael and Aethis. Benjamin, Maxine and Rebar are done.
 5. **Enemy art** — they are role badges on a painted stage; the most visible gap.
 6. **Stage progression** — winning advances `profile.stage`, grants rewards, raises the idle rate.
-   The missing link between the two halves of the game, and **independent of the battle redesign**,
-   so it can be built any time.
-7. **Party / lineup management** — choose which five perform, and in what order.
+   The missing link between the two halves of the game, and independent of the battle work.
+
+**Design directions agreed but not built:**
+
+- **Tanking has several shapes and only one is implemented.** Standing in the front rank is the
+  baseline. Still open, and wanted: **cover** (absorb a hit aimed at an ally, typed by damage kind),
+  **taunt** (change who the enemy picks, as opposed to who receives), and self-sustain tanks. Cover
+  as an always-on passive was explicitly rejected — if it happens it should be something a Performer
+  *does*, not something they are.
+- **A second tank matters.** Rebar's soft magical defence is deliberate so that a magical-damage
+  fight wants somebody else. Brax is the obvious carrier when his placeholder kit is replaced.
+- **Line / row / column attacks.** Discussed, not decided. `unitsHit` is four lines and the single
+  chokepoint, so a new scope is small — but it must be **previewed on the board**, or it repeats
+  the mistake that killed AoE radius: asking the player to work out which slots are collinear.
+- **Telegraphed zones the party can move out of.** The telegraph machinery still exists
+  (`PendingCast`, `turnsLeft`) and lost its counterplay when movement was removed. With `move`
+  built, marking an area and detonating it next turn becomes a real decision again — spend a
+  Performer's action repositioning, or eat it.
+- **Frost's second reader.** Deliberately deferred: a character whose playstyle is damage through
+  freezing, and/or a passive like "−5% DEF per frost stack, up to 5".
 
 **Deliberately dropped:**
 

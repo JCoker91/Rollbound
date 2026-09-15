@@ -115,18 +115,42 @@ export function withinReach(ability: Ability, from: Unit, target: Pos, units: Un
  *      ·   ·     ·  ·  ·           ·         ·      ·
  *          ·        ·
  *
- * Party is two ranks (3 front, 2 back), enemies three (2 / 3 / 2). Radius 1
- * catches a target and its immediate neighbours; radius 2 reaches most of a
- * formation, so it belongs only on the biggest abilities.
+ * Both sides are now THREE ranks. The party's used to be two, which made
+ * "front rank" a near-formality: with five bodies over two columns, most of the
+ * party was in front of something. Three ranks gives a real front, middle and
+ * back, and it is what lets an enemy ability read "hit the front row" and mean
+ * something a player can arrange against.
+ *
+ * `withinReach` was already symmetric -- it computes the defender's side and
+ * counts *their* occupied ranks -- so an enemy's `range: 1` has always been
+ * "the party's frontmost occupied rank". The mechanic existed and had nothing
+ * to bite on.
+ *
+ * The party's front is its HIGHEST column (nearest the enemy line), and the
+ * enemy's front is its lowest; `occupiedColumns` sorts each accordingly. Note
+ * both sides use column 2 -- that is fine and not a collision, because every
+ * reach question is asked about one side at a time.
  */
 const slot = (col: number, row: number, xPct: number, yPct: number): Slot => ({ col, row, xPct, yPct });
 
+/*
+ * Listed in FILL order, not in reading order, because units take slots in the
+ * order they are supplied: front, front, middle, middle, back, back. A party of
+ * five or six therefore spreads across all three ranks by default instead of
+ * piling into the front two and leaving the back decorative.
+ *
+ * Which Performer lands where is the party's own order, so arranging the
+ * formation is exactly the "choose which five perform, and in what order"
+ * roadmap item -- the mechanic is here, the screen to drive it is not.
+ */
 export const STANDARD_PARTY_SLOTS: Slot[] = [
-  slot(1, 0, 0.36, 0.62),
-  slot(0, 0, 0.20, 0.67),
-  slot(1, 1, 0.34, 0.73),
-  slot(0, 1, 0.18, 0.79),
-  slot(1, 2, 0.32, 0.85),
+  slot(2, 0, 0.40, 0.66), // front
+  slot(2, 1, 0.38, 0.84), // front
+  slot(1, 0, 0.26, 0.61), // middle
+  slot(1, 1, 0.24, 0.78), // middle
+  slot(0, 0, 0.12, 0.66), // back
+  slot(0, 1, 0.10, 0.82), // back
+  slot(1, 2, 0.22, 0.93), // middle, for a seventh
 ];
 
 /**

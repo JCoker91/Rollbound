@@ -84,6 +84,21 @@ function describeEffect(a: Ability, fx: Effect, sameTargetAsPrevious: boolean): 
     }
     case 'heal':
       return `restores ${pct(fx.power)} of ATK as HP to ${name}`;
+    case 'frost':
+      return `applies ${fx.stacks} frost to ${name}`;
+    case 'sleep':
+      return `puts ${name} to sleep until damaged`;
+    case 'move':
+      return `moves ${name} ${Math.abs(fx.ranks)} rank${Math.abs(fx.ranks) === 1 ? '' : 's'} ${fx.ranks > 0 ? 'forward' : 'back'}`;
+    case 'resist': {
+      // A pronoun needs the possessive here, not the object form -- "raises
+      // them Fire resistance" is what you get from reusing `name` directly.
+      const whose = sameTargetAsPrevious ? who.it : `${who.full}'s`;
+      return (
+        `${fx.percent < 0 ? 'lowers' : 'raises'} ${whose} ${cap(fx.element)} resistance by ` +
+        `${Math.abs(fx.percent)} for ${fx.turns} turn${fx.turns === 1 ? '' : 's'}`
+      );
+    }
     case 'modify': {
       const size = `${Math.abs(fx.percent)}%`;
       // Naming the SOURCE is not decoration: "20% of the caster's stats" and
@@ -93,9 +108,16 @@ function describeEffect(a: Ability, fx: Effect, sameTargetAsPrevious: boolean): 
         fx.of === 'casterCurrent' ? "the caster's current stats" : `${who.it} own base stats`;
       const verb = fx.percent < 0 ? 'reduces' : 'raises';
       const whose = sameTargetAsPrevious ? who.it : `${who.full}'s`;
+      // The riposte rides on the modifier and is invisible to anyone reading
+      // the effect list, so it has to be said here or the panel describes a
+      // plain guard buff while the engine also frosts every attacker.
+      const rider = fx.riposte
+        ? `, and while it lasts anyone hitting ${who.it === 'its' ? 'it' : 'them'} with a ` +
+          `${fx.riposte.damageType} attack takes ${fx.riposte.frost} frost`
+        : '';
       return (
         `${verb} ${whose} ${statList(fx.stats)} by ${size} of ${of} ` +
-        `for ${fx.turns} turn${fx.turns === 1 ? '' : 's'}`
+        `for ${fx.turns} turn${fx.turns === 1 ? '' : 's'}${rider}`
       );
     }
   }

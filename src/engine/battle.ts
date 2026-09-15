@@ -10,11 +10,12 @@ import type {
   Intent,
   Die,
   Modifier,
+  ModKey,
   ModStat,
   Side,
   Unit,
 } from './types.ts';
-import { alive } from './types.ts';
+import { alive, canAct, freezeThreshold, noStatuses } from './types.ts';
 import { Rng } from './rng.ts';
 import { applyLevel } from './levels.ts';
 import { bestPlan, type Action } from './allocate.ts';
@@ -25,6 +26,7 @@ import {
   canTarget,
   computeDamage,
   computeHeal,
+  damageTypeOf,
   spendResilience,
   bank,
   lifestealHeal,
@@ -40,7 +42,7 @@ import {
   CRIT_MULTIPLIER,
 } from './combat.ts';
 import { matchupLabel } from './elements.ts';
-import { slotPos, type EncounterDef, type Slot } from './formation.ts';
+import { samePos, slotPos, type EncounterDef, type Slot } from './formation.ts';
 import type { Pos } from './types.ts';
 
 export const DICE_PER_TURN = 5;
@@ -78,11 +80,16 @@ export type Event =
       target: string;
       /** The ability that applied it -- also its identity for refreshing. */
       effect: string;
-      stat: ModStat;
+      stat: ModKey;
       amount: number;
       turns: number;
     }
   | { t: 'expire'; unit: string; effect: string }
+  | { t: 'frost'; target: string; stacks: number; threshold: number }
+  | { t: 'freeze'; target: string; spent: number; nextThreshold: number }
+  | { t: 'sleep'; unit: string }
+  | { t: 'wake'; unit: string }
+  | { t: 'move'; unit: string; from: Pos; to: Pos }
   | { t: 'ko'; unit: string }
   | { t: 'telegraph'; unit: string; ability: string; at: Pos }
   | { t: 'intent'; unit: string; ability: string; target: string; roll: number }
@@ -179,6 +186,7 @@ export function createBattle(
       def,
       hp: def.maxHp,
       modifiers: [],
+      statuses: noStatuses(),
       side,
       pos: slotPos(slots[i] ?? slots[slots.length - 1]!),
       hasActed: false,
@@ -233,6 +241,13 @@ export function createBattle(
 function beginPhase(s: BattleState): void {
   for (const u of teamOf(s, s.phase)) {
     u.hasActed = false;
+    // Spend the freeze here for the player's side: there is no per-unit AI step
+    // to burn it in, and `checkAction` only refuses a plan -- something has to
+    // actually consume the lost action or a freeze would last forever.
+    if (u.side === 'player' && u.statuses.frozen > 0) {
+      u.statuses.frozen -= 1;
+      u.hasActed = true;
+    }
 
     for (const name of Object.keys(u.cooldowns)) {
       u.cooldowns[name] = Math.max(0, (u.cooldowns[name] ?? 0) - 1);
@@ -300,6 +315,10 @@ function chooseIntents(s: BattleState): void {
   for (const u of livingOf(s, 'enemy')) {
     u.intent = null;
     if (foes.length === 0) continue;
+    // Frozen or asleep: declare nothing. The empty slot where an intent would
+    // be is the whole payoff of the control -- the player sees the boss is out
+    // this round and spends the turn's dice on something other than bracing.
+    if (!canAct(u)) continue;
     // A telegraphed cast already committed last round; it is not re-chosen, and
     // showing it again as a fresh intent would double-count it.
     if (u.pending) continue;
@@ -509,6 +528,11 @@ function checkAction(
   if (s.outcome !== 'ongoing') return 'The battle is over.';
   if (unit.side !== 'player') return 'Only the player plans.';
   if (!alive(unit)) return `${unit.def.name} is down.`;
+  if (!canAct(unit)) {
+    return unit.statuses.asleep
+      ? `${unit.def.name} is asleep.`
+      : `${unit.def.name} is frozen.`;
+  }
   // Cooldowns were enemy-only: `Unit.cooldowns` and its per-turn countdown are
   // side-agnostic, but nothing on the player's path ever set or read them, so
   // an ultimate with a cooldown could be cast every turn.
@@ -848,6 +872,33 @@ function applyEffects(
         }
         break;
 
+      case 'frost':
+        for (const target of targets) addFrost(s, target, fx.stacks);
+        break;
+
+      case 'sleep':
+        for (const target of targets) putToSleep(s, target);
+        break;
+
+      case 'move':
+        // Passed as a group so a line moves as a line; see `moveRanks`.
+        moveRanks(s, targets, fx.ranks);
+        break;
+
+      case 'resist':
+        for (const target of targets) {
+          applyModifier(s, target, {
+            ability: ability.name,
+            stat: fx.element,
+            // Percentage POINTS of resistance, not a percentage of a stat, so
+            // this is absolute and never resolved against a source.
+            amount: fx.percent,
+            turns: fx.turns,
+            by: source.side,
+          });
+        }
+        break;
+
       case 'modify':
         for (const target of targets) {
           for (const stat of fx.stats) {
@@ -857,6 +908,7 @@ function applyEffects(
               amount: resolveModifierAmount(source, target, stat, fx.percent, fx.of),
               turns: fx.turns,
               by: source.side,
+              riposte: fx.riposte,
             });
           }
         }
@@ -903,6 +955,12 @@ function strike(
   const crit = base > 0 && s.rng.int(1, 100) <= CRIT_PERCENT;
   const dmg = crit ? Math.round(base * CRIT_MULTIPLIER) : base;
   target.hp = Math.max(0, target.hp - dmg);
+  // Any damage at all wakes a sleeper, which is what makes Hibernate cheap for
+  // a Performer standing where the hits land and expensive for one who is not.
+  if (dmg > 0 && target.statuses.asleep) {
+    target.statuses.asleep = false;
+    s.log.push({ t: 'wake', unit: target.def.name });
+  }
   s.log.push({
     t: 'damage',
     target: target.def.name,
@@ -920,6 +978,19 @@ function strike(
     if (gained > 0) {
       source.hp += gained;
       s.log.push({ t: 'heal', target: source.def.name, amount: gained, hpAfter: source.hp });
+    }
+  }
+
+  // Reactive frost from an active guard. Deduplicated by the ability that
+  // granted it: Frost Armor writes a modifier per stat, and firing once per
+  // modifier would frost the attacker twice for one hit.
+  if (dmg > 0 && alive(source)) {
+    const fired = new Set<string>();
+    for (const m of target.modifiers) {
+      if (!m.riposte || m.riposte.damageType !== damageTypeOf(shot)) continue;
+      if (fired.has(m.ability)) continue;
+      fired.add(m.ability);
+      addFrost(s, source, m.riposte.frost);
     }
   }
 
@@ -1061,6 +1132,18 @@ function applyAbility(
  * and third ability of the same plan.
  */
 function endTurn(s: BattleState, side: Side): void {
+  // Frost decays at the End Turn of the side that did NOT put it there, which
+  // is the applier's own turn. Upkeep, in other words: holding a target one
+  // stack below the bar costs a die every round instead of being a grenade
+  // banked early and thrown whenever it is most convenient.
+  //
+  // Timing matters for the reactive case. A stack applied during the enemy's
+  // phase survives until the next player End Turn, so Frost Armor's
+  // contribution gets a full round to be built on rather than evaporating.
+  for (const u of s.units) {
+    if (u.side !== side && u.statuses.frost > 0) u.statuses.frost -= 1;
+  }
+
   for (const u of s.units) {
     if (u.modifiers.length === 0) continue;
     const kept: Modifier[] = [];
@@ -1102,6 +1185,103 @@ function applyModifier(s: BattleState, target: Unit, mod: Modifier): void {
     amount: mod.amount,
     turns: mod.turns,
   });
+}
+
+/**
+ * Add frost, and freeze if it reaches the bar.
+ *
+ * Reaching the threshold SPENDS the stacks and raises the next bar, which is
+ * what turns "3, then 6, then 9" into an escalation. Leaving them on the
+ * target would make every freeze after the first cost the same three.
+ */
+function addFrost(s: BattleState, target: Unit, stacks: number): void {
+  if (!alive(target) || stacks <= 0) return;
+  target.statuses.frost += stacks;
+
+  const bar = freezeThreshold(target);
+  if (target.statuses.frost < bar) {
+    s.log.push({ t: 'frost', target: target.def.name, stacks: target.statuses.frost, threshold: bar });
+    return;
+  }
+
+  const spent = target.statuses.frost;
+  target.statuses.frost = 0;
+  target.statuses.freezes += 1;
+  // One ACTION, not one turn. Frost landing while a creature is mid-swing has
+  // already missed this turn and takes the next instead of being wasted; frost
+  // landing on the player's turn cancels the enemy phase that follows.
+  target.statuses.frozen = 1;
+  // A declared intent that will not happen should stop being shown as if it
+  // will -- the player plans the next turn against what they can see.
+  target.intent = null;
+  s.log.push({
+    t: 'freeze',
+    target: target.def.name,
+    spent,
+    nextThreshold: freezeThreshold(target),
+  });
+}
+
+/** Sleep until damaged. Self-inflicted so far; the wake is in `strike`. */
+function putToSleep(s: BattleState, target: Unit): void {
+  if (!alive(target) || target.statuses.asleep) return;
+  target.statuses.asleep = true;
+  s.log.push({ t: 'sleep', unit: target.def.name });
+}
+
+/**
+ * Shift units by whole ranks.
+ *
+ * Two different behaviours, because one unit moving and a whole line moving are
+ * genuinely different things:
+ *
+ * - **One unit swaps** with whoever is in the slot it wants. Someone steps
+ *   forward as it steps back, which reads correctly and means the move always
+ *   resolves -- a queued reposition can never fizzle on a slot that filled up
+ *   earlier in the same plan, which under commit-and-lock would be a silent
+ *   loss of dice.
+ * - **A group shifts**, and anyone who cannot go stays. Swapping each member in
+ *   turn does NOT do this: the first mover displaces the second, who then
+ *   displaces the third, and a "fall back one rank" ends with the formation
+ *   shuffled rather than moved. Processing destination-first and refusing to
+ *   enter an occupied slot is what makes a blocked line stay a line.
+ */
+function moveRanks(s: BattleState, movers: Unit[], ranks: number): void {
+  const live = movers.filter(alive);
+  if (ranks === 0 || live.length === 0) return;
+
+  const side = live[0]!.side;
+  // The player's front is their HIGHEST column, the enemy's their lowest, so
+  // "forward" is a different direction for each side.
+  const step = side === 'player' ? ranks : -ranks;
+  const cols = new Set(s.units.filter((x) => x.side === side).map((x) => x.pos.x));
+
+  const place = (u: Unit, to: Pos) => {
+    const from = { ...u.pos };
+    u.pos = to;
+    s.log.push({ t: 'move', unit: u.def.name, from, to });
+  };
+
+  if (live.length === 1) {
+    const u = live[0]!;
+    const to = { x: u.pos.x + step, y: u.pos.y };
+    if (!cols.has(to.x)) return;
+    const occupant = s.units.find((x) => x.side === side && samePos(x.pos, to));
+    const from = { ...u.pos };
+    place(u, to);
+    if (occupant) occupant.pos = from;
+    return;
+  }
+
+  // Furthest along the direction of travel goes first, so it has vacated its
+  // slot before the unit behind it arrives.
+  const order = [...live].sort((a, b) => (step > 0 ? b.pos.x - a.pos.x : a.pos.x - b.pos.x));
+  for (const u of order) {
+    const to = { x: u.pos.x + step, y: u.pos.y };
+    if (!cols.has(to.x)) continue;
+    if (s.units.some((x) => x.side === side && alive(x) && samePos(x.pos, to))) continue;
+    place(u, to);
+  }
 }
 
 function checkOutcome(s: BattleState): void {
@@ -1195,6 +1375,15 @@ function nextDiceStep(s: BattleState, team: Unit[], foes: Unit[]): AiStep | null
  */
 function nextEnemyStep(s: BattleState, team: Unit[], foes: Unit[]): AiStep | null {
   for (const u of team) {
+    // A frozen or sleeping unit spends its action doing nothing, and that is
+    // where the freeze is consumed -- one action lost, then it is over. Done
+    // before the telegraph branch on purpose: freezing a caster mid-wind-up
+    // should delay the cast, not be ignored by it.
+    if (alive(u) && !u.hasActed && !canAct(u)) {
+      u.hasActed = true;
+      if (u.statuses.frozen > 0) u.statuses.frozen -= 1;
+      continue;
+    }
     if (!alive(u) || u.hasActed || !u.pending) continue;
     const cast = u.pending;
     u.pending = null;

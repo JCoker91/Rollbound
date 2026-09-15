@@ -81,13 +81,6 @@ export type DamageType = 'physical' | 'magical' | 'true';
  */
 export type TargetScope = 'one' | 'self' | 'all';
 
-/**
- * Cost is paid with a subset of the turn's dice summing to exactly `cost`.
- * A `wildcard` ability instead consumes any single die regardless of value --
- * the release valve for rolls that fit nobody. Keep these rare; simulation
- * showed two wildcards on one team pushes "all 5 act" to 70% and kills the
- * decision of who sits out.
- */
 /** Who one effect inside an ability lands on. */
 export type EffectTarget =
   /** Whoever the ability was aimed at, honouring its `scope`. */
@@ -111,6 +104,20 @@ export type EffectTarget =
 export type Effect =
   | { do: 'damage'; power: number; damageType?: DamageType; element?: Element; on?: EffectTarget }
   | { do: 'heal'; power: number; on?: EffectTarget }
+  /** Add frost stacks, freezing if they reach the threshold. */
+  | { do: 'frost'; stacks: number; on?: EffectTarget }
+  /** Put the target to sleep until something damages them. */
+  | { do: 'sleep'; on?: EffectTarget }
+  /**
+   * Shift the target one or more ranks.
+   *
+   * Positive moves toward the enemy, negative away. Deliberately relative and
+   * self-or-ally aimed rather than picking a destination slot: that needs no
+   * empty-slot targeting in the UI, and it keeps movement a thing a kit does
+   * rather than a thing everyone has. A rank already holding somebody is
+   * SWAPPED with, so the move always resolves.
+   */
+  | { do: 'move'; ranks: number; on?: EffectTarget }
   | {
       do: 'modify';
       /** Every stat this moves, by the same percentage. */
@@ -119,6 +126,16 @@ export type Effect =
       percent: number;
       /** What the percentage is of. See `ModSource`. */
       of: ModSource;
+      turns: number;
+      on?: EffectTarget;
+      /** See `Modifier.riposte`. Rides along onto the modifier this creates. */
+      riposte?: { damageType: DamageType; frost: number };
+    }
+  | {
+      /** Timed elemental resistance, in percentage points. Writes `resistMods`. */
+      do: 'resist';
+      element: Element;
+      percent: number;
       turns: number;
       on?: EffectTarget;
     };
@@ -189,6 +206,24 @@ export interface ChainTrigger {
 
 export interface Ability {
   name: string;
+  /**
+   * Paid with a subset of the turn's dice summing to EXACTLY this. A
+   * `wildcard` ability ignores it and consumes any single die instead.
+   *
+   * **Every Performer carries exactly one wildcard "basic".** That is the
+   * design, not an exception to be kept rare: it means no roll is ever dead
+   * and every character can always do something.
+   *
+   * The tension it leaves is not *whether* you act, it is **breadth against
+   * power**. Five basics means all five act and none of them hit hard. One
+   * expensive ability eats two or three dice and benches a teammate to pay for
+   * it. The identity is exact:
+   *
+   *     characters acting = pool size − Σ (dice each ability uses − 1)
+   *
+   * so every die an ability consumes beyond its first is one teammate who does
+   * not act. Choosing to spend that is the turn's real decision.
+   */
   cost: number;
   /**
    * What the ability is FOR, which is how targeting is picked: attacks aim at
@@ -598,6 +633,17 @@ export type ModSource = 'targetBase' | 'casterCurrent';
  * has to decide what happens to current HP when it expires, and every answer
  * is a heal, a surprise death, or a special case.
  */
+/**
+ * What a modifier can move: a stat, or resistance to one element.
+ *
+ * The two share the list rather than living in parallel structures because
+ * they want identical behaviour -- refresh within an ability, stack across
+ * abilities, expire at End Turn. `ModStat` and `Element` are disjoint string
+ * unions, so one keyed lookup serves both and none of the duration machinery
+ * had to be written twice.
+ */
+export type ModKey = ModStat | Element;
+
 export interface Modifier {
   /**
    * The ability that applied it. Identity for the stacking rule: the same
@@ -605,18 +651,92 @@ export interface Modifier {
    * separate entries with separate clocks.
    */
   ability: string;
-  stat: ModStat;
-  /** Flat, already resolved. Negative for a shred. */
+  stat: ModKey;
+  /**
+   * Flat, already resolved. Negative for a shred.
+   *
+   * For an element key this is percentage POINTS of resistance rather than a
+   * stat amount -- the one place the two uses differ, and `resolveModifier` is
+   * not consulted for them because a resistance percentage is already absolute.
+   */
   amount: number;
   /** Turns left, counted down at the End Turn of the side that applied it. */
   turns: number;
+  /**
+   * Frost the attacker when the holder takes damage of this type.
+   *
+   * Carried on the MODIFIER rather than checked by ability name, so it expires
+   * with the buff that granted it and no code anywhere has to know the string
+   * "Frost Armor". Deliberately narrow -- one reactive shape, not a general
+   * effect list -- because a general one needs an ability context to resolve
+   * against and there is exactly one user.
+   */
+  riposte?: { damageType: DamageType; frost: number };
   /** Whose End Turn ticks this. */
   by: Side;
 }
 
+/**
+ * How many frost stacks the FIRST freeze costs, and how much dearer each one
+ * after it gets.
+ *
+ * Uniform across every creature rather than a per-enemy resistance: a boss is
+ * as easy to freeze as a mob the first time and progressively harder after,
+ * which puts the escalation in the fight's shape instead of in a stat block.
+ * Stacks are CONSUMED on freezing, and that is what makes the rising bar an
+ * escalation at all -- leaving them on the target would mean every freeze
+ * after the first cost the same three, and the curve would be decorative.
+ */
+export const FREEZE_STEP = 3;
+
+/** What the next freeze costs this unit. */
+export const freezeThreshold = (u: Unit): number => FREEZE_STEP * (u.statuses.freezes + 1);
+
+/**
+ * Statuses, as opposed to modifiers (§6). Sharp, short, and mostly about
+ * denying actions rather than moving numbers.
+ */
+export interface Statuses {
+  /**
+   * Frost stacks. A shared RESOURCE rather than one character's private
+   * counter: Rebar builds it and spends it on control, and other Performers
+   * are meant to read the same number and do something else with it.
+   *
+   * Decays by one at the End Turn of the side that is not carrying it, so
+   * holding a target near the threshold costs upkeep instead of being a
+   * grenade banked on turn two and thrown on turn nine.
+   */
+  frost: number;
+  /** How many times this unit has frozen. Sets the next threshold. */
+  freezes: number;
+  /**
+   * Actions still owed to a freeze.
+   *
+   * Counted in actions LOST, not turns skipped, and that one word is what
+   * makes reactive application work: frost applied while a creature is mid-
+   * swing has already missed this turn, so it takes the next one instead of
+   * being wasted. Frost applied on the player's turn cancels the enemy phase
+   * that follows, including a declared intent.
+   */
+  frozen: number;
+  /**
+   * Asleep until damaged. Self-inflicted by Hibernate, and cheap precisely
+   * when its owner is doing their job -- a tank in the front rank gets woken
+   * almost immediately, and only stays down when nobody wanted to hit them.
+   */
+  asleep: boolean;
+}
+
+export const noStatuses = (): Statuses => ({ frost: 0, freezes: 0, frozen: 0, asleep: false });
+
+/** Whether a status is stopping this unit from acting at all. */
+export const canAct = (u: Unit): boolean => u.statuses.frozen === 0 && !u.statuses.asleep;
+
 export interface Unit {
   def: CharacterDef;
   hp: number;
+  /** Frost, freeze and sleep. See `Statuses`. */
+  statuses: Statuses;
   /**
    * Live stat modifiers, buffs and shreds alike.
    *
