@@ -1,6 +1,6 @@
 # Game Sprite Style Guide
 
-**Status:** Production standard v2.0  
+**Status:** Production standard v3.0  
 **Purpose:** Keep every playable character and creature visually consistent across design, generation, cleanup, animation, and export.
 
 > The approved sword-wielding character remains the visual source of truth for rendering style. This guide is the source of truth for canvas size, body scale, anchors, palette, animation layout, and export requirements.
@@ -23,19 +23,20 @@ The result must be:
 
 | Property | Standard |
 | --- | --- |
-| Native base-frame canvas | 128 × 128 pixels |
+| Native base-frame canvas | 256 × 256 pixels |
 | Working color mode | RGBA |
 | Background | Fully transparent |
 | Default orientation | Three-quarter view, facing screen-right |
-| Humanoid ground anchor | X = 64, Y = 112 |
-| Humanoid feet baseline | Y = 112 |
-| Standard humanoid body height | 82–92 pixels |
-| Maximum standard humanoid body height | 96 pixels |
-| Typical humanoid body width | 38–56 pixels |
-| Minimum canvas safety margin | 8 pixels; 12 preferred |
+| Humanoid ground anchor | X = 128, Y = 224 |
+| Humanoid feet baseline | Y = 224 |
+| Standard humanoid body height | 164–184 pixels |
+| Maximum standard humanoid body height | 192 pixels |
+| Typical humanoid body width | 76–112 pixels |
+| Minimum canvas safety margin | 16 pixels; 24 preferred |
 | Palette limit | Maximum 64 colors including transparency |
 | Preferred character colors | Approximately 24–48 opaque colors |
 | Alpha | Binary only: 0 or 255 |
+| Exterior outline weight | 2 pixels |
 | Pixel edges | Hard-edged; no anti-aliasing |
 | File format | PNG with alpha |
 | Scaling | Nearest-neighbor only |
@@ -52,14 +53,14 @@ The frame canvas defines the coordinate system. It does not define how much of t
 - Comparable characters must have comparable body height even when their total silhouette widths differ.
 - Never automatically fit or stretch the complete silhouette to the canvas.
 
-Examples within a 128 × 128 base frame:
+Examples within a 256 × 256 base frame:
 
 | Character | Approximate occupied area | Scaling basis |
 | --- | --- | --- |
-| Standard sword fighter | 55 × 90 px | Body height |
-| Mage with hat and staff | 90 × 96 px | Body height; equipment extends outward |
-| Heavy armored humanoid | 65 × 96 px | Broader body, only slightly taller |
-| Large quadrupedal bear | 110 × 70 px | Shoulder height and body length |
+| Standard sword fighter | 110 × 180 px | Body height |
+| Mage with hat and staff | 180 × 192 px | Body height; equipment extends outward |
+| Heavy armored humanoid | 130 × 192 px | Broader body, only slightly taller |
+| Large quadrupedal bear | 220 × 140 px | Shoulder height and body length |
 
 These occupied areas are guidance, not crop boxes. The anchor and body scale take priority.
 
@@ -69,10 +70,10 @@ Assign every character a scale class before generating the base sprite.
 
 | Scale class | Typical subjects | Target body measurement |
 | --- | --- | --- |
-| Small | Children, goblins, tiny humanoids | 58–72 px tall |
-| Standard | Most adult humanoids | 82–92 px tall |
-| Large | Heavy warriors, orcs, large humanoids | 92–104 px tall |
-| Quadruped | Bears, wolves, similar creatures | 85–112 px long; species-appropriate height |
+| Small | Children, goblins, tiny humanoids | 116–144 px tall |
+| Standard | Most adult humanoids | 164–184 px tall |
+| Large | Heavy warriors, orcs, large humanoids | 184–208 px tall |
+| Quadruped | Bears, wolves, similar creatures | 170–224 px long; species-appropriate height |
 | Giant | Bosses and exceptional creatures | Larger dedicated canvas required |
 
 Rules:
@@ -80,7 +81,7 @@ Rules:
 - Large humanoids should become broader before becoming dramatically taller.
 - Quadrupeds are measured primarily by torso length, shoulder height, and paw baseline.
 - Small characters should still use the same pixel size and detail density as the rest of the roster.
-- Giant characters must not be squeezed into a 128 × 128 frame.
+- Giant characters must not be squeezed into a 256 × 256 frame.
 
 ## 5. Anchors and Registration
 
@@ -97,12 +98,12 @@ Every animation frame must share stable anchor points.
 ### Standard humanoid placement
 
 ```text
-Canvas: 128 × 128
-Ground anchor: (64, 112)
-Feet baseline: Y = 112
-Horizontal body center: X = 64
-Preferred top clearance: 8–12 pixels
-Preferred bottom clearance: 12–16 pixels
+Canvas: 256 × 256
+Ground anchor: (128, 224)
+Feet baseline: Y = 224
+Horizontal body center: X = 128
+Preferred top clearance: 16–24 pixels
+Preferred bottom clearance: 24–32 pixels
 ```
 
 The visible body may lean or move, but the intended anchor must remain consistent. Animation frames must not jitter because their opaque bounding boxes were centered independently.
@@ -178,7 +179,9 @@ Avoid:
 ## 9. Outlines
 
 - Use dark colored outlines related to the local material.
-- Exterior contours are normally 1 pixel thick.
+- Exterior contours are normally 2 pixels thick. The canvas doubled, so a ring that
+  stayed 1 pixel would read half as bold beside the rest of the roster once both are
+  drawn at the same height on stage.
 - Use thicker clusters only at deep overlaps or the darkest underside.
 - Keep interior lines selective and lighter than the darkest exterior contour when practical.
 - Do not outline every plate, fold, finger, strand, or facial feature separately.
@@ -260,10 +263,10 @@ The character body must retain the same pixel height across every animation canv
 
 | Animation | Default frame canvas | Use |
 | --- | --- | --- |
-| Base / idle | 128 × 128 | Neutral stance and restrained idle motion |
-| Basic attack | 192 × 128 | Horizontal lunges and weapon arcs |
-| Victory / celebration | 192 × 160 | Dance, flourish, and end-pose transitions |
-| Spell casting | 192 × 192 | Staff motion and surrounding magic |
+| Base / idle | 256 × 256 | Neutral stance and restrained idle motion |
+| Basic attack | 384 × 256 | Horizontal lunges and weapon arcs |
+| Victory / celebration | 384 × 320 | Dance, flourish, and end-pose transitions |
+| Spell casting | 384 × 384 | Staff motion and surrounding magic |
 | Large effects | Separate effect sheet | Explosions, auras, projectiles, screen-filling magic |
 
 Rules:
@@ -272,7 +275,7 @@ Rules:
 - Keep the ground anchor aligned consistently when moving between canvas sizes.
 - Every frame in one sheet must use identical cell dimensions.
 - No opaque pixel may cross into an adjacent cell.
-- Maintain at least 8 transparent pixels between the complete foreground and each cell edge; 12 is preferred.
+- Maintain at least 16 transparent pixels between the complete foreground and each cell edge; 24 is preferred.
 - Separate character and large magical effects when practical.
 - Use a one-shot sheet for celebration movement and a separate looping sheet for the held end pose.
 
@@ -298,7 +301,16 @@ Animation starts only after the base sprite is approved.
 - Use genuine transparent alpha, never a baked checkerboard.
 - Alpha values must be only 0 or 255.
 - Preserve native-resolution masters.
-- Any preview enlargement must use integer nearest-neighbor scaling.
+- Any preview enlargement must use integer nearest-neighbor scaling, and the preview
+  size must be an exact whole multiple of the 256 canvas: **1280 (5×), 1536 (6×) or
+  2048 (8×)**. A near-miss is worse than a small preview. 1254 is 4.898× of 256, so
+  every intended pixel straddles a fractional boundary and the reduction back to the
+  native grid smears each one across its neighbours before colour quantisation even
+  begins — which is what makes an approved preview collapse on export.
+- A preview is a magnifying glass, never a source. The 256 canvas is the finished
+  asset; the preview must be an enlargement OF it, not an illustration the sprite is
+  derived FROM. Generating at preview size and reducing afterwards is an immediate
+  rejection condition, however good the preview looks.
 - Never resize a production frame with bilinear, bicubic, or AI interpolation.
 
 ### Trimming and atlas packing
@@ -350,11 +362,11 @@ Create one original playable high-fantasy JRPG battle sprite using the attached 
 Character brief:
 [INSERT COMPLETED CHARACTER BRIEF]
 
-Design the production sprite directly on a native 128x128 pixel canvas. Do not create a high-resolution illustration and shrink, pixelate, or posterize it afterward. Use genuine transparent RGBA with binary alpha, hard pixel edges, intentional connected clusters, no anti-aliasing, no dithering, and no smooth gradients. Use no more than 64 total colors including transparency; prefer 24–48 opaque colors.
+Design the production sprite directly on a native 256x256 pixel canvas. Do not create a high-resolution illustration and shrink, pixelate, or posterize it afterward. Use genuine transparent RGBA with binary alpha, hard pixel edges, intentional connected clusters, no anti-aliasing, no dithering, and no smooth gradients. Use no more than 64 total colors including transparency; prefer 24–48 opaque colors.
 
-For a Standard humanoid, keep the body 82–92 pixels tall, excluding raised weapons, oversized hats, capes, hair extensions, and effects. Place the humanoid ground anchor at (64,112), align grounded feet to y=112, and center the body around x=64. Scale the body according to its scale class. Do not scale the body down to fit weapons, hats, capes, wings, tails, or effects.
+For a Standard humanoid, keep the body 164–184 pixels tall, excluding raised weapons, oversized hats, capes, hair extensions, and effects. Place the humanoid ground anchor at (128,224), align grounded feet to y=224, and center the body around x=128. Scale the body according to its scale class. Do not scale the body down to fit weapons, hats, capes, wings, tails, or effects.
 
-Show the complete character in a neutral combat-idle pose, three-quarter view facing screen-right unless the brief says otherwise. Keep every body part and required item intact inside the canvas with at least 8 pixels of transparent safety margin. The face must remain symbolic and readable at native size. Clothing, armor, hair, fur, and equipment must use broad readable shapes with restrained internal detail.
+Show the complete character in a neutral combat-idle pose, three-quarter view facing screen-right unless the brief says otherwise. Keep every body part and required item intact inside the canvas with at least 16 pixels of transparent safety margin. The face must remain symbolic and readable at native size. Clothing, armor, hair, fur, and equipment must use broad readable shapes with restrained internal detail.
 
 Match the approved reference sprite's proportions, pixel size, outline weight, palette density, lighting direction, shading complexity, camera angle, and overall rendering language. Change the character design, not the visual system.
 
@@ -368,7 +380,7 @@ Create [FRAME COUNT] sequential frames for [ANIMATION NAME] using the attached a
 
 Use a [FRAME WIDTH]x[FRAME HEIGHT] native pixel canvas for every frame. Maintain the base sprite's exact body scale, palette, pixel size, proportions, clothing, equipment, and ground anchor. Increasing the animation canvas provides room for motion and must not change character scale.
 
-Arrange frames in exactly [COLUMNS] columns by [ROWS] rows, read left-to-right and top-to-bottom. Every cell must have identical dimensions. Keep the complete character, equipment, hair, clothing, and effects inside its own cell with at least 8 transparent pixels of safety margin. Nothing may touch, cross, overlap, or be clipped by a cell boundary.
+Arrange frames in exactly [COLUMNS] columns by [ROWS] rows, read left-to-right and top-to-bottom. Every cell must have identical dimensions. Keep the complete character, equipment, hair, clothing, and effects inside its own cell with at least 16 transparent pixels of safety margin. Nothing may touch, cross, overlap, or be clipped by a cell boundary.
 
 Reuse the exact base palette. Use binary transparency, hard pixel edges, no anti-aliasing, no dithering, no smoothing, and no background. Keep anchors consistent so the animation does not jitter. Use small logical changes between adjacent frames and preserve correct anatomy and equipment count throughout.
 
@@ -381,24 +393,33 @@ A sprite is approved only when every applicable item passes.
 
 ### Technical
 
-- [ ] Base frame is exactly 128 × 128 pixels
+- [ ] Base frame is exactly 256 × 256 pixels
 - [ ] Animation frame matches its required canvas dimensions
 - [ ] Image is native-resolution pixel art, not automatically pixelated concept art
 - [ ] No more than 64 total colors including transparency
 - [ ] No dithering, gradients, anti-aliasing, blur, or semi-transparent edge pixels
 - [ ] Background is genuine transparency, not black, white, or checkerboard
-- [ ] At least 8 pixels of safe margin; 12 preferred
+- [ ] At least 16 pixels of safe margin; 24 preferred
 - [ ] All frames in a sheet have identical dimensions
 - [ ] No foreground pixel crosses or is clipped by a frame boundary
 
 ### Scale and alignment
 
 - [ ] Scale class is recorded in the character brief
-- [ ] Standard humanoid body is 82–92 pixels tall unless intentionally classified otherwise
+- [ ] Standard humanoid body is 164–184 pixels tall unless intentionally classified otherwise
 - [ ] Body scale is independent of weapon, hat, cape, wings, hair, tail, or effects
 - [ ] Ground anchor and baseline match the roster standard
 - [ ] Comparable characters have comparable body height and apparent pixel size
 - [ ] Character was not scaled to fill its opaque bounding box
+- [ ] A prop drawn above the crown of the head has a `PROP_HEADROOM` entry in
+      `scripts/pack_sprites.py`, in native pixels of THIS sprite's own canvas, measured
+      from the outline ring down to the hairline. Re-measure it whenever the character
+      is redrawn on a different canvas — a 128-grid value left behind on 256 art reads
+      half as much prop as there is. The height check reads the opaque box, so without one a compliant
+      hat-wearer reports as oversized and a genuinely shrunken one hides in the noise.
+      It is a lint input only: stature is unaffected either way, because the renderer
+      scales the whole cropped image and the prop scales with the body rather than
+      stealing from it.
 - [ ] Frame-to-frame registration does not jitter
 
 ### Style
@@ -435,6 +456,9 @@ A sprite is approved only when every applicable item passes.
 Reject and rebuild when any of these occur:
 
 - The image looks like a detailed illustration reduced or posterized into pixel art.
+- The sprite was generated at preview size and reduced to the native canvas afterwards,
+  rather than drawn on the native canvas and enlarged for preview.
+- A preview was delivered at a size that is not a whole multiple of the native canvas.
 - Pixel sizes vary within the sprite or between roster characters.
 - A character was shrunk because its weapon, hat, cape, or body width was large.
 - Comparable bodies appear at inconsistent scales.
@@ -442,6 +466,7 @@ Reject and rebuild when any of these occur:
 - A weapon bends, forks, disconnects, or changes thickness unintentionally.
 - The face or hair is more detailed than the approved reference.
 - The image contains more than 64 colors.
+- The image contains any semi-transparent pixel.
 - The background is baked in or uses partial transparency.
 - Any body part, prop, effect, or garment is cropped by a canvas or cell boundary.
 - Adjacent animation cells overlap.
@@ -452,7 +477,7 @@ Reject and rebuild when any of these occur:
 1. Create or approve character concept art.
 2. Assign a scale class and complete the character brief.
 3. Attach the approved reference sprite and this guide.
-4. Create one native 128 × 128 base sprite.
+4. Create one native 256 × 256 base sprite.
 5. Verify body height, baseline, anchor, pixel size, palette, alpha, and silhouette.
 6. Correct structural problems before starting animation.
 7. Approve the base sprite as the character's canonical pixel asset.
@@ -475,7 +500,7 @@ Record these values for every approved base sprite:
 | Measurement | Value |
 | --- | --- |
 | Scale class | Required |
-| Native canvas | 128 × 128 |
+| Native canvas | 256 × 256 |
 | Opaque bounding box | Required |
 | Body height excluding equipment | Required |
 | Body width excluding equipment | Required |
@@ -490,4 +515,20 @@ Record these values for every approved base sprite:
 
 ### Revision note
 
-Version 2.0 replaces the former 64 × 64 native-grid specification with a 128 × 128 base-frame standard. It separates character body scale from total silhouette bounds, introduces scale classes and stable anchors, defines larger animation canvases, caps the palette at 64 colors, and establishes transition requirements for one-shot and looping animation sheets.
+Version 3.0 doubles the v2.0 base frame from 128 × 128 to 256 × 256. Every native-pixel
+measurement doubles with it — body bands, anchors, baselines, margins, animation canvases
+and the exterior outline weight — so a character described by either revision stands the
+same height on stage. The canvas is a detail budget, not a size multiplier: stature stays
+`body ÷ canvas`, and the packer reads each sprite's canvas off the file rather than
+assuming one, so 128 art and 256 art render side by side at correct relative scale while
+the roster migrates. It also makes the preview rule explicit, requiring previews to be
+whole multiples of the native canvas.
+
+The 64-color ceiling is unchanged and was not the cause of the quality loss on export.
+Shipped sprites measure 58–63 opaque colors with zero semi-transparent pixels and are
+correct; the previews that degraded measured over 100,000 colors and hundreds of
+thousands of anti-aliased pixels, meaning they were never pixel art and had no native
+grid to recover. Four times the pixel area at 256 gives the same 64 colors more room to
+form readable clusters; it is not a reason to spend more of them.
+
+Version 2.0 replaced the former 64 × 64 native-grid specification with a 128 × 128 base-frame standard. It separated character body scale from total silhouette bounds, introduced scale classes and stable anchors, defined larger animation canvases, capped the palette at 64 colors, and established transition requirements for one-shot and looping animation sheets.

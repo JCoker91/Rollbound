@@ -1,5 +1,5 @@
 import { samePos } from '../engine/formation.ts';
-import type { Ability, Element, Pos, Unit } from '../engine/types.ts';
+import type { Ability, Element, Pos, Side, Unit } from '../engine/types.ts';
 
 /**
  * What the battle SAYS and how its numbers are coloured.
@@ -16,6 +16,14 @@ export interface Floater {
   amount: number;
   kind: 'damage' | 'heal';
   at: Pos;
+  /**
+   * Whose board `at` is a coordinate ON.
+   *
+   * Both sides use column 2 -- the party's front rank and the enemy's are the
+   * same number -- so a position alone does not say where on the stage it is.
+   * Every lookup from a `Pos` to a draw position needs the side with it.
+   */
+  side: Side;
   /** Colours the number. Absent for physical hits, healing and thorns. */
   element?: Element;
   /** Draws it big with a CRIT flag over it. */

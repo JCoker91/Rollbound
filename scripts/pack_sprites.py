@@ -81,10 +81,12 @@ HUMANOID_H_RANGE = (37, 50)
 # canvas`, so measuring a 128px sprite against the 64px constant would render it
 # at double the size of everyone else.
 SPECS = {
-    # v3 is v2 doubled, for an actor whose detail will not fit on 128. Every
+    # v3 is v2 doubled, and is the CURRENT standard (style guide v3.0). Every
     # threshold is exactly 2x so the two describe the SAME character standing
     # the same height -- the canvas is a detail budget, not a size multiplier,
-    # and stature stays `body / canvas` either way.
+    # and stature stays `body / canvas` either way. That is what lets the
+    # roster migrate one actor at a time: a 128 sprite and a 256 sprite stand
+    # correctly beside each other, so nothing has to be rebuilt in lockstep.
     3: {'native': 256, 'ground': 224, 'height': (164, 184), 'margin': 16},
     2: {'native': 128, 'ground': 112, 'height': (82, 92), 'margin': 8},
     1: {'native': NATIVE, 'ground': GROUND_LINE_NATIVE, 'height': HUMANOID_H_RANGE,
@@ -94,6 +96,15 @@ SPECS = {
 # Canvas size -> spec. Read off the art rather than declared anywhere, so a new
 # size is one entry here and nothing else.
 BY_CANVAS = {s['native']: n for n, s in SPECS.items() if n != 1}
+
+# The revision new art is expected to be drawn against -- style guide v3.0, 256px.
+#
+# Only reached when the canvas is NOT recognised, which means the art is wrong
+# and is about to be told so. What it is told is the whole point: a 1254px
+# upload measured against v2 reports "guide says 128x128" and sends the artist
+# to redraw at the size the guide no longer asks for. Recognised art is still
+# matched to its own spec, so 128 sheets keep auditing as 128 while they last.
+CURRENT_SPEC = max(SPECS)
 
 # Superseded sheets kept beside the live ones. `animations/` is scanned
 # indiscriminately, so without this a deprecated sheet becomes a clip named
@@ -138,12 +149,19 @@ POCKET_TOLERANCE = 6
 # It records intent; it does not change rendering. Stature still comes from the
 # measured art, so a sprite declared Small that is drawn Large is reported, not
 # silently shrunk.
+#
+# Every band is a FRACTION OF THE SPRITE'S OWN CANVAS, which is the only form
+# that compares across canvases: "82-92 native px" is a different character on
+# 128 than on 256, while 0.64-0.72 of canvas is the same one on both. Bosses
+# were already authored this way because they alone were drawn larger; style
+# guide v3.0 moved the whole roster to 256, so the exception became the rule.
+#
+# The numbers are the guide's Section 4 bands divided by their canvas -- the
+# same character, restated in the units that survive a canvas change.
 SCALE_CLASSES = {
-    'small': (58, 72),
-    'standard': (82, 92),
-    'large': (92, 104),
-    # Bosses are drawn on their own larger canvas, so their band is expressed as
-    # a FRACTION of it rather than in 128-grid pixels -- see `scale_band`.
+    'small': (58 / 128, 72 / 128),        # guide: 116-144 px on 256
+    'standard': (82 / 128, 92 / 128),     # guide: 164-184 px on 256
+    'large': (92 / 128, 104 / 128),       # guide: 184-208 px on 256
     'boss': (0.70, 0.98),
 }
 SCALE_CLASS: dict[str, str] = {
@@ -155,22 +173,72 @@ SCALE_CLASS: dict[str, str] = {
 }
 
 
+# Native pixels of PROP standing above the crown of the head -- a hat's point, a
+# raised staff finial, a wing tip.
+#
+# The guide's height bands are about the BODY, "excluding raised weapons,
+# oversized hats, capes, hair extensions, and effects" (SPRITE_STYLE_GUIDE.md),
+# and drawing a character smaller to fit its hat in is listed there as grounds
+# for rejection. The content box is not that measurement: it is the body plus
+# whatever the character is wearing or holding. Read off the box, Maxine's 85px
+# body audits as 106 and Aethis's 86 as 95 -- two false alarms against art that
+# obeys the rule, raised by the one check that exists to catch art that does
+# not. A lint that cries wolf on the compliant case cannot report the real one.
+#
+# LINT ONLY, and deliberately so: it must not touch stature, because stature
+# already excludes the prop without being told. content.ts scales the whole
+# cropped image by `contentPx / canvas`, so the body lands on screen at
+# `bodyPx / canvas` and the hat scales along with it rather than stealing from
+# it. Measured across the roster -- Benjamin 0.664, Maxine 0.672, Aethis 0.680,
+# Kael 0.711 -- the cast already stands correctly. Feeding these numbers into
+# the render would shrink exactly the characters they are here to vindicate.
+#
+# Measured from the top of the outline ring down to the crown, matching the
+# ring the height check discounts at both ends. Zero for anyone unlisted, which
+# is most of the cast -- only a prop drawn ABOVE the head earns an entry. Kael's
+# axe is raised but his head still tops his silhouette, so he has none.
+# Each value is in the actor's OWN canvas pixels, so it is invalidated by a
+# redraw onto a different canvas -- these two were measured on 128 and roughly
+# double on 256. Left stale, the check under-counts the prop and reports a
+# compliant body as oversized, which is the failure this dict exists to end;
+# the note names the discount precisely so that shows up rather than hides.
+PROP_HEADROOM: dict[str, int] = {
+    'maxine': 21,   # 128-grid: witch's hat, point down to her hairline
+    'aethis': 9,    # 128-grid: staff finial
+}
+
+
+def body_height(name: str, box, k: int) -> float:
+    """
+    The figure's height on its own native grid, as the guide defines the bands.
+
+    Less the ring this script drew, top and bottom, for the reason the margin
+    check discounts it too: the guide's band is about the ART, and reporting the
+    pipeline's own deliberate pixels as drift teaches you to ignore the lint.
+    Uniform across every sprite, so it shifts every reading by the same 2px and
+    changes no relative stature.
+    """
+    return (box[3] - box[1] - 2 * outline_width(name)) / k - PROP_HEADROOM.get(name, 0)
+
+
 def scale_band(name: str) -> tuple[float, float]:
     """
     The body-height range this sprite is audited against, in ITS canvas's pixels.
 
-    A boss's band is authored as a fraction of its own canvas, because "82-92
-    native px" is meaningless on a 256px grid -- the numbers only compare when
-    they are ratios. Everything else is already on a 128 grid and keeps its
-    pixel band unchanged.
+    Declared bands are fractions and are multiplied up by the canvas the art was
+    actually drawn on, so one declaration reads correctly on 128 and 256 alike.
+    Hard-coded pixels would have made every class declaration wrong the moment
+    an actor was redrawn at 256 -- a `large` warrior measured against a 128 band
+    reports as twice the size he is, and the lint blames the art for the table.
+
+    An undeclared sprite falls back to its spec's own Standard band, which is
+    already stated per canvas in SPECS.
     """
     declared = SCALE_CLASS.get(name) or ('boss' if is_boss(name) else None)
-    if declared == 'boss':
-        lo, hi = SCALE_CLASSES['boss']
-        canvas = file_canvas(name)
-        return (round(lo * canvas), round(hi * canvas))
     if declared:
-        return SCALE_CLASSES[declared]
+        lo, hi = SCALE_CLASSES[declared]
+        canvas = file_canvas(name) if is_creature(name) else spec(name)['native']
+        return (round(lo * canvas), round(hi * canvas))
     return SPECS[spec_of(name)]['height']
 
 
@@ -244,7 +312,8 @@ def spec_of(name: str) -> int:
     Decided by which files exist, not by a per-character list, so migrating an
     actor is only ever a matter of dropping the new files in.
 
-    v2 ships `<name>.png` as the finished 128px asset. v1 shipped a 64px master
+    v2 and v3 ship `<name>.png` as the finished asset, on a 128 and 256 canvas
+    respectively, and are told apart by measuring it. v1 shipped a 64px master
     upscaled to `<name>_LQ.png`, from which `<name>.png` was DERIVED into
     public/ -- so the presence of `<name>_LQ.png` is what distinguishes them,
     and it is checked first.
@@ -261,9 +330,10 @@ def spec_of(name: str) -> int:
         if found:
             return found
 
-    # Creatures are only ever authored against v2; there is no legacy enemy art.
+    # No legacy enemy art exists, so an unrecognised creature canvas is simply
+    # new art drawn wrong, and belongs against the current standard.
     if is_creature(name):
-        return 2
+        return CURRENT_SPEC
     d = ACTORS / name
     # v2 wins whenever its finished asset is present, even if the v1 files are
     # still lying beside it. Migrating an actor means dropping in <name>.png, and
@@ -272,10 +342,10 @@ def spec_of(name: str) -> int:
     # while the new file sat there unused, which is the kind of thing you only
     # notice by wondering why your upload did nothing.
     if (d / f'{name}.png').exists():
-        return 2
+        return CURRENT_SPEC
     if (d / f'{name}_LQ.png').exists():
         return 1
-    return 2
+    return CURRENT_SPEC
 
 
 # The v1 files, which are dead weight once <name>.png exists.
@@ -612,16 +682,18 @@ def audit(name: str, ref: Image.Image, native: Image.Image | None) -> list[str]:
     if feet != want:
         notes.append(f'feet at y={feet}, ground line is y={want} ({(feet - want) / k:+.2f} native px)')
 
-    # Less the ring this script drew, for the same reason the margin check
-    # discounts it: the guide's band is about the ART, and reporting the
-    # pipeline's own deliberate pixels as drift teaches you to ignore the lint.
-    # Uniform across every sprite (one row top and bottom), so it shifts every
-    # reading by the same 2px and changes no relative stature.
-    h_native = (box[3] - box[1] - 2 * outline_width(name)) / k
+    h_native = body_height(name, box, k)
     lo, hi = scale_band(name)
     if not lo <= h_native <= hi:
         klass = SCALE_CLASS.get(name) or ('boss' if is_boss(name) else 'standard')
-        notes.append(f'body {h_native:.0f} native px is outside the {klass} band ({lo}-{hi})')
+        # Says what was discounted, so the number can be checked against the art
+        # rather than taken on faith -- and so a stale PROP_HEADROOM entry shows
+        # up as an implausible body height instead of hiding a real shortfall.
+        prop = PROP_HEADROOM.get(name, 0)
+        less = f' (less {prop}px of prop above the head)' if prop else ''
+        notes.append(
+            f'body {h_native:.0f} native px{less} is outside the {klass} band ({lo}-{hi})'
+        )
 
     if native is not None:
         if native.size != (NATIVE, NATIVE):

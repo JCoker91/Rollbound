@@ -2,7 +2,7 @@
 // Measured from the PNGs in public/sprites/; re-run the script after changing art.
 import type { SpriteSheet } from './types.ts';
 
-export type SpriteId = 'aethis' | 'backdrop_bat' | 'benjamin' | 'brax' | 'false_lead' | 'footlight_skitter' | 'kael' | 'maxine' | 'playbill_mimic' | 'rebar' | 'understudy_blue' | 'understudy_green' | 'understudy_orange' | 'understudy_red' | 'understudy_yellow';
+export type SpriteId = 'aethis' | 'backdrop_bat' | 'benjamin' | 'brax' | 'caspian' | 'false_lead' | 'footlight_skitter' | 'kael' | 'maxine' | 'playbill_mimic' | 'rebar' | 'understudy_blue' | 'understudy_green' | 'understudy_orange' | 'understudy_red' | 'understudy_yellow' | 'veyra';
 
 export interface SpriteMetrics extends Omit<SpriteSheet, 'scale' | 'nativePx'> {
   /**
@@ -30,20 +30,22 @@ export interface SpriteMetrics extends Omit<SpriteSheet, 'scale' | 'nativePx'> {
 
 export const SPRITE_METRICS: Record<SpriteId, SpriteMetrics> = {
   aethis: { src: '/sprites/aethis/aethis.png', icon: '/sprites/aethis/aethis_icon.png', aspect: 70 / 97, pxH: 97, anchorX: 0.436, nativePx: 97, nativeCanvas: 128, pixelArt: true, idle: { src: '/sprites/aethis/aethis_idle.png', frames: 8, aspect: 0.707071, pxH: 99, anchorX: 0.436, restFill: 0.984848, footPad: 0.0 } },
-  backdrop_bat: { src: '/sprites/backdrop_bat/backdrop_bat.png', icon: '/sprites/backdrop_bat/backdrop_bat_icon.png', aspect: 114 / 92, pxH: 92, anchorX: 0.346, nativePx: 92, nativeCanvas: 128, pixelArt: true },
-  benjamin: { src: '/sprites/benjamin/benjamin.png', icon: '/sprites/benjamin/benjamin_icon.png', aspect: 103 / 85, pxH: 85, anchorX: 0.447, nativePx: 85, nativeCanvas: 128, pixelArt: true, idle: { src: '/sprites/benjamin/benjamin_idle.png', frames: 8, aspect: 1.352941, pxH: 85, anchorX: 0.496, restFill: 0.988235, footPad: 0.0 } },
+  backdrop_bat: { src: '/sprites/backdrop_bat/backdrop_bat.png', icon: '/sprites/backdrop_bat/backdrop_bat_icon.png', aspect: 116 / 94, pxH: 94, anchorX: 0.349, nativePx: 94, nativeCanvas: 256, pixelArt: true },
+  benjamin: { src: '/sprites/benjamin/benjamin.png', icon: '/sprites/benjamin/benjamin_icon.png', aspect: 223 / 188, pxH: 188, anchorX: 0.466, nativePx: 188, nativeCanvas: 256, pixelArt: true, idle: { src: '/sprites/benjamin/benjamin_idle.png', frames: 13, aspect: 1.25, pxH: 192, anchorX: 0.504, restFill: 0.984375, footPad: 0.0 } },
   brax: { src: '/sprites/brax/brax.png', icon: '/sprites/brax/brax_icon.png', aspect: 224 / 211, pxH: 211, anchorX: 0.493, nativePx: 211, nativeCanvas: 256, pixelArt: true, idle: { src: '/sprites/brax/brax_idle.png', frames: 8, aspect: 1.07109, pxH: 211, anchorX: 0.496, restFill: 0.976303, footPad: 0.0 } },
-  false_lead: { src: '/sprites/false_lead/false_lead.png', icon: '/sprites/false_lead/false_lead_icon.png', aspect: 226 / 203, pxH: 203, anchorX: 0.533, nativePx: 203, nativeCanvas: 128, pixelArt: true },
-  footlight_skitter: { src: '/sprites/footlight_skitter/footlight_skitter.png', icon: '/sprites/footlight_skitter/footlight_skitter_icon.png', aspect: 114 / 85, pxH: 85, anchorX: 0.509, nativePx: 85, nativeCanvas: 128, pixelArt: true },
+  caspian: { src: '/sprites/caspian/caspian.png', aspect: 356 / 320, pxH: 320, anchorX: 0.404, nativePx: 887, nativeCanvas: 256, pixelArt: true, idle: { src: '/sprites/caspian/caspian_idle.png', frames: 6, aspect: 1.083333, pxH: 96, anchorX: 0.409, restFill: 0.973958, footPad: 0.0 } },
+  false_lead: { src: '/sprites/false_lead/false_lead.png', icon: '/sprites/false_lead/false_lead_icon.png', aspect: 228 / 205, pxH: 205, anchorX: 0.533, nativePx: 205, nativeCanvas: 256, pixelArt: true },
+  footlight_skitter: { src: '/sprites/footlight_skitter/footlight_skitter.png', icon: '/sprites/footlight_skitter/footlight_skitter_icon.png', aspect: 116 / 87, pxH: 87, anchorX: 0.509, nativePx: 87, nativeCanvas: 256, pixelArt: true },
   kael: { src: '/sprites/kael/kael.png', icon: '/sprites/kael/kael_icon.png', aspect: 113 / 92, pxH: 92, anchorX: 0.478, nativePx: 92, nativeCanvas: 128, pixelArt: true, idle: { src: '/sprites/kael/kael_idle.png', frames: 8, aspect: 1.212766, pxH: 94, anchorX: 0.482, restFill: 0.984043, footPad: 0.0 } },
   maxine: { src: '/sprites/maxine/maxine.png', icon: '/sprites/maxine/maxine_icon.png', aspect: 83 / 108, pxH: 108, anchorX: 0.602, nativePx: 108, nativeCanvas: 128, pixelArt: true, idle: { src: '/sprites/maxine/maxine_idle.png', frames: 8, aspect: 0.831776, pxH: 107, anchorX: 0.545, restFill: 0.953271, footPad: 0.0 } },
-  playbill_mimic: { src: '/sprites/playbill_mimic/playbill_mimic.png', icon: '/sprites/playbill_mimic/playbill_mimic_icon.png', aspect: 90 / 87, pxH: 87, anchorX: 0.517, nativePx: 87, nativeCanvas: 128, pixelArt: true },
+  playbill_mimic: { src: '/sprites/playbill_mimic/playbill_mimic.png', icon: '/sprites/playbill_mimic/playbill_mimic_icon.png', aspect: 92 / 89, pxH: 89, anchorX: 0.516, nativePx: 89, nativeCanvas: 256, pixelArt: true },
   rebar: { src: '/sprites/rebar/rebar.png', icon: '/sprites/rebar/rebar_icon.png', aspect: 106 / 82, pxH: 82, anchorX: 0.500, nativePx: 82, nativeCanvas: 128, pixelArt: true, idle: { src: '/sprites/rebar/rebar_idle.png', frames: 5, aspect: 1.247059, pxH: 85, anchorX: 0.5, restFill: 0.964706, footPad: 0.0 } },
-  understudy_blue: { src: '/sprites/understudy_blue/understudy_blue.png', icon: '/sprites/understudy_blue/understudy_blue_icon.png', aspect: 90 / 93, pxH: 93, anchorX: 0.367, nativePx: 93, nativeCanvas: 128, pixelArt: true },
-  understudy_green: { src: '/sprites/understudy_green/understudy_green.png', icon: '/sprites/understudy_green/understudy_green_icon.png', aspect: 91 / 94, pxH: 94, anchorX: 0.368, nativePx: 94, nativeCanvas: 128, pixelArt: true },
-  understudy_orange: { src: '/sprites/understudy_orange/understudy_orange.png', icon: '/sprites/understudy_orange/understudy_orange_icon.png', aspect: 90 / 95, pxH: 95, anchorX: 0.367, nativePx: 95, nativeCanvas: 128, pixelArt: true },
-  understudy_red: { src: '/sprites/understudy_red/understudy_red.png', icon: '/sprites/understudy_red/understudy_red_icon.png', aspect: 92 / 95, pxH: 95, anchorX: 0.364, nativePx: 95, nativeCanvas: 128, pixelArt: true },
-  understudy_yellow: { src: '/sprites/understudy_yellow/understudy_yellow.png', icon: '/sprites/understudy_yellow/understudy_yellow_icon.png', aspect: 91 / 95, pxH: 95, anchorX: 0.363, nativePx: 95, nativeCanvas: 128, pixelArt: true },
+  understudy_blue: { src: '/sprites/understudy_blue/understudy_blue.png', icon: '/sprites/understudy_blue/understudy_blue_icon.png', aspect: 92 / 95, pxH: 95, anchorX: 0.370, nativePx: 95, nativeCanvas: 256, pixelArt: true },
+  understudy_green: { src: '/sprites/understudy_green/understudy_green.png', icon: '/sprites/understudy_green/understudy_green_icon.png', aspect: 93 / 96, pxH: 96, anchorX: 0.371, nativePx: 96, nativeCanvas: 256, pixelArt: true },
+  understudy_orange: { src: '/sprites/understudy_orange/understudy_orange.png', icon: '/sprites/understudy_orange/understudy_orange_icon.png', aspect: 92 / 97, pxH: 97, anchorX: 0.370, nativePx: 97, nativeCanvas: 256, pixelArt: true },
+  understudy_red: { src: '/sprites/understudy_red/understudy_red.png', icon: '/sprites/understudy_red/understudy_red_icon.png', aspect: 94 / 97, pxH: 97, anchorX: 0.367, nativePx: 97, nativeCanvas: 256, pixelArt: true },
+  understudy_yellow: { src: '/sprites/understudy_yellow/understudy_yellow.png', icon: '/sprites/understudy_yellow/understudy_yellow_icon.png', aspect: 93 / 97, pxH: 97, anchorX: 0.366, nativePx: 97, nativeCanvas: 256, pixelArt: true },
+  veyra: { src: '/sprites/veyra/veyra.png', aspect: 240 / 320, pxH: 320, anchorX: 0.433, nativePx: 1170, nativeCanvas: 256, pixelArt: true, idle: { src: '/sprites/veyra/veyra_idle.png', frames: 8, aspect: 0.773109, pxH: 119, anchorX: 0.446, restFill: 0.978992, footPad: 0.0 } },
 };
 
 /** Every packed clip, for the dev animation lab. Battle uses `idle` above. */
@@ -63,14 +65,14 @@ export const ANIMATION_CLIPS: Record<string, Record<string, AnimationClip>> = {
   },
   "benjamin": {
     "idle": {
-      "anchorX": 0.496,
-      "aspect": 1.352941,
+      "anchorX": 0.504,
+      "aspect": 1.25,
       "footPad": 0.0,
-      "frames": 8,
+      "frames": 13,
       "loops": true,
       "normalised": 1.0,
-      "pxH": 85,
-      "restFill": 0.988235,
+      "pxH": 192,
+      "restFill": 0.984375,
       "src": "/sprites/benjamin/benjamin_idle.png"
     }
   },
@@ -85,6 +87,19 @@ export const ANIMATION_CLIPS: Record<string, Record<string, AnimationClip>> = {
       "pxH": 211,
       "restFill": 0.976303,
       "src": "/sprites/brax/brax_idle.png"
+    }
+  },
+  "caspian": {
+    "idle": {
+      "anchorX": 0.409,
+      "aspect": 1.083333,
+      "footPad": 0.0,
+      "frames": 6,
+      "loops": true,
+      "normalised": 1.0,
+      "pxH": 96,
+      "restFill": 0.973958,
+      "src": "/sprites/caspian/caspian_idle.png"
     }
   },
   "kael": {
@@ -124,6 +139,19 @@ export const ANIMATION_CLIPS: Record<string, Record<string, AnimationClip>> = {
       "pxH": 85,
       "restFill": 0.964706,
       "src": "/sprites/rebar/rebar_idle.png"
+    }
+  },
+  "veyra": {
+    "idle": {
+      "anchorX": 0.446,
+      "aspect": 0.773109,
+      "footPad": 0.0,
+      "frames": 8,
+      "loops": true,
+      "normalised": 1.0,
+      "pxH": 119,
+      "restFill": 0.978992,
+      "src": "/sprites/veyra/veyra_idle.png"
     }
   }
 };

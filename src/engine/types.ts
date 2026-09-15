@@ -42,7 +42,7 @@ export const ROLE_LABEL: Record<Role, string> = {
  * 3. Each character was re-assigned deliberately, not mapped.
  */
 export type Rarity = 3 | 4 | 5;
-export type AbilityKind = 'attack' | 'heal' | 'buff';
+export type AbilityKind = 'attack' | 'heal' | 'buff' | 'move';
 
 /**
  * What a hit is mitigated by.
@@ -63,23 +63,34 @@ export type AbilityKind = 'attack' | 'heal' | 'buff';
 export type DamageType = 'physical' | 'magical' | 'true';
 
 /**
- * Who an ability reaches. Three shapes, and deliberately only three.
+ * Who an ability reaches.
  *
- *   one    a single unit. `range` gates how deep into the enemy line it may be
- *          aimed; support always reaches any ally.
- *   self   the caster, and nothing else. No target to choose.
- *   all    every living unit on the affected side -- the whole enemy line for an
- *          attack, the whole party for a heal or buff. `range` does not apply.
+ *   one     a single unit. `range` gates how deep into the enemy line it may be
+ *           aimed; support always reaches any ally.
+ *   self    the caster, and nothing else. No target to choose.
+ *   all     every living unit on the affected side -- the whole enemy line for
+ *           an attack, the whole party for a heal or buff. `range` ignored.
+ *   column  everyone sharing the aimed slot's COLUMN -- one rank, front to back
+ *           being a different rank each time.
+ *   row     everyone sharing the aimed slot's ROW -- one file, cutting across
+ *           all three ranks.
+ *   slot    a SLOT rather than a unit, occupied or not, on the caster's own
+ *           side. Only repositioning uses it; see `REPOSITION`.
  *
- * This replaced a radius measured in formation slots, where an ability splashed
- * onto its target's NEIGHBOURS. That model asked the player to hold the enemy's
- * grid layout in their head to work out what a blast would catch, and the
- * geometry was fiddly to author against for what it gave back -- the formation
- * is three columns wide, so a radius of 2 already caught nearly everything and
- * the interesting middle ground barely existed. Single, self, or everyone reads
- * at a glance and needs no diagram.
+ * `row` and `column` are what make a 3x3 formation a decision instead of
+ * staging. They cut the grid along either axis, so the same five Performers
+ * catch one attack or three depending on how they are spread -- and the two
+ * axes pull against each other, because the columns that keep you out of an
+ * enemy's reach are also the columns a column-attack cuts through.
+ *
+ * All of this replaced a radius measured in formation slots, where an ability
+ * splashed onto its target's NEIGHBOURS. That asked the player to hold the grid
+ * in their head to work out what a blast would catch, and the geometry was
+ * fiddly to author against for what it gave back -- the formation is three
+ * columns wide, so a radius of 2 already caught nearly everything. A named line
+ * reads at a glance and needs no diagram.
  */
-export type TargetScope = 'one' | 'self' | 'all';
+export type TargetScope = 'one' | 'self' | 'all' | 'column' | 'row' | 'slot';
 
 /** Who one effect inside an ability lands on. */
 export type EffectTarget =
@@ -103,11 +114,47 @@ export type EffectTarget =
  */
 export type Effect =
   | { do: 'damage'; power: number; damageType?: DamageType; element?: Element; on?: EffectTarget }
-  | { do: 'heal'; power: number; on?: EffectTarget }
+  /**
+   * Restore HP, as a fraction of `of`.
+   *
+   *   attack  the caster's ATK -- the default, and what SUPPORT heals use. The
+   *           rule it enforces is that a healer's output is gated by the same
+   *           stat as their damage, so they cannot out-damage the blades.
+   *   maxHp   the RECIPIENT's own maximum -- for sustain rather than support.
+   *
+   * A tank's self-heal wants `maxHp` and the rule above does not apply to it:
+   * Rebar has the lowest ATK on the roster precisely BECAUSE he is a tank, so
+   * scaling his survival off it gates him on the stat he is deliberately worst
+   * at. `maxHp` also scales for free -- a percentage of a bar needs no damage
+   * constant and cannot go stale in a rescale.
+   */
+  | { do: 'heal'; power: number; of?: 'attack' | 'maxHp'; on?: EffectTarget }
   /** Add frost stacks, freezing if they reach the threshold. */
   | { do: 'frost'; stacks: number; on?: EffectTarget }
   /** Put the target to sleep until something damages them. */
   | { do: 'sleep'; on?: EffectTarget }
+  /**
+   * Grant `turns` regen CHARGES -- one heal each, spent at Start Turn.
+   *
+   * Named `turns` because that is what it reads as on a sheet, and charges are
+   * what make the reading true. See `Statuses.regen`.
+   */
+  | { do: 'regen'; turns: number; on?: EffectTarget }
+  /**
+   * Walk the CASTER to the slot the ability was aimed at, swapping with
+   * whoever is standing there.
+   *
+   * Absolute where `move` is relative, and the two coexist on purpose. A kit
+   * ability that shoves a line back a rank does not want the player picking
+   * destinations; a Performer choosing where to stand does, and a 3x3 board
+   * with four empty slots is exactly the case relative ranks cannot express.
+   * Pairs with `scope: 'slot'`, which is what makes an empty slot aimable.
+   *
+   * `on` defaults to `self` -- the caster walks. It is honoured rather than
+   * ignored so an ability could later pull an ALLY into the aimed slot, which
+   * is a real thing a guardian might do and costs nothing to leave open.
+   */
+  | { do: 'reposition'; on?: EffectTarget }
   /**
    * Shift the target one or more ranks.
    *
@@ -129,7 +176,12 @@ export type Effect =
       turns: number;
       on?: EffectTarget;
       /** See `Modifier.riposte`. Rides along onto the modifier this creates. */
-      riposte?: { damageType: DamageType; frost: number };
+      riposte?: {
+    damageType: DamageType;
+    /** A SECOND type it also answers. Set by a chain; see `guardAlso`. */
+    also?: DamageType;
+    frost: number;
+  };
     }
   | {
       /** Timed elemental resistance, in percentage points. Writes `resistMods`. */
@@ -202,6 +254,19 @@ export interface ChainTrigger {
    * -25 amplified by -10 becomes -35; writing +10 there would weaken it.
    */
   amplify?: number;
+  /** Added to the `power` of every `damage` effect. */
+  empower?: number;
+  /** Added to the `stacks` of every `frost` effect. */
+  deepen?: number;
+  /**
+   * Widen a riposte to answer this damage type as well as its own.
+   *
+   * A guard that only answers steel is a deliberate hole -- see Rebar, whose
+   * M.DEF is half his P.DEF on purpose -- so a chain that closes it for one
+   * round is exactly the shape a trigger should have: a conditional answer the
+   * team sets up, never a permanent one.
+   */
+  guardAlso?: DamageType;
 }
 
 export interface Ability {
@@ -399,6 +464,51 @@ export type Passive = {
    * `ladder` for how it grows.
    */
   | { kind: 'extraDie'; die: DieSpec; ladder?: DieSpec[] }
+  /**
+   * While this character stands, FROSTED ENEMIES HIT SOFTER: `percent` less
+   * damage per stack, capped at `max` stacks.
+   *
+   * The second passive that is not a number applied to its owner, and the first
+   * that reads the OTHER side. It is an aura on the party rather than a buff on
+   * the carrier, which is why `computeDamage` has to be told who is defending.
+   *
+   * It also answers something frost never had an answer for: below the freeze
+   * threshold, stacks did literally nothing. Two frost on a creature was worth
+   * exactly zero until it became three. This gives every stack a job on the way
+   * up, which is what makes applying frost worth a die even on a turn it cannot
+   * reach the bar.
+   */
+  | { kind: 'chill'; percent: number; max: number }
+  /**
+   * Takes `percent` less damage WHILE ASLEEP.
+   *
+   * Worth knowing what this is actually worth: any damage wakes a sleeper, and
+   * the blow is measured before the waking, so it halves exactly one hit. The
+   * value is in choosing WHICH hit -- Hibernate before a telegraphed swing and
+   * the reduction lands on it.
+   *
+   * Written as a condition on sleep rather than baked into Hibernate because
+   * sleep is a status like any other: the day something else puts him under,
+   * this pays there too.
+   */
+  | { kind: 'dormant'; percent: number }
+  /**
+   * Deepens whatever reactive guard this character is carrying.
+   *
+   * Keyed off `Modifier.riposte` rather than off an ability name -- the riposte
+   * exists precisely so that no code anywhere has to know the string "Frost
+   * Armor", and "while he is carrying a reactive guard" means the same thing
+   * while staying true of the next one he is given.
+   *
+   *   turns    a modifier that carries a riposte lasts this much longer
+   *   onHit    while carrying one, his own attacks apply this much frost
+   *   riposte  his riposte effects apply this much extra frost
+   *
+   * The `onHit` half is deliberately CONDITIONAL. Frost that flowed from every
+   * swing would make him a frost engine that never has to think; gating it on
+   * the guard being up means he has to spend the action to switch it on.
+   */
+  | { kind: 'rimeguard'; turns: number; onHit: number; riposte: number }
 );
 
 /**
@@ -671,7 +781,12 @@ export interface Modifier {
    * effect list -- because a general one needs an ability context to resolve
    * against and there is exactly one user.
    */
-  riposte?: { damageType: DamageType; frost: number };
+  riposte?: {
+    damageType: DamageType;
+    /** A SECOND type it also answers. Set by a chain; see `guardAlso`. */
+    also?: DamageType;
+    frost: number;
+  };
   /** Whose End Turn ticks this. */
   by: Side;
 }
@@ -689,6 +804,23 @@ export interface Modifier {
  */
 export const FREEZE_STEP = 3;
 
+/**
+ * Damage one frost stack deals when it lands on an ALREADY FROZEN target.
+ *
+ * Frost does not stack on the frozen: a creature that is already out of an
+ * action cannot be made more out of it, and letting stacks bank while it is
+ * helpless would mean freezing something is also the cheapest way to set up
+ * freezing it again. So the stacks SHATTER instead -- the cold has nowhere to
+ * go and comes out as damage.
+ *
+ * Four points per stack, flat and unmitigated -- a damage figure, so it moves
+ * with the damage scale rather than with a stat. It is not an attack: no ATK, no
+ * damage type, no element, so nothing about the attacker or the armour changes
+ * it. That also keeps it off the resistance wheel, which matters because the
+ * one creature whose whole identity is rotating immunity is also freezable.
+ */
+export const SHATTER_PER_STACK = 4;
+
 /** What the next freeze costs this unit. */
 export const freezeThreshold = (u: Unit): number => FREEZE_STEP * (u.statuses.freezes + 1);
 
@@ -702,11 +834,28 @@ export interface Statuses {
    * counter: Rebar builds it and spends it on control, and other Performers
    * are meant to read the same number and do something else with it.
    *
-   * Decays by one at the End Turn of the side that is not carrying it, so
-   * holding a target near the threshold costs upkeep instead of being a
-   * grenade banked on turn two and thrown on turn nine.
+   * Decays by one at the End Turn of the side that CARRIES it, so a stack
+   * always survives exactly one of the frosted unit's own turns and holding a
+   * target near the threshold costs upkeep instead of being a grenade banked on
+   * turn two and thrown on turn nine. One a round nets zero and cannot reach
+   * the bar alone -- it HOLDS a target one step in, which is a job a wildcard
+   * can usefully spend an otherwise dead die on. See `endTurn` in battle.ts.
    */
   frost: number;
+  /**
+   * Heals still owed, one spent per Start Turn. A COUNT, not a duration.
+   *
+   * "Regen for 2 turns" has to mean two heals, and a duration cannot promise
+   * that: a status applied mid-turn has already missed this turn's Start, so a
+   * 2-turn clock counted down at End Turn leaves exactly one tick. Counting
+   * CHARGES and spending one where it fires makes the number honest whenever it
+   * was applied -- the same shape `frozen` already uses for actions owed.
+   *
+   * `Statuses` are counters; `Modifier` is the thing with a duration. Keeping
+   * tick effects on this side of that line is what stops the two clocks (§6)
+   * from being conflated.
+   */
+  regen: number;
   /** How many times this unit has frozen. Sets the next threshold. */
   freezes: number;
   /**
@@ -727,7 +876,16 @@ export interface Statuses {
   asleep: boolean;
 }
 
-export const noStatuses = (): Statuses => ({ frost: 0, freezes: 0, frozen: 0, asleep: false });
+export const noStatuses = (): Statuses => ({
+  frost: 0,
+  regen: 0,
+  freezes: 0,
+  frozen: 0,
+  asleep: false,
+});
+
+/** Fraction of max HP one regen charge restores. */
+export const REGEN_PER_CHARGE = 0.1;
 
 /** Whether a status is stopping this unit from acting at all. */
 export const canAct = (u: Unit): boolean => u.statuses.frozen === 0 && !u.statuses.asleep;

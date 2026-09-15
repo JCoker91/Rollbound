@@ -54,7 +54,12 @@ import {
   describeEnemyUsage,
   describePassive,
 } from '../engine/describe.ts';
-import { columnRank, STANDARD_PARTY_SLOTS, type Slot } from '../engine/formation.ts';
+import {
+  columnRank,
+  PARTY_SLOTS_ALL,
+  STANDARD_PARTY_SLOTS,
+  type Slot,
+} from '../engine/formation.ts';
 import { actionLine, floaterClass, type Floater } from './narrate.ts';
 import {
   ROLE_LABEL,
@@ -66,10 +71,11 @@ import {
   type CharacterDef,
   type Element,
   type Pos,
+  type Side,
   type SpriteSheet,
   type Unit,
 } from '../engine/types.ts';
-import { Avatar, ElementIcon, themeOf } from './Avatar.tsx';
+import { Avatar, ElementIcon, SymbolIcon, themeOf } from './Avatar.tsx';
 import { crispCss } from './crisp.ts';
 import {
   clipAnimName,
@@ -360,6 +366,19 @@ export function BattleScreen({
   const targets = useMemo(() => {
     const out = new Set<string>();
     if (!sel.unit || !sel.ability || over) return out;
+    // A slot ability is aimed at SQUARES, not at bodies -- the empty ones are
+    // the whole point of it -- so its candidates are the board rather than the
+    // units standing on it.
+    if ((sel.ability.scope ?? 'one') === 'slot') {
+      for (const sl of PARTY_SLOTS_ALL) {
+        const at = { x: sl.col, y: sl.row };
+        if (canTarget(sel.ability, sel.unit, at, battle.units)) out.add(pk(at));
+      }
+      // Standing still is not a move; offering it as a target invites spending
+      // a die on nothing.
+      out.delete(pk(sel.unit.pos));
+      return out;
+    }
     const pool = livingOf(battle, sel.ability.kind === 'attack'
       ? (sel.unit.side === 'player' ? 'enemy' : 'player')
       : sel.unit.side);
@@ -368,7 +387,7 @@ export function BattleScreen({
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sel.unit, sel.ability, battle.turn, battle.phase, over]);
+  }, [sel.unit, sel.ability, battle.turn, battle.phase, over, battle.units.map((u) => pk(u.pos)).join()]);
 
   /** Who a shot aimed at the hovered slot would actually catch. */
   const splash = useMemo(() => {
@@ -563,6 +582,7 @@ export function BattleScreen({
         amount: Math.abs(c.delta),
         kind: c.delta < 0 ? ('damage' as const) : ('heal' as const),
         at: { ...c.unit.pos },
+        side: c.unit.side,
         element: hit?.element,
         crit: hit?.crit,
       };
@@ -624,11 +644,20 @@ export function BattleScreen({
    * built first and played out on commit, which is what makes the order the
    * player put things in a decision rather than a running commentary.
    */
-  function fireAt(target: Unit) {
-    if (!sel.unit || !sel.ability || busy || over) return;
-    if (!targets.has(pk(target.pos))) return;
+  const fireAt = (target: Unit) => aimAt(target.pos);
 
-    const err = planAction(battle, sel.unit, sel.ability, sel.dice, target.pos);
+  /**
+   * Queue the chosen ability at a POSITION.
+   *
+   * Taking a slot rather than a unit is what lets an empty square be a target.
+   * Every other ability reaches this through `fireAt` with the occupant's own
+   * position, so the two paths cannot disagree about what "aiming here" means.
+   */
+  function aimAt(at: Pos) {
+    if (!sel.unit || !sel.ability || busy || over) return;
+    if (!targets.has(pk(at))) return;
+
+    const err = planAction(battle, sel.unit, sel.ability, sel.dice, at);
     if (err) setError(err);
     else {
       // The unit stays selected; only the spent dice and the chosen ability go.
@@ -727,6 +756,24 @@ export function BattleScreen({
   // ------------------------------------------------------------------ derived
 
   /**
+   * The kit, and the board action, kept apart.
+   *
+   * `kind: 'move'` marks an ability the BOARD grants rather than the kit --
+   * `REPOSITION` is injected into every player character and authored on none
+   * of them. The sheet splits them for the same reason: four authored
+   * abilities is what a Performer is, and a universal action listed among them
+   * reads as a fifth thing they chose.
+   */
+  const kitAbilities = useMemo(
+    () => (sel.unit?.def.abilities ?? []).filter((a) => a.kind !== 'move'),
+    [sel.unit],
+  );
+  const boardAction = useMemo(
+    () => (sel.unit?.def.abilities ?? []).find((a) => a.kind === 'move'),
+    [sel.unit],
+  );
+
+  /**
    * The ability being aimed, when it is an attack that the element wheel
    * applies to.
    *
@@ -769,7 +816,52 @@ export function BattleScreen({
     <div className="game battle">
       <style>{IDLE_KEYFRAMES}</style>
       <div className="stage" style={{ backgroundImage: `url(${encounter.background})` }}>
-        <div className={`stage-frame ${sel.ability ? 'aiming' : ''}`}>
+        {/* `moving` is aiming-at-SLOTS, which needs the floor readable and
+            clickable in a way aiming at bodies does not. */}
+        <div
+          className={`stage-frame ${sel.ability ? 'aiming' : ''} ${
+            sel.ability && (sel.ability.scope ?? 'one') === 'slot' ? 'moving' : ''
+          }`}
+        >
+        {/*
+          Empty squares of the party's 3x3, drawn ONLY while a reposition is
+          being aimed.
+          
+          Permanently visible footprints would turn the stage into a board and
+          the backdrop is a painted theatre, not a battlemap -- and the four
+          gaps are ordinary scenery every other turn. They appear exactly when
+          they become clickable, which is also when the player needs to see the
+          shape of the grid they are moving inside.
+        */}
+        {sel.ability && (sel.ability.scope ?? 'one') === 'slot' &&
+          PARTY_SLOTS_ALL.filter(
+            (sl) => !battle.units.some((u) => alive(u) && u.side === 'player' && u.pos.x === sl.col && u.pos.y === sl.row),
+          ).map((sl) => {
+            const at = { x: sl.col, y: sl.row };
+            const key = pk(at);
+            if (!targets.has(key)) return null;
+            return (
+              <button
+                key={`slot-${key}`}
+                className="open-slot"
+                title={`Move ${sel.unit!.def.name} here`}
+                /*
+                  No `zIndex` here, deliberately. It was set inline the way a
+                  unit's is -- painter's order by depth -- and an inline style
+                  beats the stylesheet, so the `z-index: 250` meant to lift
+                  every footprint over every sprite never applied and they sat
+                  at 161-183, among the units. Depth ordering is wrong for these
+                  anyway: a footprint is a marker, not a body, and it has to be
+                  visible over whoever is standing in front of it.
+                */
+                style={{ left: `${sl.xPct * 100}%`, top: `${sl.yPct * 100}%` }}
+                onMouseEnter={() => setHover(at)}
+                onMouseLeave={() => setHover(null)}
+                onClick={() => aimAt(at)}
+              />
+            );
+          })}
+
         {battle.units.filter(alive).map((u) => {
           const slot = slotFor(u, encounter.partySlots, encounter.enemySlots, battle.units);
           if (!slot) return null;
@@ -833,7 +925,7 @@ export function BattleScreen({
         {battle.phase === 'player' &&
           livingOf(battle, 'enemy').map((u) => {
             if (!u.intent || u.pending) return null;
-            const slot = slotAt(u.pos, encounter);
+            const slot = slotAt(u.pos, 'enemy', encounter);
             if (!slot) return null;
             return (
               <span
@@ -858,19 +950,24 @@ export function BattleScreen({
             placed individually. Two badges anchored to the same point is two
             badges on top of each other the first time a ramping boss is also
             aimed at, and "usually they do not coincide" is not a layout. */}
-        {livingOf(battle, 'enemy').map((u) => {
-          const slot = slotAt(u.pos, encounter);
+        {battle.units.filter(alive).map((u) => {
+          const slot = slotAt(u.pos, u.side, encounter);
           if (!slot) return null;
-          const mult = rampMultiplier(u.def, battle.turn);
+          const enemy = u.side === 'enemy';
+          const mult = enemy ? rampMultiplier(u.def, battle.turn) : 1;
           // The matchup is aiming-time information: it answers "which of these
           // should I point this at", so it is shown only while there is
           // something to point, and only on the ones that can be reached.
           const aimed =
-            aiming && aiming.element && targets.has(pk(u.pos)) ? elementResistance(u, aiming.element) : null;
+            enemy && aiming && aiming.element && targets.has(pk(u.pos))
+              ? elementResistance(u, aiming.element)
+              : null;
+          const st = u.statuses;
           // `aimed` of 0 is a real answer -- neutral -- and it is the answer
           // that gets NO badge, so an empty marker column must not be left
           // behind for it.
-          const shows = mult > 1 || (aimed !== null && aimed !== 0);
+          const shows =
+            mult > 1 || (aimed !== null && aimed !== 0) || st.frost > 0 || st.frozen > 0 || st.asleep;
           if (!shows) return null;
           return (
             <span
@@ -901,12 +998,45 @@ export function BattleScreen({
                       : `${aimed < 0 ? '+' : '−'}${Math.abs(aimed)}%`}
                 </span>
               )}
+              {/*
+                Frost, on the creature. It was on the roster row only, which is
+                the one place it could not do its job: the design rests on the
+                count and the bar being visible so freezing is a decision made
+                BEFORE the dice are spent, and a number in a side panel is not
+                competing on equal terms with the intent die drawn at the
+                creature's feet.
+
+                On both sides, unlike everything above it. Nothing frosts the
+                party yet, but `frost` is a status like any other and a party
+                that could not see its own would be a bug waiting for the first
+                enemy that applies it. Sleep is already player-side today --
+                Rebar puts himself under.
+              */}
+              {st.frozen > 0 ? (
+                <span className="status-mark frozen" title={`${u.def.name} is frozen — loses its next action`}>
+                  ❄ frozen
+                </span>
+              ) : (
+                st.frost > 0 && (
+                  <span
+                    className="status-mark frost"
+                    title={`${u.def.name}: ${st.frost} frost of ${freezeThreshold(u)}. Reaching the bar freezes them, spends the stacks and raises it.`}
+                  >
+                    ❄ {st.frost}/{freezeThreshold(u)}
+                  </span>
+                )
+              )}
+              {st.asleep && (
+                <span className="status-mark asleep" title={`${u.def.name} is asleep — any damage wakes them`}>
+                  ☾ asleep
+                </span>
+              )}
             </span>
           );
         })}
 
         {floaters.map((f) => {
-          const slot = slotAt(f.at, encounter);
+          const slot = slotAt(f.at, f.side, encounter);
           if (!slot) return null;
           return (
             <span
@@ -1103,6 +1233,41 @@ export function BattleScreen({
               </button>
             ))}
 
+            {/*
+              REPOSITION is a chip beside the passive, not a fifth ability.
+              
+              Two reasons, and the layout one is the smaller. It is a rule of
+              the BOARD rather than a thing this kit chose -- every Performer
+              has it, none of them authored it -- so listing it among four
+              authored abilities said it was part of the kit, which is the one
+              thing it is not. And a five-row ability list did not fit the band,
+              so the panel scrolled: the fix and the correct structure happened
+              to be the same move.
+            */}
+            {boardAction && sel.unit.side === 'player' && (
+              <button
+                className={`board-chip ${sel.ability === boardAction ? 'on' : ''} ${
+                  matched.has(boardAction.name) ? 'ready' : ''
+                }`}
+                disabled={!canAct || !matched.has(boardAction.name)}
+                onClick={() => chooseAbility(boardAction)}
+                onMouseEnter={() => setPreview(boardAction)}
+                onMouseLeave={() => setPreview(null)}
+                onFocus={() => setPreview(boardAction)}
+                onBlur={() => setPreview(null)}
+                title={
+                  !canAct
+                    ? `${sel.unit.def.name} is not acting again this round`
+                    : matched.has(boardAction.name)
+                      ? 'Choose a slot to step into'
+                      : 'Select any single die'
+                }
+              >
+                <span className="tag">✳ move</span>
+                <strong>{boardAction.name}</strong>
+              </button>
+            )}
+
             </div>
 
             <div className="sheet-kit">
@@ -1144,7 +1309,7 @@ export function BattleScreen({
             */}
             {sel.unit.side === 'player' && (
               <ul className={`abilities ${canAct ? '' : 'inert'}`}>
-                {sel.unit.def.abilities.map((a) => {
+                {kitAbilities.map((a) => {
                   // Three states. `locked` is hopeless: no subset of this roll can
                   // pay for it. `ready` means the dice in hand cover it now.
                   // Plain-but-disabled is the middle -- payable, wrong dice.
@@ -1172,7 +1337,17 @@ export function BattleScreen({
                       >
                         <span className="cost">{a.wildcard ? '✳' : a.cost}</span>
                         <span className="body">
-                          <strong>{a.name}</strong>
+                          <strong>
+                            {a.name}
+                            {/* On the row itself, because "which two of these
+                                four chain together" is a question about the KIT
+                                and cannot be answered by hovering one of them. */}
+                            {a.symbol && (
+                              <em className={`sym ${a.trigger ? 'has-trigger' : ''}`} title={describeChain(a) ?? ''}>
+                                <SymbolIcon symbol={a.symbol} size={13} />
+                              </em>
+                            )}
+                          </strong>
                           <em>
                             {a.kind}
                             {a.kind === 'attack' ? ` · ${damageTypeOf(a)}` : ''} · {rangeLabel(a)}
@@ -1315,8 +1490,21 @@ export function BattleScreen({
                 <p>{describeAbility(shownAbility)}</p>
                 <p className="sub">{describeCost(shownAbility)}</p>
                 {describeElement(shownAbility) && <p className="sub">{describeElement(shownAbility)}</p>}
-                {describeChain(shownAbility) && (
-                  <p className="sub chain">{describeChain(shownAbility)}</p>
+                {/*
+                  The MARK, not a sentence about the mark. A symbol is pure
+                  identity -- it does nothing, it matches -- so the shape states
+                  the whole rule and the only text worth keeping is what THIS
+                  ability does differently when it chains.
+                */}
+                {shownAbility.symbol && (
+                  <p className="sub chain">
+                    <SymbolIcon symbol={shownAbility.symbol} />
+                    {shownAbility.trigger && (
+                      <span>
+                        <strong>Chained:</strong> {shownAbility.trigger.text}.
+                      </span>
+                    )}
+                  </p>
                 )}
               </div>
             ) : (
@@ -1381,7 +1569,7 @@ export function BattleScreen({
                         above that one turns the chain on. */}
                     {entry.ability?.symbol && (
                       <em className={`sym ${chained[i] ? 'on' : ''}`} title={describeChain(entry.ability) ?? ''}>
-                        {entry.ability.symbol}
+                        <SymbolIcon symbol={entry.ability.symbol} size={13} />
                       </em>
                     )}
                   </span>
@@ -1500,14 +1688,36 @@ export function BattleScreen({
   );
 }
 
-/** Which slot a unit is standing in, matched by its formation coordinates. */
-function slotFor(u: Unit, partySlots: Slot[], enemySlots: Slot[], _units: Unit[]): Slot | undefined {
-  const pool = u.side === 'player' ? partySlots : enemySlots;
+/**
+ * Which slot a unit is standing in, matched by its formation coordinates.
+ *
+ * The party is looked up in the WHOLE 3x3, never in the encounter's list.
+ * `encounter.partySlots` is a FILL order -- seven of the nine, the ones units
+ * deploy into -- so a Performer who repositioned into either of the other two
+ * found no slot and rendered as nothing. Two of the nine squares made you
+ * vanish, which is the sort of bug a fill list masquerading as a board causes.
+ */
+function slotFor(u: Unit, _partySlots: Slot[], enemySlots: Slot[], _units: Unit[]): Slot | undefined {
+  const pool = u.side === 'player' ? PARTY_SLOTS_ALL : enemySlots;
   return pool.find((s) => s.col === u.pos.x && s.row === u.pos.y);
 }
 
-function slotAt(p: Pos, enc: { partySlots: Slot[]; enemySlots: Slot[] }): Slot | undefined {
-  return [...enc.partySlots, ...enc.enemySlots].find((s) => s.col === p.x && s.row === p.y);
+/**
+ * Where a position is DRAWN -- which needs to know whose board it is on.
+ *
+ * `Pos` is not unique across the stage: the party occupies columns 0-2 and the
+ * enemy block 2-4, so **column 2 is both the party's front rank and the
+ * enemy's**. That overlap is fine for the rules, which only ever ask about one
+ * side at a time (`withinReach` computes the defender's side first), and it is
+ * exactly wrong for a renderer, which is asking "where on the stage".
+ *
+ * Searching the party first and taking the first match therefore drew every
+ * col-2 ENEMY at a party slot: the front two enemies' intent dice appeared
+ * under the front two Performers.
+ */
+function slotAt(p: Pos, side: Side, enc: { partySlots: Slot[]; enemySlots: Slot[] }): Slot | undefined {
+  const pool = side === 'player' ? PARTY_SLOTS_ALL : enc.enemySlots;
+  return pool.find((s) => s.col === p.x && s.row === p.y);
 }
 
 /** "front rank" / "2nd rank" -- where this unit sits in its own formation. */
@@ -1852,7 +2062,7 @@ function ForecastPanel({
     <div className="forecast">
       {hit.map((t) => {
         if (ability.kind === 'attack') {
-          const dmg = computeDamage(source, ability, t);
+          const dmg = computeDamage(source, ability, t, pool);
           const lethal = dmg >= t.hp;
           return (
             <div key={t.def.id} className={lethal ? 'line lethal' : 'line'}>
@@ -1865,7 +2075,13 @@ function ForecastPanel({
           // Was reading the ability's POWER -- a multiplier on ATK -- as if it
           // were an HP amount. At the old scale that printed a plausible number
           // and nobody caught it; at this one it printed "+0.63".
-          const amt = Math.min(computeHeal(source, ability), unitMaxHp(t) - t.hp);
+          // Reads the effect list when there is one, so the forecast is the number
+          // the engine will actually apply rather than a second guess at it.
+          const heal = (ability.effects ?? []).find((f) => f.do === 'heal');
+          const amt = Math.min(
+            heal ? computeHeal(source, heal.power, heal.of, t) : computeHeal(source, ability.power),
+            unitMaxHp(t) - t.hp,
+          );
           return (
             <div key={t.def.id} className="line heal">
               {t.def.name} <strong>+{amt}</strong>
@@ -1895,6 +2111,18 @@ function LogPanel({ battle, full = false }: { battle: BattleState; full?: boolea
         return `      +${e.amount} ${e.target}`;
       case 'buff':
         return `      +${stat(e.amount)} atk ${e.target}`;
+      case 'frost':
+        return `      ❄ ${e.target} ${e.stacks}/${e.threshold} frost`;
+      case 'freeze':
+        return `      ❄ ${e.target} FROZEN (spent ${e.spent}; next freeze costs ${e.nextThreshold})`;
+      case 'shatter':
+        return `      ❄ ${e.target} shatters — ${e.stacks} frost into ${e.amount} damage`;
+      case 'sleep':
+        return `      ☾ ${e.unit} sleeps`;
+      case 'wake':
+        return `      ☾ ${e.unit} wakes`;
+      case 'move':
+        return `      ${e.unit} steps to rank ${e.to.x}, row ${e.to.y}`;
       case 'ko':
         return `      ✖ ${e.unit} down`;
       case 'telegraph':

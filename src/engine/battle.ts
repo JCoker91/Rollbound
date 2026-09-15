@@ -15,7 +15,14 @@ import type {
   Side,
   Unit,
 } from './types.ts';
-import { alive, canAct, freezeThreshold, noStatuses } from './types.ts';
+import {
+  alive,
+  canAct,
+  freezeThreshold,
+  noStatuses,
+  REGEN_PER_CHARGE,
+  SHATTER_PER_STACK,
+} from './types.ts';
 import { Rng } from './rng.ts';
 import { applyLevel } from './levels.ts';
 import { bestPlan, type Action } from './allocate.ts';
@@ -42,6 +49,7 @@ import {
   CRIT_MULTIPLIER,
 } from './combat.ts';
 import { matchupLabel } from './elements.ts';
+import { REPOSITION } from './content.ts';
 import { samePos, slotPos, type EncounterDef, type Slot } from './formation.ts';
 import type { Pos } from './types.ts';
 
@@ -87,7 +95,10 @@ export type Event =
   | { t: 'expire'; unit: string; effect: string }
   | { t: 'frost'; target: string; stacks: number; threshold: number }
   | { t: 'freeze'; target: string; spent: number; nextThreshold: number }
+  /** Frost landing on something already frozen: it comes out as damage. */
+  | { t: 'shatter'; target: string; stacks: number; amount: number; hpAfter: number }
   | { t: 'sleep'; unit: string }
+  | { t: 'regen'; unit: string; charges: number }
   | { t: 'wake'; unit: string }
   | { t: 'move'; unit: string; from: Pos; to: Pos }
   | { t: 'ko'; unit: string }
@@ -181,8 +192,16 @@ export function createBattle(
 ): BattleState {
   // Deployed in order into the encounter's slots. More defs than slots would
   // stack them, so encounters are authored with enough room for their roster.
+  //
+  // Every PLAYER character gains `REPOSITION` here rather than on their sheet.
+  // It is a rule of the board, not a thing a kit chose, so authoring it per
+  // character would mean a new Performer could ship unable to move. Injected
+  // after levels and stars are folded in, so nothing can accidentally scale it.
   const mk = (defs: CharacterDef[], side: Side, slots: Slot[]): Unit[] =>
-    defs.map((def, i) => ({
+    defs.map((rawDef, i) => {
+      const def =
+        side === 'player' ? { ...rawDef, abilities: [...rawDef.abilities, REPOSITION] } : rawDef;
+      return {
       def,
       hp: def.maxHp,
       modifiers: [],
@@ -196,7 +215,8 @@ export function createBattle(
       resistMods: {},
       pending: null,
       intent: null,
-    }));
+      };
+    });
 
   // Enemies are levelled here rather than by the caller, so every entry point --
   // the battle screen, a headless resolve, a test -- fields the encounter at the
@@ -241,16 +261,24 @@ export function createBattle(
 function beginPhase(s: BattleState): void {
   for (const u of teamOf(s, s.phase)) {
     u.hasActed = false;
-    // Spend the freeze here for the player's side: there is no per-unit AI step
-    // to burn it in, and `checkAction` only refuses a plan -- something has to
-    // actually consume the lost action or a freeze would last forever.
-    if (u.side === 'player' && u.statuses.frozen > 0) {
-      u.statuses.frozen -= 1;
-      u.hasActed = true;
-    }
+    // A frozen or sleeping unit has already spent this phase's action on
+    // nothing. Marked here, but NOT consumed here -- see `endTurn`.
+    if (!canAct(u)) u.hasActed = true;
 
     for (const name of Object.keys(u.cooldowns)) {
       u.cooldowns[name] = Math.max(0, (u.cooldowns[name] ?? 0) - 1);
+    }
+
+    // A regen CHARGE, spent here. One heal per charge, whenever it was
+    // granted -- which is the whole reason it is a count and not a clock.
+    if (alive(u) && u.statuses.regen > 0) {
+      const cap = unitMaxHp(u);
+      u.statuses.regen -= 1;
+      const healed = Math.min(Math.max(1, Math.round(cap * REGEN_PER_CHARGE)), cap - u.hp);
+      if (healed > 0) {
+        u.hp += healed;
+        s.log.push({ t: 'heal', target: u.def.name, amount: healed, hpAfter: u.hp });
+      }
     }
 
     for (const p of u.def.passives ?? []) {
@@ -680,9 +708,15 @@ export function commitNext(s: BattleState): PlannedAction | null {
       return entry;
     }
 
-    // A single-target ability whose victim is already down does nothing. Whole-
-    // side abilities always have something to land on, so they never fizzle.
-    if ((ability.scope ?? 'one') !== 'all') {
+    // A single-target ability whose victim is already down does nothing.
+    //
+    // Only `one` fizzles. Everything else is aimed at something other than a
+    // body: `all` takes the whole side, `column` and `row` name a LINE that the
+    // aimed slot merely identifies, and `slot` is aimed at a square that is
+    // very often empty on purpose -- that is what repositioning is for. Fizzing
+    // those on an empty square would make a reposition into a gap the one move
+    // that can never work.
+    if ((ability.scope ?? 'one') === 'one') {
       const occupant = unitAt(s, target);
       if (!occupant) {
         s.log.push({
@@ -863,7 +897,7 @@ function applyEffects(
       case 'heal':
         for (const target of targets) {
           const amount = Math.min(
-            Math.round(unitAttack(source) * fx.power),
+            computeHeal(source, fx.power, fx.of, target),
             unitMaxHp(target) - target.hp,
           );
           if (amount <= 0) continue;
@@ -880,9 +914,27 @@ function applyEffects(
         for (const target of targets) putToSleep(s, target);
         break;
 
+      case 'regen':
+        // Refresh to the larger count rather than adding: two casts of the same
+        // thing should not quietly stack into a much longer one, which is the
+        // rule modifiers already follow for the same reason.
+        for (const target of targets) {
+          if (!alive(target)) continue;
+          target.statuses.regen = Math.max(target.statuses.regen, fx.turns);
+          s.log.push({ t: 'regen', unit: target.def.name, charges: target.statuses.regen });
+        }
+        break;
+
       case 'move':
         // Passed as a group so a line moves as a line; see `moveRanks`.
         moveRanks(s, targets, fx.ranks);
+        break;
+
+      case 'reposition':
+        // The aimed slot IS the destination, so there is nothing to search for
+        // and nothing that can fail: an occupied slot trades places, an empty
+        // one is simply walked into.
+        for (const target of targets) stepInto(s, target, centre);
         break;
 
       case 'resist':
@@ -906,7 +958,10 @@ function applyEffects(
               ability: ability.name,
               stat,
               amount: resolveModifierAmount(source, target, stat, fx.percent, fx.of),
-              turns: fx.turns,
+              // A reactive guard lasts longer for anyone carrying `rimeguard`.
+              // Only guards: a blanket extension would quietly stretch every
+              // shred and buff he applies, which is a different upgrade.
+              turns: fx.turns + (fx.riposte ? rimeguardOf(source).turns : 0),
               by: source.side,
               riposte: fx.riposte,
             });
@@ -941,11 +996,13 @@ function strike(
       }
     : ability;
 
-  const base = computeDamage(source, shot, target);
+  // The target's own side, because `chill` is an aura owned by a third unit.
+  const defenders = livingOf(s, target.side);
+  const base = computeDamage(source, shot, target, defenders);
   // Advance the defender's damage-reduction bank for the hit just measured.
   // `computeDamage` only ever PEEKS at it -- it is called by the forecast panel
   // and by the AI, neither of which may spend anything.
-  spendResilience(source, shot, target);
+  spendResilience(source, shot, target, defenders);
   // Rolled per TARGET, not per ability, so an AoE can crit on one victim and
   // not the next -- five numbers that all crit together would read as one big
   // number rather than five hits.
@@ -987,11 +1044,21 @@ function strike(
   if (dmg > 0 && alive(source)) {
     const fired = new Set<string>();
     for (const m of target.modifiers) {
-      if (!m.riposte || m.riposte.damageType !== damageTypeOf(shot)) continue;
+      if (!m.riposte) continue;
+      const type = damageTypeOf(shot);
+      if (m.riposte.damageType !== type && m.riposte.also !== type) continue;
       if (fired.has(m.ability)) continue;
       fired.add(m.ability);
-      addFrost(s, source, m.riposte.frost);
+      addFrost(s, source, m.riposte.frost + rimeguardOf(target).riposte);
     }
+  }
+
+  // While a guard of his own is up, his swings carry the cold too. Conditional
+  // on purpose -- frost flowing from every attack would make him a frost engine
+  // that never has to think, where this costs him the action to switch it on.
+  const rime = rimeguardOf(source);
+  if (dmg > 0 && rime.onHit > 0 && hasRiposte(source) && alive(target)) {
+    addFrost(s, source === target ? source : target, rime.onHit);
   }
 
   const reflected = thornsDamage(target, shot, dmg);
@@ -1054,6 +1121,24 @@ function triggeredEffects(ability: Ability, trigger: ChainTrigger): Effect[] {
     fx = fx.map((e) => (e.do === 'modify' ? { ...e, percent: e.percent + by } : e));
   }
 
+  // The same shape for the other two magnitudes: make what the ability already
+  // does bigger, rather than appending a second hit that reads as two events.
+  if (trigger.empower !== undefined) {
+    const by = trigger.empower;
+    fx = fx.map((e) => (e.do === 'damage' ? { ...e, power: e.power + by } : e));
+  }
+  if (trigger.deepen !== undefined) {
+    const by = trigger.deepen;
+    fx = fx.map((e) => (e.do === 'frost' ? { ...e, stacks: e.stacks + by } : e));
+  }
+  if (trigger.guardAlso) {
+    // ADDS a type rather than replacing one -- the guard still answers what it
+    // always did, and now answers this too. It rides on the same modifier, so
+    // it expires with the guard rather than outliving it.
+    const also = trigger.guardAlso;
+    fx = fx.map((e) => (e.do === 'modify' && e.riposte ? { ...e, riposte: { ...e.riposte, also } } : e));
+  }
+
   if (trigger.retarget) {
     // Only what was aimed at the ability's own target moves. An effect already
     // pinned to `self` stays on the caster -- a trigger that widened the reach
@@ -1086,7 +1171,7 @@ function applyAbility(
       break;
     }
     case 'heal': {
-      const healed = computeHeal(source, ability);
+      const healed = computeHeal(source, ability.power);
       for (const target of unitsHit(ability, centre, allies)) {
         const amount = Math.min(healed, unitMaxHp(target) - target.hp);
         if (amount <= 0) continue;
@@ -1132,16 +1217,51 @@ function applyAbility(
  * and third ability of the same plan.
  */
 function endTurn(s: BattleState, side: Side): void {
-  // Frost decays at the End Turn of the side that did NOT put it there, which
-  // is the applier's own turn. Upkeep, in other words: holding a target one
-  // stack below the bar costs a die every round instead of being a grenade
-  // banked early and thrown whenever it is most convenient.
+  // Frost decays at the End Turn of the side that CARRIES it, so a stack always
+  // survives exactly one of the frosted unit's own turns before melting.
   //
-  // Timing matters for the reactive case. A stack applied during the enemy's
-  // phase survives until the next player End Turn, so Frost Armor's
-  // contribution gets a full round to be built on rather than evaporating.
+  // It used to decay on the applier's End Turn instead, which ran the decay
+  // BEFORE the frosted side ever acted: `startEnemyPhase` ends the player's
+  // turn and then hands over, so frost the player applied was already one lower
+  // -- and a single stack was gone entirely -- by the time the enemy swung.
+  // That made any one-stack-per-round source literally inert, because a
+  // Performer acts once a round and the decay cancelled it exactly. Rimeguard's
+  // frost-on-Maul was applying and losing the same stack every round, and chill
+  // read a number the enemy no longer had.
+  //
+  // The rate is unchanged at one per round either way, so nothing about how
+  // fast frost accumulates moves: this only decides whether the stack is alive
+  // for the turn it was meant to affect.
+  //
+  // The cost is the reactive case. Frost a riposte puts on an attacker mid
+  // enemy phase now melts at the end of that same phase, so the player can no
+  // longer bank it and build on it next turn -- the attacker had already swung
+  // when it landed, so it gets its turn having done nothing. Reactive frost is
+  // therefore worth less than an equal number of proactive stacks, which is a
+  // real trade and the reason this comment names it rather than leaving it to
+  // be rediscovered.
   for (const u of s.units) {
-    if (u.side !== side && u.statuses.frost > 0) u.statuses.frost -= 1;
+    if (u.side === side && u.statuses.frost > 0) u.statuses.frost -= 1;
+  }
+
+  /*
+   * A freeze is consumed at the End Turn of the side that was frozen -- after
+   * the whole phase it denied, not the moment the unit is reached.
+   *
+   * It used to be burned in two places: `beginPhase` for the player and the AI
+   * step loop for enemies. Both worked, and both made the status invisible.
+   * Burning it per-unit meant the chips winked out one at a time as the enemy
+   * phase walked the line, so the one round where freezing a whole line is the
+   * most dramatic thing in the game showed almost nothing -- the player
+   * committed, and the enemies just quietly did less.
+   *
+   * Holding it to End Turn costs exactly the same action. The creature is
+   * frozen from the instant the stacks max out, stays frozen for the entire
+   * phase it is missing, and thaws when that phase is over. Same price,
+   * visible the whole way -- and symmetric, which the two old sites were not.
+   */
+  for (const u of s.units) {
+    if (u.side === side && u.statuses.frozen > 0) u.statuses.frozen -= 1;
   }
 
   for (const u of s.units) {
@@ -1188,6 +1308,26 @@ function applyModifier(s: BattleState, target: Unit, mod: Modifier): void {
 }
 
 /**
+ * What a unit's `rimeguard` upgrade is worth, summed across everything active.
+ *
+ * Returns zeroes when they have none, so every caller is an addition rather
+ * than a branch.
+ */
+function rimeguardOf(u: Unit): { turns: number; onHit: number; riposte: number } {
+  const out = { turns: 0, onHit: 0, riposte: 0 };
+  for (const p of activePassives(u)) {
+    if (p.kind !== 'rimeguard') continue;
+    out.turns += p.turns;
+    out.onHit += p.onHit;
+    out.riposte += p.riposte;
+  }
+  return out;
+}
+
+/** Is this unit currently carrying a reactive guard? */
+const hasRiposte = (u: Unit): boolean => u.modifiers.some((m) => m.riposte);
+
+/**
  * Add frost, and freeze if it reaches the bar.
  *
  * Reaching the threshold SPENDS the stacks and raises the next bar, which is
@@ -1196,6 +1336,20 @@ function applyModifier(s: BattleState, target: Unit, mod: Modifier): void {
  */
 function addFrost(s: BattleState, target: Unit, stacks: number): void {
   if (!alive(target) || stacks <= 0) return;
+
+  // ALREADY FROZEN: the stacks shatter instead of banking. See
+  // `SHATTER_PER_STACK` -- a creature that is already out of an action cannot
+  // be made more out of it, and letting frost accumulate on the helpless would
+  // make freezing something the cheapest way to set up freezing it again.
+  // Nothing is lost for spending frost into it; it just arrives as damage.
+  if (target.statuses.frozen > 0) {
+    const amount = stacks * SHATTER_PER_STACK;
+    target.hp = Math.max(0, target.hp - amount);
+    s.log.push({ t: 'shatter', target: target.def.name, stacks, amount, hpAfter: target.hp });
+    if (target.hp === 0) s.log.push({ t: 'ko', unit: target.def.name });
+    return;
+  }
+
   target.statuses.frost += stacks;
 
   const bar = freezeThreshold(target);
@@ -1227,6 +1381,25 @@ function putToSleep(s: BattleState, target: Unit): void {
   if (!alive(target) || target.statuses.asleep) return;
   target.statuses.asleep = true;
   s.log.push({ t: 'sleep', unit: target.def.name });
+}
+
+/**
+ * Walk one unit into a named slot, trading places with whoever is there.
+ *
+ * The swap is what makes this safe under commit-and-lock: a reposition queued
+ * behind another one can never find its destination taken and fizzle, which
+ * would be a silent loss of the die it was paid for. Every reposition resolves.
+ */
+function stepInto(s: BattleState, mover: Unit, to: Pos): void {
+  if (!alive(mover) || samePos(mover.pos, to)) return;
+  const from = { ...mover.pos };
+  const occupant = s.units.find((u) => u.side === mover.side && u !== mover && samePos(u.pos, to));
+  mover.pos = { ...to };
+  s.log.push({ t: 'move', unit: mover.def.name, from, to: { ...to } });
+  if (occupant) {
+    occupant.pos = from;
+    s.log.push({ t: 'move', unit: occupant.def.name, from: { ...to }, to: from });
+  }
 }
 
 /**
@@ -1375,13 +1548,12 @@ function nextDiceStep(s: BattleState, team: Unit[], foes: Unit[]): AiStep | null
  */
 function nextEnemyStep(s: BattleState, team: Unit[], foes: Unit[]): AiStep | null {
   for (const u of team) {
-    // A frozen or sleeping unit spends its action doing nothing, and that is
-    // where the freeze is consumed -- one action lost, then it is over. Done
-    // before the telegraph branch on purpose: freezing a caster mid-wind-up
-    // should delay the cast, not be ignored by it.
+    // A frozen or sleeping unit spends its action doing nothing. Done before
+    // the telegraph branch on purpose: freezing a caster mid-wind-up should
+    // delay the cast, not be ignored by it. The freeze is not consumed here --
+    // see `endTurn`.
     if (alive(u) && !u.hasActed && !canAct(u)) {
       u.hasActed = true;
-      if (u.statuses.frozen > 0) u.statuses.frozen -= 1;
       continue;
     }
     if (!alive(u) || u.hasActed || !u.pending) continue;

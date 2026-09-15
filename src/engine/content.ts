@@ -1,4 +1,5 @@
 import type {
+  Ability,
   CharacterDef,
   DieSpec,
   // Imported explicitly: unqualified `Element` resolves to the DOM global, and
@@ -214,6 +215,40 @@ const DRILL_DIE: DieSpec[] = [
  * stopgap: choosing the arrangement is the "party / lineup management" roadmap
  * item, and until that screen exists this list is the only way to say it.
  */
+/**
+ * REPOSITION -- every Performer's second free action.
+ *
+ * Not authored on any kit, and deliberately not authorable: it is injected into
+ * every player character in `createBattle`, so a new Performer cannot ship
+ * without it and nobody has to remember. The party is a 3x3 grid with four
+ * empty slots (see `PARTY_SLOTS_ALL`), and a grid you cannot move around is a
+ * seating chart.
+ *
+ * A WILDCARD, so it costs any single die and the Performer's action -- the same
+ * price as their basic attack. That is the whole design: moving is not free and
+ * not a separate resource, it is *the attack you did not make*. A universal
+ * free reposition would make formation a solved problem every turn; costing a
+ * die and an action makes it a trade against the thing the die was for.
+ *
+ * `scope: 'slot'` is what lets it be aimed at an EMPTY slot, which is the one
+ * thing `one`/`all` cannot express, and `do: 'reposition'` swaps with any
+ * occupant so the move can never fizzle under commit-and-lock.
+ *
+ * It carries no symbol. Repositioning should not arm a chain -- that would make
+ * the cheapest action in the game the best chain opener, and the arming
+ * decision is supposed to cost something.
+ */
+export const REPOSITION: Ability = {
+  name: 'Reposition',
+  cost: 0,
+  wildcard: true,
+  kind: 'move',
+  scope: 'slot',
+  range: 0,
+  power: 0,
+  effects: [{ do: 'reposition', on: 'self' }],
+};
+
 export const ROSTER: CharacterDef[] = [
   {
     id: 'benjamin', name: 'Benjamin', rarity: 3, role: 'blade',
@@ -222,7 +257,7 @@ export const ROSTER: CharacterDef[] = [
     // giving him a resistance profile he has no attacks to match would put half
     // an element back on him by the side door.
     resistances: {},
-    maxHp: 11, attack: 26, physicalDefense: 50, magicalDefense: 30,
+    maxHp: 44, attack: 104, physicalDefense: 50, magicalDefense: 30,
     sprite: sprite('benjamin'),
     /*
      * The Utility Vanguard. See BATTLE_DESIGN.md §8.
@@ -419,16 +454,47 @@ export const ROSTER: CharacterDef[] = [
      * deliberately soft -- he is the answer to a physical front-row attacker,
      * not to everything, which is the whole point of wanting a second tank.
      */
-    maxHp: 22, attack: 15, physicalDefense: 95, magicalDefense: 35,
+    maxHp: 88, attack: 60, physicalDefense: 95, magicalDefense: 35,
     // On all fours, so his sheet is as wide as it is tall and the anchor sits
     // dead centre between four paws -- unlike the humans, who stand off-centre
     // under an outstretched weapon.
     sprite: sprite('rebar'),
     // Tanking that helps on turns he is not the one being hit: a weaker
     // attacker is weaker against the whole party, not just against him.
-    passives: [{ name: 'Bristling Hide', kind: 'thorns', percent: 15 }],
+    /*
+     * WINTERHIDE -- frosted enemies hit softer, 4% per stack to a cap of five.
+     *
+     * It replaced `thorns 15`, which his second upgrade tier already said again
+     * at 30 -- his identity stated twice in the same number, which is the
+     * mismatch Benjamin had before Drillmaster.
+     *
+     * What makes it his: it is a DEFENSIVE payoff for an OFFENSIVE action, so
+     * the way he tanks is by spending dice on frost. Nothing else in his kit
+     * asks him to do anything he was not already doing, and the reward lands on
+     * the stat he is built around.
+     *
+     * IT ALSO GIVES FROST A JOB BELOW THE BAR. Sub-threshold stacks did
+     * literally nothing before -- two frost on a creature was worth exactly
+     * zero until it became three -- so applying frost on a turn that could not
+     * reach the threshold was a wasted die. Every stack now pays on the way up.
+     *
+     * The ceiling is reachable only AFTER the first freeze, and that is the
+     * whole curve: the bar starts at 3, so holding 5 stacks is impossible until
+     * freezing once raises it to 6. Before that he tops out at 2 stacks -> 8%;
+     * after it, 5 -> 20%.
+     *
+     * Deliberately NOT an intercept, a redirect or a cover. He is a wall, and
+     * his weakness is that he cannot put himself between an attack and an ally
+     * -- he is strong exactly as long as he is the one being hit. Winterhide
+     * softens the whole enemy line rather than shielding anyone, which keeps
+     * that weakness intact.
+     */
+    passives: [{ name: 'Winterhide', kind: 'chill', percent: 4, max: 5 }],
     abilities: [
       {
+        // A CARRIER with no trigger, deliberately. Every wildcard carries a
+        // symbol so no turn is ever dead for chaining, and a basic arming for
+        // somebody else is the cheapest possible way to pay into a chain.
         symbol: 'lantern', name: 'Maul', cost: 0, wildcard: true, kind: 'attack',
         damageType: 'physical', element: 'water', range: 1, power: 0.9,
         effects: [
@@ -445,9 +511,36 @@ export const ROSTER: CharacterDef[] = [
         // Cost 2 is a fragile 70.4% payable against 97.4% at six. That is on
         // purpose: a heal you reach for when you are hurt should not be a thing
         // you can plan around every turn.
-        symbol: 'thorn', name: 'Hibernate', cost: 2, kind: 'heal', range: 1, power: 0.9,
+        /*
+         * `scope: 'self'` is what makes it un-aimable at anybody else.
+         *
+         * Pinning the EFFECTS to `on: 'self'` was not enough: scope decides
+         * where an ability may be pointed, `on` decides where each effect
+         * lands, and the two disagreed. It offered every ally as a legal
+         * target, healed the caster whichever one you picked, and the short
+         * line under it read "heal · any ally".
+         */
+        symbol: 'thorn', name: 'Hibernate', cost: 2, kind: 'heal', scope: 'self', range: 1, power: 0.25,
+        // Two regen CHARGES, so "2 turns" is two heals whenever it lands. See
+        // `Statuses.regen` for why a duration could not promise that.
+        trigger: { text: 'also grants him regen for 2 turns', effects: [{ do: 'regen', turns: 2, on: 'self' }] },
         effects: [
-          { do: 'heal', power: 0.9, on: 'self' },
+          /*
+           * A QUARTER OF HIS OWN BAR, not a multiple of his ATK.
+           *
+           * Heals scale off ATK everywhere else, and the rule behind that is
+           * about SUPPORT: a healer's output gated by the same stat as their
+           * damage cannot out-damage the blades. It does not apply to a tank
+           * healing himself -- Rebar has the lowest ATK on the roster precisely
+           * because he is a tank, so scaling his survival off it gated him on
+           * the stat he is deliberately worst at.
+           *
+           * `maxHp` also rewards the investment he actually wants (Thick Pelt,
+           * Vigour) and is scale-free: a percentage of a bar needs no damage
+           * constant and cannot go stale in a rescale, which five constants in
+           * this codebase already have.
+           */
+          { do: 'heal', power: 0.25, of: 'maxHp', on: 'self' },
           { do: 'sleep', on: 'self' },
         ],
       },
@@ -455,7 +548,18 @@ export const ROSTER: CharacterDef[] = [
         // The tank you bring against a fire damage dealer. Parked on 6, the most
         // payable cost in the game, because a guard that arrives a turn late is
         // worth nothing.
-        symbol: 'thorn', name: 'Frost Armor', cost: 8, kind: 'buff', range: 1, power: 25,
+        // Self-only, and scoped that way rather than only pinned that way.
+        symbol: 'thorn', name: 'Frost Armor', cost: 8, kind: 'buff', scope: 'self', range: 1, power: 25,
+        /*
+         * The chain closes the hole he is built around.
+         *
+         * His M.DEF is 35 against P.DEF 95 on purpose -- he answers a physical
+         * front-row attacker, not everything, which is the whole reason to want
+         * a second tank beside him. A trigger that makes the guard answer magic
+         * too is a CONDITIONAL patch the team has to set up, never a permanent
+         * one, which is exactly the shape a trigger should have.
+         */
+        trigger: { text: 'the guard answers magic as well as steel', guardAlso: 'magical' },
         effects: [
           {
             do: 'modify', stats: ['physicalDefense', 'magicalDefense'],
@@ -467,22 +571,102 @@ export const ROSTER: CharacterDef[] = [
         ],
       },
       {
-        // Its value is the frost, not the damage -- he has the lowest attack on
-        // the roster, so a 3-dice nuke off it would be poor. What it buys is
-        // one stack on every enemy at once, advancing five freeze counters in a
-        // single action, which nothing else in the game can do.
+        /*
+         * THE FROST IS THE ABILITY. The damage is a rider.
+         *
+         * Three stacks on every enemy at once, which against a fresh line is
+         * the first freeze on all of them in one action -- and that is the
+         * intended reading, not an accident to be tuned away. He has the lowest
+         * ATK on the roster, so pricing this as a nuke was never going to work;
+         * pricing it as the only mass action-denial in the game does.
+         *
+         * IT GETS DEARER EXACTLY AS FAST AS IT SHOULD, because the threshold
+         * rises AND the stacks decay, and the two compound. Measured against
+         * one enemy, casting it every turn:
+         *
+         *   cast 1  ->  3/3   FREEZE, bar becomes 6
+         *   cast 2  ->  3/6   (decays to 2)
+         *   cast 3  ->  5/6   (decays to 4)
+         *   cast 4  ->  7/6   FREEZE, bar becomes 9
+         *   cast 7  ->        freeze #3
+         *
+         * So the first freeze is ONE cast and the second is FOUR -- 48 dice and
+         * four of his turns against 12 and one. Decay is what makes it worse
+         * than the bare 3/6/9 ratio suggests: every round between casts eats a
+         * stack, so the escalation is steeper than the threshold alone.
+         *
+         * That curve is the reason it can be this strong. Ultimate cooldowns
+         * are planned and will price it again; until then the escalation is
+         * doing the work on its own.
+         */
         symbol: 'lantern', name: 'Avalanche', cost: 12, kind: 'attack',
+        /*
+         * Half again as hard, and a fourth stack.
+         *
+         * He has the lowest ATK on the roster, so damage will never be the
+         * reason to cast it -- but 0.6 to 0.9 across five targets is a real
+         * number, and the fourth stack is the half that matters: against a bar
+         * of 6 it is the difference between being 3 short and being 2.
+         */
+        trigger: { text: 'strikes half again as hard and applies a fourth frost', empower: 0.3, deepen: 1 },
         damageType: 'magical', element: 'water', range: 3, scope: 'all', power: 0.6,
         effects: [
           { do: 'damage', power: 0.6 },
-          { do: 'frost', stacks: 1 },
+          { do: 'frost', stacks: 3 },
         ],
       },
     ],
+    /*
+     * IN-BATTLE UPGRADES -- switch it on, endure it, deepen it.
+     *
+     * They replaced `resilient 16 / thorns 30 / regen 8`, three generic numbers
+     * that said nothing about him -- and two of which his own star tree already
+     * restated at ★3 (`Sanctified Ward`, `Spiked Barding`).
+     *
+     * Every one of these leans on something he has to DO. Rimeguard is worth
+     * nothing until Frost Armor is up, Deep Sleep nothing until he Hibernates,
+     * Glacier nothing until frost is on the board. A tank's tiers should reward
+     * playing the tank rather than handing him a bigger number for standing
+     * still.
+     */
     upgrades: [
-      { name: 'Warded Plate', cost: 6, passive: { kind: 'resilient', percent: 16 } },
-      { name: 'Bristling Barding', cost: 8, passive: { kind: 'thorns', percent: 30 } },
-      { name: 'Ursine Endurance', cost: 12, passive: { kind: 'regen', percent: 8 } },
+      /*
+       * Cost 6, the most payable number on 5d6 (97.4%), so it is the tier he
+       * almost always reaches -- and the one that makes his guard worth the
+       * eight dice it costs. Five turns instead of three is most of the value;
+       * the frost is what turns a defensive turn into an offensive one.
+       *
+       * Keyed to the RIPOSTE rather than to "Frost Armor" by name. See the
+       * `rimeguard` passive: the riposte is the guard's mechanical signature,
+       * and naming abilities in engine code is how the chain mechanic avoided
+       * becoming a lookup table.
+       */
+      {
+        name: 'Rimeguard',
+        cost: 6,
+        passive: { kind: 'rimeguard', turns: 2, onHit: 1, riposte: 1 },
+      },
+      /*
+       * Halves exactly one hit -- any damage wakes a sleeper, and the blow is
+       * measured before the waking. The value is in choosing WHICH hit: sleep
+       * in front of a telegraphed swing and the reduction lands on it.
+       *
+       * Written as a condition on SLEEP rather than baked into Hibernate, so it
+       * still pays the day something else puts him under.
+       */
+      { name: 'Deep Sleep', cost: 8, passive: { kind: 'dormant', percent: 50 } },
+      /*
+       * Winterhide's ceiling, 5 stacks to 10 -- 20% to 40%.
+       *
+       * The capstone, and the most expensive because it is the strongest: it
+       * doubles the payoff of every stack he puts out, and at ten stacks a
+       * frosted line is hitting the whole party at 60% strength.
+       *
+       * Chill auras take the DEEPEST rather than summing (see
+       * `reductionPercent`), which is what makes this REPLACE the innate cap
+       * instead of piling on top of it for 60%.
+       */
+      { name: 'Glacier', cost: 12, passive: { kind: 'chill', percent: 4, max: 10 } },
     ],
     starTree: starTree(
       [
@@ -505,7 +689,7 @@ export const ROSTER: CharacterDef[] = [
     resistances: aligned('wind'),
     // Heavier and slower than the support he replaces: an axe bruiser who wants
     // to be in the middle of things, not circling the edges.
-    maxHp: 12, attack: 27, physicalDefense: 60, magicalDefense: 40,
+    maxHp: 48, attack: 108, physicalDefense: 60, magicalDefense: 40,
     sprite: sprite('kael'),
     // A bruiser who wants to be in the middle of it -- the reward for being
     // hurt is what makes walking in a plan rather than a mistake.
@@ -517,7 +701,7 @@ export const ROSTER: CharacterDef[] = [
       // still routes into the modifier list at the default duration. Benjamin's
       // Rally is the same idea rebuilt on `effects` -- this one is waiting its
       // turn in the roster redesign.
-      { symbol: 'crescent', name: 'War Cry', cost: 4, kind: 'buff', power: 7, element: 'wind', range: 2, scope: 'all' },
+      { symbol: 'crescent', name: 'War Cry', cost: 4, kind: 'buff', power: 28, element: 'wind', range: 2, scope: 'all' },
       { symbol: 'crescent', name: 'Tempest Fall', cost: 7, kind: 'attack', damageType: 'physical', power: 1.75, element: 'wind', range: 1, scope: 'all' },
     ],
     upgrades: [
@@ -551,7 +735,7 @@ export const ROSTER: CharacterDef[] = [
     // with the highest attack. Her whole defence is range: Glacial Lance reaches
     // 5, which is one tile further than the Fallen Seraph's Judgment, so she can
     // shell the boss from outside the only attack that threatens her.
-    maxHp: 9, attack: 27, physicalDefense: 20, magicalDefense: 40,
+    maxHp: 36, attack: 108, physicalDefense: 20, magicalDefense: 40,
     sprite: sprite('maxine'),
     // Nine HP behind the line, so the sustain has to come from the damage she
     // deals rather than from anyone spending a turn on her.
@@ -603,7 +787,7 @@ export const ROSTER: CharacterDef[] = [
     // Healing scales off ATK, so her attack stat is really her heal stat; it is
     // set low because everything she does keys off it at once, and a healer who
     // out-damages the blades is a design mistake, not a nice surprise.
-    maxHp: 9, attack: 18, physicalDefense: 30, magicalDefense: 40,
+    maxHp: 36, attack: 72, physicalDefense: 30, magicalDefense: 40,
     sprite: sprite('aethis'),
     // The healer mends without being asked, which is what lets her spend a
     // turn on somebody else.
@@ -666,7 +850,7 @@ export const ROSTER: CharacterDef[] = [
     // one wheel position. `aligned()` gives the familiar one-weak/one-strong
     // spread; spelling it out is what lets a dual-element unit exist at all.
     resistances: { ...aligned('earth'), ...aligned('fire') },
-    maxHp: 20, attack: 21, physicalDefense: 100, magicalDefense: 70,
+    maxHp: 80, attack: 84, physicalDefense: 100, magicalDefense: 70,
     sprite: sprite('brax'),
     // The wall. Flat reduction rather than thorns, so he holds a line he is
     // not the one attacking.
@@ -680,12 +864,23 @@ export const ROSTER: CharacterDef[] = [
       },
       {
         // Cost 5 (92.2% payable) for the ability he should almost always have.
-        name: 'Bulwark', cost: 5, kind: 'buff', range: 3, power: 20,
+        /*
+         * `scope: 'self'` aims it, and the effect is left on the default
+         * `target` rather than pinned to `self`.
+         *
+         * That difference is load-bearing here. `retarget` deliberately moves
+         * only effects aimed at the ability's own target and leaves anything
+         * pinned to `self` alone -- so with the effect pinned, the trigger
+         * fired, the log announced "guards the whole team", and exactly one
+         * unit was buffed. Scoped to self, `target` already means the caster,
+         * so the base case is unchanged and the trigger can widen it.
+         */
+        name: 'Bulwark', cost: 5, kind: 'buff', scope: 'self', range: 3, power: 20,
         symbol: 'anvil',
         trigger: { text: 'guards the whole team instead of himself', retarget: 'allies' },
         effects: [
           {
-            do: 'modify', on: 'self',
+            do: 'modify',
             stats: ['physicalDefense', 'magicalDefense'],
             percent: 30, of: 'targetBase', turns: 3,
           },
@@ -738,6 +933,66 @@ export const ROSTER: CharacterDef[] = [
       ],
     ),
   },
+  {
+    /*
+     * PLACEHOLDER KIT -- to be redesigned, like Brax's. The numbers and
+     * abilities exist so she can be fielded and tested, not because they are
+     * balanced.
+     *
+     * VEYRA -- the roster's second 5-star and its glass cannon. Highest ATK in
+     * the game on the thinnest physical guard: she answers a fight by ending it
+     * a turn sooner, and anything that reaches her wins.
+     *
+     * HER REAL IDENTITY IS NOT BUILT YET. She is meant to be the Performer with
+     * a ROTATING ELEMENTAL AFFINITY -- her element changes each round, revealed
+     * before the player plans, so she is the coverage answer to a boss that
+     * locks an element out. Nothing in the engine can say that today, so her
+     * abilities carry FIXED elements spread across the cycle as a stand-in.
+     * That is a placeholder, not a design: treat these four elements as
+     * scaffolding and replace them when the rotation exists.
+     *
+     * Unaligned `resistances`, and that part IS deliberate. She channels
+     * elements rather than being one -- the same reasoning that keeps Benjamin
+     * elementless and the False Lead's own attacks colourless. Giving a
+     * rotating caster a fixed weakness would answer the question her whole kit
+     * is supposed to ask.
+     */
+    id: 'veyra', name: 'Veyra', rarity: 5, role: 'staff',
+    resistances: {},
+    maxHp: 40, attack: 124, physicalDefense: 20, magicalDefense: 55,
+    // No `sprite`. Her art is a 1254px HQ render rather than a packed 256
+    // canvas, so the pipeline's metrics for her are nonsense (a stature of 9x
+    // everyone else) and she renders as her role badge until it is re-exported.
+    // See README, `art/` in `public/` out.
+    passives: [{ name: 'Unbound', kind: 'frenzy', percent: 25 }],
+    abilities: [
+      { symbol: 'crescent', name: 'Emberdart', cost: 0, wildcard: true, kind: 'attack', damageType: 'magical', power: 0.7, element: 'fire', range: 3 },
+      { symbol: 'crescent', name: 'Arcfall', cost: 3, kind: 'attack', damageType: 'magical', power: 1.1, element: 'lightning', range: 4 },
+      // Spiral is hers alone for now -- nobody else carries it, so it is the
+      // hook a future Performer chains into rather than a dead symbol.
+      { symbol: 'spiral', name: 'Tidebreak', cost: 9, kind: 'attack', damageType: 'magical', power: 1.3, element: 'water', range: 4, scope: 'all' },
+      { symbol: 'spiral', name: 'Gale Verdict', cost: 11, kind: 'attack', damageType: 'magical', power: 2.2, element: 'wind', range: 5, cooldown: 2 },
+    ],
+    upgrades: [
+      { name: 'Focus', cost: 6, passive: { kind: 'frenzy', percent: 25 } },
+      { name: 'Siphon', cost: 8, passive: { kind: 'lifesteal', percent: 15 } },
+      { name: 'Wardsilk', cost: 12, passive: { kind: 'resilient', percent: 20 } },
+    ],
+    starTree: starTree(
+      [
+        node('veyra-focus', 'Sharpened Focus', [{ kind: 'stat', stat: 'attack', percent: 10 }]),
+        node('veyra-silk', 'Warded Silks', [{ kind: 'stat', stat: 'maxHp', percent: 12 }]),
+      ],
+      [
+        node('veyra-siphon', 'Mana Siphon', [{ kind: 'passive', passive: { kind: 'lifesteal', percent: 12 } }]),
+        node('veyra-unbound', 'Unbound', [{ kind: 'passive', passive: { kind: 'frenzy', percent: 28 } }]),
+      ],
+      [
+        node('veyra-tide', 'Wider Break', [{ kind: 'ability', ability: 'Tidebreak', power: 0.3 }]),
+        node('veyra-verdict', 'Swift Verdict', [{ kind: 'ability', ability: 'Gale Verdict', cost: -1 }]),
+      ],
+    ),
+  },
 ];
 
 /**
@@ -762,7 +1017,7 @@ export const BESTIARY: CharacterDef[] = [
   {
     id: 'husk', icon: 'husk', name: 'Ash Husk', rarity: 3, role: 'blade',
     resistances: aligned('fire'),
-    maxHp: 7, attack: 19, physicalDefense: 30, magicalDefense: 30,
+    maxHp: 28, attack: 76, physicalDefense: 30, magicalDefense: 30,
     abilities: [
       { name: 'Claw', cost: 0, kind: 'attack', damageType: 'physical', power: 0.85, element: 'fire', range: 1, priority: 1 },
     ],
@@ -770,7 +1025,7 @@ export const BESTIARY: CharacterDef[] = [
   {
     id: 'wisp', icon: 'wisp', name: 'Bog Wisp', rarity: 3, role: 'bow',
     resistances: aligned('water'),
-    maxHp: 7, attack: 18, physicalDefense: 20, magicalDefense: 30,
+    maxHp: 28, attack: 72, physicalDefense: 20, magicalDefense: 30,
     abilities: [
       { name: 'Spit', cost: 0, kind: 'attack', damageType: 'magical', power: 0.9, element: 'water', range: 3, priority: 1 },
     ],
@@ -778,7 +1033,7 @@ export const BESTIARY: CharacterDef[] = [
   {
     id: 'golem', icon: 'golem', name: 'Crag Golem', rarity: 4, role: 'shield',
     resistances: aligned('earth'),
-    maxHp: 16, attack: 20, physicalDefense: 90, magicalDefense: 50,
+    maxHp: 64, attack: 80, physicalDefense: 90, magicalDefense: 50,
     abilities: [
       { name: 'Slam', cost: 0, kind: 'attack', damageType: 'physical', power: 1.0, element: 'earth', range: 1, priority: 1 },
     ],
@@ -790,7 +1045,7 @@ export const BESTIARY: CharacterDef[] = [
   {
     id: 'shade', icon: 'shade', name: 'Pale Shade', rarity: 3, role: 'dagger',
     resistances: aligned('dark'),
-    maxHp: 6, attack: 20, physicalDefense: 20, magicalDefense: 20,
+    maxHp: 24, attack: 80, physicalDefense: 20, magicalDefense: 20,
     abilities: [
       { name: 'Rend', cost: 0, kind: 'attack', damageType: 'physical', power: 0.95, element: 'dark', range: 1, priority: 1 },
     ],
@@ -799,7 +1054,7 @@ export const BESTIARY: CharacterDef[] = [
   {
     id: 'seraph', icon: 'seraph', name: 'Fallen Seraph', rarity: 5, role: 'staff',
     resistances: aligned('light'),
-    maxHp: 14, attack: 22, physicalDefense: 40, magicalDefense: 50, boss: true,
+    maxHp: 56, attack: 88, physicalDefense: 40, magicalDefense: 50, boss: true,
     abilities: [
       // Priority order decides the turn: Judgment whenever it is off cooldown,
       // Rebuke to punish anyone adjacent, Radiance as the filler.
@@ -907,8 +1162,8 @@ const understudy = ({ colour, element }: UnderstudyVariant): CharacterDef => {
     // it beats. The creature is not "a fire creature" -- it just resists like
     // one, and its abilities happen to deal that element too.
     resistances: aligned(element),
-    maxHp: 7,
-    attack: 19,
+    maxHp: 28,
+    attack: 76,
     // Soft to magic, armoured against steel -- so the party's blades and its
     // staves get visibly different results against the same creature, which is
     // the whole point of having two tracks.
@@ -950,8 +1205,8 @@ export const FALSE_LEAD: CharacterDef = {
   role: 'staff',
   icon: 'seraph',
   boss: true,
-  maxHp: 60,
-  attack: 26,
+  maxHp: 240,
+  attack: 104,
   physicalDefense: 50,
   magicalDefense: 50,
   // Nothing innate: every resistance it has is the rotation's doing, so the

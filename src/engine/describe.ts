@@ -23,11 +23,21 @@ function reachPhrase(a: Ability): string {
 function targetPhrase(a: Ability): string {
   const scope = a.scope ?? 'one';
   if (scope === 'self') return 'the caster';
+  if (scope === 'slot') return 'a slot in your own formation';
   if (a.kind !== 'attack') {
     // Support reaches any ally; depth never gates it.
-    return scope === 'all' ? 'the whole party' : 'one ally';
+    if (scope === 'all') return 'the whole party';
+    if (scope === 'column') return 'every ally in one rank';
+    if (scope === 'row') return 'every ally in one row';
+    return 'one ally';
   }
-  return scope === 'all' ? 'the entire enemy line' : `one enemy ${reachPhrase(a)}`;
+  if (scope === 'all') return 'the entire enemy line';
+  // Named by the line it cuts, not by the slot you point at. "Every enemy in
+  // one rank" is what the player has to arrange against; which slot was
+  // clicked to say so is an input detail.
+  if (scope === 'column') return `every enemy in one rank ${reachPhrase(a)}`;
+  if (scope === 'row') return `every enemy in one row ${reachPhrase(a)}`;
+  return `one enemy ${reachPhrase(a)}`;
 }
 
 const STAT_LABEL: Record<ModStat, string> = {
@@ -83,13 +93,24 @@ function describeEffect(a: Ability, fx: Effect, sameTargetAsPrevious: boolean): 
       return `deals ${pct(fx.power)} of ATK as ${kind} damage to ${name}`;
     }
     case 'heal':
-      return `restores ${pct(fx.power)} of ATK as HP to ${name}`;
+      // Says what the percentage is OF, because "90% of ATK" and "25% of max
+      // HP" are wildly different numbers and the sheet has both on it.
+      return fx.of === 'maxHp'
+        ? `heals ${name} for ${pct(fx.power)} of ${name === 'the caster' ? 'their' : 'its'} max HP`
+        : `restores ${pct(fx.power)} of ATK as HP to ${name}`;
     case 'frost':
       return `applies ${fx.stacks} frost to ${name}`;
+    case 'regen':
+      return `grants ${name} regen for ${fx.turns} turn${fx.turns === 1 ? '' : 's'}`;
     case 'sleep':
-      return `puts ${name} to sleep until damaged`;
+      // No explanation of what sleep DOES. A status is learned once, and
+      // restating the rule under every ability that applies it is the same
+      // waste the chain symbols were: the game has a word for it, so use it.
+      return `applies sleep to ${name}`;
     case 'move':
       return `moves ${name} ${Math.abs(fx.ranks)} rank${Math.abs(fx.ranks) === 1 ? '' : 's'} ${fx.ranks > 0 ? 'forward' : 'back'}`;
+    case 'reposition':
+      return 'steps into the chosen slot, trading places with whoever is there';
     case 'resist': {
       // A pronoun needs the possessive here, not the object form -- "raises
       // them Fire resistance" is what you get from reusing `name` directly.
@@ -111,9 +132,12 @@ function describeEffect(a: Ability, fx: Effect, sameTargetAsPrevious: boolean): 
       // The riposte rides on the modifier and is invisible to anyone reading
       // the effect list, so it has to be said here or the panel describes a
       // plain guard buff while the engine also frosts every attacker.
+      const types = fx.riposte
+        ? [fx.riposte.damageType, fx.riposte.also].filter(Boolean).join(' or ')
+        : '';
       const rider = fx.riposte
         ? `, and while it lasts anyone hitting ${who.it === 'its' ? 'it' : 'them'} with a ` +
-          `${fx.riposte.damageType} attack takes ${fx.riposte.frost} frost`
+          `${types} attack takes ${fx.riposte.frost} frost`
         : '';
       return (
         `${verb} ${whose} ${statList(fx.stats)} by ${size} of ${of} ` +
@@ -153,6 +177,8 @@ export function describeAbility(a: Ability): string {
       return `Deals ${pct(a.power)} of ATK as ${kind} damage to ${targetPhrase(a)}.`;
     case 'heal':
       return `Restores ${pct(a.power)} of ATK as HP to ${targetPhrase(a)}.`;
+    case 'move':
+      return `Steps into a chosen slot in your own formation, trading places with whoever is there.`;
     case 'buff': {
       const stat = a.stat === 'defense' ? 'DEF' : 'ATK';
       // A flat amount in STAT units, and stats are single digits now, so the
@@ -164,20 +190,20 @@ export function describeAbility(a: Ability): string {
 }
 
 /**
- * What this ability's symbol does, as one line.
+ * The word for what an ability does with its symbol, for a tooltip.
  *
- * Two sentences at most, because this sits under an ability in a list. The
- * distinction the wording has to carry is that carrying a symbol and having a
- * trigger are DIFFERENT things -- an ability with a symbol and no trigger only
- * ever helps somebody else, and a player who cannot see that will wonder why
- * their chain did nothing.
+ * The panel draws the MARK, not this -- see `SymbolIcon`. A symbol is pure
+ * identity: it does nothing, it matches, and two abilities showing the same
+ * shape chain. Spelling that out under every ability that carried one cost
+ * three lines to restate a rule the shape already states, and it restated it
+ * once per ability, forever.
+ *
+ * What survives as text is only the part the mark cannot say: what THIS
+ * ability does differently when it chains. Everything else is the icon.
  */
 export function describeChain(a: Ability): string | null {
   if (!a.symbol) return null;
-  const mark = cap(a.symbol);
-  return a.trigger
-    ? `${mark}. If ${mark} was already played this turn, ${a.trigger.text}.`
-    : `${mark}. Plays ${mark} for whoever acts after.`;
+  return a.trigger ? `${cap(a.symbol)} — chained: ${a.trigger.text}` : cap(a.symbol);
 }
 
 /** How this ability's element interacts with the matchup wheel. */
@@ -214,6 +240,20 @@ export function describePassive(p: Passive): string {
       return `Deals ${p.percent}% more damage while below half HP.`;
     case 'lifesteal':
       return `Recovers ${p.percent}% of the damage it deals as HP.`;
+    case 'chill':
+      return (
+        `While this Performer is standing, frosted enemies deal ${p.percent}% less damage per ` +
+        `frost stack, up to ${p.max} stacks — ${p.percent * p.max}% at full.`
+      );
+    case 'dormant':
+      return `Takes ${p.percent}% less damage while asleep.`;
+    case 'rimeguard': {
+      const bits = [];
+      if (p.turns) bits.push(`reactive guards last ${p.turns} turn${p.turns === 1 ? '' : 's'} longer`);
+      if (p.onHit) bits.push(`while one is up, attacks apply ${p.onHit} frost`);
+      if (p.riposte) bits.push(`and it applies ${p.riposte} extra frost when struck`);
+      return `${cap(bits.join(', '))}.`;
+    }
     case 'extraDie':
       // Says WHILE IT LIVES, because that is the whole counterplay: the pool is
       // rebuilt every turn from who is still standing, so the die goes the turn

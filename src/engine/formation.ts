@@ -143,14 +143,90 @@ const slot = (col: number, row: number, xPct: number, yPct: number): Slot => ({ 
  * formation is exactly the "choose which five perform, and in what order"
  * roadmap item -- the mechanic is here, the screen to drive it is not.
  */
+/*
+ * THE PARTY IS A 3x3 GRID -- nine slots for five Performers.
+ *
+ * Columns are rank, and always were: `withinReach` counts the defender's
+ * occupied columns, so column 2 is whoever the enemy's `range: 1` can touch.
+ * What is new is that ROWS are mechanical too -- `scope: 'row'` and
+ * `scope: 'column'` cut the grid along either axis, so how the party is spread
+ * across nine slots decides how much of it one attack catches.
+ *
+ * That is the whole reason to have a grid rather than three ranks. Before, `y`
+ * was pure staging: moving a Performer up or down changed nothing any rule
+ * could read, so a "grid" was a 3x1 with decorative stacking. Now the two axes
+ * ask different questions -- columns ask "who can reach me", rows ask "how many
+ * of us does this catch" -- and the tension between them is the formation
+ * puzzle. Bunch up to stay out of reach and one row-attack hits three of you.
+ *
+ * FOUR SLOTS ARE EMPTY, and they have to be: repositioning is a wildcard action
+ * every Performer has (see `REPOSITION`), and a full board is a rigid body with
+ * nowhere to go. Nine and five is what makes the grid navigable.
+ */
+export const PARTY_GRID_COLS = 3;
+export const PARTY_GRID_ROWS = 3;
+
+/*
+ * Nine draw positions. Rows are held between 0.57 and 0.83 of the stage:
+ * the painted floor ends around 0.88 where the footlights sit, and a slot on
+ * the lip puts a Performer half into the curtain. The old five-slot layout ran
+ * 0.61-0.84 for the same reason, and three rows have to fit in that band
+ * rather than widen it.
+ *
+ * `x` drifts left as `y` grows so each rank reads as a shallow arc rather than
+ * a column, which is what keeps the formation looking staged instead of
+ * tabulated.
+ */
+export const PARTY_SLOTS_ALL: Slot[] = [
+  // front (col 2) -- nearest the enemy line
+  slot(2, 0, 0.44, 0.57),
+  slot(2, 1, 0.42, 0.70),
+  slot(2, 2, 0.40, 0.83),
+  // middle
+  slot(1, 0, 0.30, 0.59),
+  slot(1, 1, 0.28, 0.72),
+  slot(1, 2, 0.26, 0.82),
+  // back
+  slot(0, 0, 0.16, 0.61),
+  slot(0, 1, 0.14, 0.73),
+  slot(0, 2, 0.12, 0.83),
+];
+
+/** One slot by grid coordinate, for the renderer's empty-slot markers. */
+export const partySlotAt = (col: number, row: number): Slot | undefined =>
+  PARTY_SLOTS_ALL.find((s) => s.col === col && s.row === row);
+
+/**
+ * Every slot a side's board has, occupied or not.
+ *
+ * The party's is the full 3x3 because a Performer can be repositioned into any
+ * of it. The enemy block is whatever the encounter deployed into and is not a
+ * grid -- enemies do not move, so nothing needs to name a slot they are not
+ * standing in. It is derived from the encounter rather than listed here for
+ * exactly that reason: a boss layout is a different shape from a corridor one.
+ */
+export const slotsOf = (side: Side): Slot[] => (side === 'player' ? PARTY_SLOTS_ALL : []);
+
+/*
+ * Listed in FILL order, not in reading order, because units take slots in the
+ * order they are supplied. The default spread is the middle row of all three
+ * ranks plus the two front corners -- a formation that is reasonable rather
+ * than optimal, since improving it is the player's job and a starting position
+ * with nothing wrong with it gives the mechanic nothing to do.
+ *
+ * Which Performer lands where is the party's own order, so arranging the
+ * formation is exactly the "choose which five perform, and in what order"
+ * roadmap item -- the mechanic is here, the screen to drive it is not. In
+ * battle they can now be moved instead, which is the stopgap for that screen.
+ */
 export const STANDARD_PARTY_SLOTS: Slot[] = [
-  slot(2, 0, 0.40, 0.66), // front
-  slot(2, 1, 0.38, 0.84), // front
-  slot(1, 0, 0.26, 0.61), // middle
-  slot(1, 1, 0.24, 0.78), // middle
-  slot(0, 0, 0.12, 0.66), // back
-  slot(0, 1, 0.10, 0.82), // back
-  slot(1, 2, 0.22, 0.93), // middle, for a seventh
+  partySlotAt(2, 1)!, // front, centre
+  partySlotAt(2, 0)!, // front, top
+  partySlotAt(1, 1)!, // middle, centre
+  partySlotAt(1, 2)!, // middle, bottom
+  partySlotAt(0, 1)!, // back, centre
+  partySlotAt(0, 0)!, // back, top
+  partySlotAt(0, 2)!, // back, bottom -- for a seventh
 ];
 
 /**

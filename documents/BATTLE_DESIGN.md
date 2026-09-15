@@ -297,6 +297,23 @@ Resolution is ordered (§2), and the chain reads forward:
 So a three-ability chain produces two triggers, and the arming ability gets nothing. **Ordering is
 strategy**: put the cheap symbol-carrier first and the payload later.
 
+### A symbol is a MARK, not a word — BUILT
+
+Symbols are the one piece of ability data that is *only* an identity: a symbol does nothing, it
+matches. So the UI draws the shape (`SymbolIcon`, all ten) and spends text only on what the shape
+cannot say.
+
+| | was | is |
+| --- | --- | --- |
+| carrier with a trigger | "Anvil. If Anvil was already played this turn, shreds 15% deeper." | ⚒ **Chained:** shreds 15% deeper. |
+| carrier without one | "Thorn. Plays Thorn for whoever acts after." | 🌿 |
+
+The prose restated the rule once per ability, on every kit, forever — and the rule it restated is
+the one a player learns once. The single real distinction it carried, **carrier versus trigger**, is
+now the chip's fill: filled gold means this ability does something extra when it chains, outlined
+means it only ever arms for somebody else. That makes "which two of these four chain, and which of
+them benefits" answerable from the kit list without hovering anything.
+
 ### The trigger belongs to the ability, not the symbol
 
 This is the most important structural decision in the mechanic. The effect that fires is authored on
@@ -528,7 +545,7 @@ threshold rises, and it loses its next action.
 | first freeze | 3 stacks |
 | second | 6 |
 | third | 9 |
-| decay | 1 per round, at the End Turn of the side that did *not* put it there |
+| decay | 1 per round, at the End Turn of the side that **carries** it |
 
 **Why the stacks are consumed.** Without consumption the rising bar is decorative: after freezing at
 3 you would still be holding 3, so the next freeze costs 3 more, and so does the one after. Spending
@@ -538,9 +555,26 @@ them is what makes 3 / 6 / 9 an escalation rather than three numbers.
 it whenever a boss announces something frightening. Decay turns it into upkeep, so a frost team has
 to keep paying to hold a target near the threshold.
 
-Decay also has a consequence worth authoring around: **one Performer applying one stack a turn nets
-zero.** Frost only accumulates if several are feeding it, or if abilities apply more than one. That
-is the composition goal enforcing itself, and it means application rates are the balance lever:
+**A stack survives exactly one of the carrier's own turns.** Decay runs at the End Turn of the side
+holding the frost, not the side that applied it. The earlier rule ran it on the *applier's* End Turn,
+which fired before the frosted side had acted at all — `startEnemyPhase` ends the player's turn and
+then hands over — so frost the player applied was already one lower, and a single stack gone
+entirely, by the time the enemy swung. Any one-stack-a-round source was therefore not weak but
+**inert**: a Performer acts once a round and the decay cancelled it exactly, so the stack never
+existed for anything to read. Rimeguard's frost-on-Maul was applying and losing the same stack every
+round, and chill read a number the enemy no longer had.
+
+The rate is one per round either way, so nothing about how fast frost accumulates changed. Only
+whether the stack is alive for the turn it was meant to affect.
+
+**One stack a round still nets zero — and that is a use, not a dead rider.** It cannot reach the
+bar alone, but it now *holds* the target at one stack indefinitely, which is real: chill reads it
+every enemy phase, and the target sits one step nearer the threshold for anyone else feeding it.
+That is precisely the job a **wildcard** is for. A wildcard's value is spending dice that would
+otherwise go unused, and converting a dead die into "the frost does not melt this round" is a
+specific, worthwhile function for one — maintenance rather than construction. Accumulation still
+needs more than one stack a round, or more than one Performer feeding it, which is the composition
+goal enforcing itself. Application rates remain the balance lever:
 
 | stacks applied per round | net | rounds to 1st freeze | to 2nd | to 3rd |
 | --- | --- | --- | --- | --- |
@@ -549,13 +583,48 @@ is the composition goal enforcing itself, and it means application rates are the
 
 Below about 3 a round, a frost team gets one freeze a fight and the escalation never matters.
 
+**Frost does not stack on the frozen — it SHATTERS.** Stacks landing on a creature that is already
+frozen bank nothing and deal **4 damage each** instead. A creature already out of an action cannot
+be made more out of it, and letting frost accumulate on the helpless would make freezing something
+the cheapest way to set up freezing it again. Nothing is lost by spending frost into it; it just
+arrives as damage.
+
+Flat and unmitigated, deliberately: no ATK, no damage type, no element, so nothing about the
+attacker or the armour changes it. That also keeps it off the resistance wheel, which matters
+because the one creature whose whole identity is rotating immunity is also freezable.
+
+> **It fires within one turn, not across turns.** A freeze denies the phase that follows it and
+> thaws at the end of that phase, so by the player's next turn the target is no longer frozen and
+> frost banks normally — which is what keeps the 3 → decay 2 → 5 escalation intact. Shattering needs
+> frost landing on an already-frozen target **inside one turn**: a second frost carrier, or a second
+> cast. With Rebar the only source today that is rare; it becomes the common case the moment anything
+> else applies frost.
+
 **Freeze costs an ACTION, not a turn**, and that one word is load-bearing. Frost applied during the
 player's turn cancels the enemy phase that follows, including a declared intent. Frost applied
 *reactively* — Rebar's Frost Armor, landing while a creature is mid-swing — has already missed this
 turn, so it takes the next one instead of being wasted. One rule, both directions, no special cases.
 
+> **Reactive frost is worth less than proactive frost, and knowingly so.** A riposte stack lands
+> mid-enemy-phase, after the attacker has already swung, and melts at the End Turn of that same
+> phase — so the player cannot bank it and build on it next turn. There is no single decay point
+> that serves both: the two application moments sit at opposite ends of the round. Fixing it
+> properly means aging each stack individually rather than ticking globally, which is not worth the
+> machinery until a second reactive source exists.
+
 A frozen creature **declares no intent**, so the empty slot where an intent would be is the payoff:
 the player sees the boss is out this round and spends the turn on something other than bracing.
+
+**The freeze is held for the whole phase it denies, and thaws at that phase's End Turn.** It used to
+be burned the moment the unit was reached — in `beginPhase` for the player, in the AI step loop for
+enemies — and both worked while making the status nearly invisible: the chips winked out one at a
+time as the enemy phase walked the line, so the single most dramatic thing in the game showed almost
+nothing. The creature is now frozen from the instant the stacks max out, stays frozen for the entire
+phase it is missing, and thaws when that phase is over.
+
+**Exactly the same cost.** One action denied either way; only the visibility changed. Measured, the
+frozen count over a round reads `0 → 5 → 0` as one block rather than counting down one by one, and
+the enemy line takes **zero** actions in that round.
 
 **Why uniform thresholds instead of per-enemy resistance.** A boss is as easy to freeze as a mob the
 first time and progressively harder after. That puts the escalation in the fight's *shape* rather
@@ -751,13 +820,50 @@ modifiers.
 | | cost | payable | effect |
 | --- | --- | --- | --- |
 | **Maul** | wildcard | — | Physical damage, **then** −10% of the target's ATK for 3 turns. |
-| **Hibernate** | 2 | 70.4% | Heal himself, **then** sleep until damaged. |
+| **Hibernate** | 2 | 70.4% | Heal himself **25% of his own max HP**, then sleep. |
 | **Frost Armor** | 8 | 91.8% | +25% to both defences and **+50 Fire resistance** for 3 turns; while it lasts, physical attackers take 1 frost. |
-| **Avalanche** | 12 | 89.9% | Magical ice damage to every enemy, **then** 1 frost to every enemy. |
+| **Avalanche** | 12 | 89.9% | Magical ice damage to every enemy, **then** **3 frost** to every enemy. |
 
-Stats: **HP 22, ATK 15, P.DEF 95, M.DEF 35.** The soft magical defence is deliberate — he is the
+Stats: **HP 88, ATK 60, P.DEF 95, M.DEF 35.** Passive: **Winterhide** (below). The soft magical defence is deliberate — he is the
 answer to a physical front-row attacker, not to everything, which is the whole reason to want a
 second tank alongside him.
+
+**Winterhide — his passive. Frosted enemies deal 4% less damage per stack, capped at five.**
+
+A *defensive* payoff for an *offensive* action: the way he tanks is by spending dice on frost, which
+is what he was already doing. It replaced `thorns 15`, which his own second upgrade tier already
+restated at 30 — his identity written twice in the same number.
+
+**It also gives frost a job below the bar.** Sub-threshold stacks used to do literally nothing: two
+frost on a creature was worth exactly zero until it became three, so applying frost on a turn that
+could not reach the threshold was a wasted die. Every stack now pays on the way up.
+
+**The ceiling is only reachable after the first freeze**, and that is the whole curve. The bar starts
+at 3, so holding five stacks is impossible until freezing once raises it to 6:
+
+| | max stacks holdable | reduction |
+| --- | --- | --- |
+| before the first freeze | 2 | 8% |
+| after it (bar 6) | 5 | **20%** |
+
+Measured delivery is **exactly 20.0%** at five stacks, 4.0% per stack on the way up, and the cap
+holds (six stacks also reads 20.0%). It briefly delivered only ~14% — the `max(1, …)` damage floor
+was eating the rest — which is what prompted the ×4 rescale of HP and ATK; at an average hit of 13
+rather than 2.8 the floor catches nothing and the number means what it says.
+
+It is **an aura, and the first passive that reads the other side** — `computeDamage` had to be told
+who is defending, because the reduction is owned by a third unit that is neither dealing nor taking
+the hit. Verified: with Rebar down, damage into the party returns to *precisely* the un-frosted
+baseline.
+
+**Deliberately not an intercept, a redirect or a cover.** He is a wall, and his weakness is that he
+cannot put himself between an attack and an ally — he is strong exactly as long as he is the one
+being hit. Winterhide softens the whole enemy line rather than shielding anyone, which keeps that
+weakness intact.
+
+> Note it does nothing for **Rebar himself**: at P.DEF 95 he is already taking the floor of 1 from
+> most things, and no percentage can bite into that. The passive is worth the most to the squishiest
+> Performer on the board, which is a pleasing inversion for a tank's passive.
 
 **Maul is the quiet best thing in the kit.** An ATK shred protects the entire party, not just him,
 and it works on turns he is not the one being hit. Tanking that helps while you are ignored is rarer
@@ -767,22 +873,127 @@ than tanking that helps while you are focused.
 job. Cost 2 is also, deliberately, one of the least reliable numbers on 5d6 (70.4% against 97.4% at
 six): a heal you reach for when you are hurt should not be something you can plan around every turn.
 
+**It heals off MAX HP, not ATK — the only heal in the game that does.** Every other heal scales off
+the caster's attack, and the rule behind that is about *support*: a healer whose output is gated by
+the same stat as their damage cannot out-damage the blades. That rule does not apply to a tank
+healing himself. Rebar has the lowest ATK on the roster **precisely because he is a tank**, so
+scaling his survival off it gated him on the stat he is deliberately worst at.
+
+`maxHp` also rewards the investment he actually wants (Thick Pelt, Vigour) and is **scale-free**: a
+percentage of a bar needs no damage constant and cannot go stale in a rescale. Measured, it is
+exactly 25% at levels 1, 20, 40 and 80.
+
+> **`do: 'heal'` now takes `of: 'attack' | 'maxHp'`**, defaulting to attack. A source selector rather
+> than a special case, mirroring how `modify` names what its percentage is a percentage of.
+
 **Frost Armor is the fight-specific button** — the tank you bring against a fire damage dealer, and
 dead weight against anyone else. That narrowness is the point; it is the FFBE texture where a fight
 demands a particular defensive answer rather than a generically bigger one. Ice resisting fire also
 lands on the existing wheel rather than fighting it, since water already beats fire.
 
 **Avalanche's value is the frost, not the damage.** He has the lowest ATK on the roster, so a
-3-dice nuke off it would be poor. What it buys is one stack on *every* enemy at once — five freeze
-counters advanced in a single action, which nothing else in the game can do.
+3-dice nuke off it would be poor. **Three stacks on every enemy at once** is the whole ability:
+against a fresh line that is the first freeze on all five in one action, and that is the intended
+reading rather than an accident to be tuned away. Pricing it as a nuke was never going to work;
+pricing it as the only mass action-denial in the game does.
+
+**It gets dearer exactly as fast as it should**, because the threshold rises *and* stacks decay, and
+the two compound. Measured against one enemy, casting it every turn:
+
+| cast | result |
+| --- | --- |
+| 1 | 3/3 → **FREEZE**, bar becomes 6 |
+| 2 | 3/6 (decays to 2) |
+| 3 | 5/6 (decays to 4) |
+| 4 | 7/6 → **FREEZE**, bar becomes 9 |
+| 7 | freeze #3 |
+
+**The first freeze is one cast; the second is four** — 48 dice-worth and four of his turns against 12
+and one. Decay is what makes it steeper than the bare 3/6/9 ratio suggests: every round between
+casts eats a stack. That curve is the reason it can be this strong, and ultimate cooldowns are
+planned to price it again on top.
 
 **Verified in isolation:** the ATK shred lands and is keyed to Maul; Frost Armor raises both
 defences and takes Fire resistance 25 → 75; frost accrues 1/3 → 2/3 → freeze, spending the stacks
 and moving the bar to 6; a frozen enemy declares no intent and loses exactly one action; Hibernate
 heals, sleeps, and refuses to be planned while asleep; damage wakes him.
 
-**What he still needs:** a chain trigger on one of his abilities, and enemies worth being a tank
-against — see §9.
+**In-battle upgrades — switch it on, endure it, deepen it.**
+
+| | cost | effect |
+| --- | --- | --- |
+| **Rimeguard** | 6 | Reactive guards last **2 turns longer**; while one is up his attacks apply **1 frost**, and the guard applies **1 extra** frost when struck. |
+| **Deep Sleep** | 8 | **50% less damage while asleep.** |
+| **Glacier** | 12 | Winterhide's cap rises **5 → 10 stacks**: 20% to **40%**. |
+
+They replaced `resilient 16 / thorns 30 / regen 8` — three generic numbers that said nothing about
+him, two of which his own star tree already restated at ★3.
+
+**Every one leans on something he has to DO.** Rimeguard is worth nothing until Frost Armor is up,
+Deep Sleep nothing until he Hibernates, Glacier nothing until frost is on the board. A tank's tiers
+should reward playing the tank rather than hand him a bigger number for standing still.
+
+Three implementation notes worth keeping:
+
+- **Rimeguard is keyed to the RIPOSTE, not to the name "Frost Armor".** `Modifier.riposte` exists
+  precisely so no code has to know that string, and *"while he is carrying a reactive guard"* means
+  the same thing today while staying true of the next guard he is given. The duration bonus applies
+  only to modifiers that carry a riposte, so it does not quietly stretch Maul's shred as well.
+- **The frost-on-hit half is conditional on purpose.** Frost flowing from every swing would make him
+  an engine that never has to think; gating it on the guard being up means he spends the action to
+  switch it on. Measured, the riposte hands out exactly double: **85 → 170 frost** over 40 enemy
+  phases.
+- **Glacier replaces the cap rather than stacking with it**, because chill auras take the DEEPEST
+  source rather than summing (`reductionPercent`). Summing would give 20% + 40% = 60% from one
+  character. Measured: 18% at five stacks with or without it, **36% at ten** with.
+
+> **Deep Sleep halves exactly one hit**, and that is the honest description. Any damage wakes a
+> sleeper and the blow is measured before the waking, so the value is in choosing WHICH hit —
+> Hibernate in front of a telegraphed swing and the reduction lands on it. It is written as a
+> condition on *sleep* rather than baked into Hibernate so it still pays the day something else puts
+> him under. Delivers 46% against a heavily-mitigated 4-damage hit; closer to 50 on bigger ones.
+
+**Chain triggers — one on each of the three, none on the basic.**
+
+| | symbol | trigger |
+| --- | --- | --- |
+| **Maul** | `lantern` | *none* — a carrier only |
+| **Hibernate** | `thorn` | also grants him **regen for 2 turns** |
+| **Frost Armor** | `thorn` | the guard **answers magic** as well as steel |
+| **Avalanche** | `lantern` | **half again as hard**, and a **fourth frost** |
+
+**Maul carries a symbol and no trigger on purpose.** Every wildcard should carry one, so that no
+turn is ever dead for chaining and a basic arming for somebody else is the cheapest possible way to
+pay into a chain.
+
+**Frost Armor's is the one that matters most.** His M.DEF is 35 against P.DEF 95 *by design* — he
+answers a physical front-row attacker, not everything, which is the whole reason to want a second
+tank beside him. The chain closes that hole for one round: a **conditional** answer the team sets
+up, never a permanent one. Measured: 6 frost from 60 magical hits unchained, **60 from 60** chained.
+
+> **He can never chain with himself.** One action per round, enforced by `isPlanned`, so every one
+> of these fires only when a *teammate* played the symbol earlier in the round. That is the
+> "completes other people's chains" role stated in mechanics rather than in prose:
+>
+> | symbol | armed by | completes |
+> | --- | --- | --- |
+> | `lantern` | Benjamin — Rally, Perfect Form | **Avalanche** |
+> | `thorn` | Aethis — Thornlash, Poultice | **Hibernate, Frost Armor** |
+
+**Regen is a COUNT, not a duration**, and Hibernate's trigger is why. A status applied mid-turn has
+already missed that turn's Start, so a 2-turn clock counted down at End Turn leaves exactly **one**
+tick — the number on the sheet would be lying. `Statuses.regen` holds *heals owed* and spends one
+where it fires, the same shape `frozen` already uses for actions owed, so "2 turns" is two heals
+whenever it lands. Verified: 2 charges, two heals of 9, then nothing.
+
+> That keeps the two clocks of §6 apart rather than conflating them: **`Modifier` is the thing with
+> a duration; `Statuses` are counters.** Tick effects belong on the counter side.
+
+`ChainTrigger` gained `empower` (damage power) and `deepen` (frost stacks) alongside the existing
+`amplify` (modifier percent) — three knobs of one shape, each making what the ability already does
+bigger rather than appending a second event that reads as two hits in the log.
+
+**What he still needs:** enemies worth being a tank against — see §9.
 
 ---
 
@@ -800,11 +1011,32 @@ against — see §9.
   shape this was built for.
 - **Bosses escalate, ordinary mobs do not.** A linear damage ramp past a grace period, shown on the
   creature (README §5.3). Mitigation is a fraction and scales with it; healing is flat and does not.
-- **Stats are in tenths of a damage point**, so a sheet reads whole numbers while a hit lands for 2
-  on a 12 HP bar (README §5.2).
+- **Armour is measured against the attacker: `ATK / (ATK + DEF)`, no constant.** Equal stats halve
+  the blow; DEF twice their ATK quarters it. That is what makes a defensive stat readable against an
+  offensive one, which a fixed anchor never did. It is also level-invariant *structurally* -- both
+  sides carry the same scale and it divides out -- where the anchor had to be fed `powerScale` to
+  fake the same property.
+- **Do not go subtractive.** `ATK × k − DEF` scales fine at equal levels and falls off a cliff at
+  unequal stats: measured on this roster, a tank with DEF 20 against an ATK 10 attacker takes
+  exactly **zero**, and no coefficient fixes both ends.
+- **Stats are in tenths of a damage point**, so a sheet reads whole numbers while a hit lands for 13
+  on a ~50 HP bar (README §5.2). **DEF cannot be moved onto a ~10 scale**: at DEF 4, a +12% star node
+  rounds to **nothing**, which is the exact bug the tenths scale was introduced to fix. Readability
+  had to come from the formula, not from smaller numbers.
+- **The damage floor is a fraction of the unmitigated blow** (5%), not a flat 1 -- equivalently, a
+  cap saying stacked mitigation may never absorb more than 95%. A flat floor is a scale-dependent
+  constant and stops meaning anything as levels climb; the fraction holds at any scale, which is what
+  keeps the weakest hit in the game a readable ~2.5% of a tank's HP rather than a rounding error.
+- **Any bare number compared against damage or a stat must move with `powerScale`.** Four have been
+  found by accident so far: `SHATTER_PER_STACK`, `scoreUpgrade`'s flat term, the legacy flat buff on
+  War Cry, and the damage floor itself. Prefer a fraction, a percentage, or a multiple of ATK. **The scale has a floor below which the design stops working**: at
+  ~12 HP the average hit was 2.8 and a quarter of all damage landed on the `max(1, …)` clamp, which
+  silently ate every percentage effect in the game. A percentage is only worth what the number it
+  multiplies can resolve.
 - **A percentage of a small integer has to be banked**, not rounded (`Unit.carry`). Regen, thorns,
-  lifesteal and resilient all do. Author new percentage effects the same way, or they will silently
-  do nothing.
+  lifesteal, resilient and `chill` all do. Author new percentage effects the same way, or they will
+  silently do nothing. Banking fixes the *cliff*; only a big enough scale fixes the *shortfall*, and
+  both were needed.
 - Commit-and-lock, no stop-and-rethink, no mid-turn reaction
 - Chain triggers are authored per ability, and read forward from the arming symbol
 - Every turn is Start / Resolve / End; the bookends are simultaneous for the whole side (§2)
@@ -813,9 +1045,23 @@ against — see §9.
 - Modifiers refresh within an ability and stack across abilities, resolved to a flat amount at
   cast time from a named source (§6)
 - Enemy intent is revealed each round; activation odds stay hidden
-- **Positioning is a team-building axis.** Three ranks a side; enemy `range` reads the party's
-  frontmost *occupied* rank, so hiding everyone in the back just makes the back the front. A tank
-  is valuable for standing somewhere before it has a single tank ability.
+- **Positioning is a team-building axis, and the party is a 3x3 grid.** Nine slots for five, with
+  BOTH axes mechanical: columns are rank (enemy `range` reads the party's frontmost *occupied* one,
+  so hiding everyone in the back just makes the back the front), and rows are what `scope: 'row'`
+  and `scope: 'column'` cut along. The two pull against each other -- the column that keeps you out
+  of reach is the column a column-attack cuts through -- and that tension is the formation puzzle.
+  A tank is valuable for standing somewhere before it has a single tank ability.
+- **Repositioning is a wildcard action everyone has**, not a kit ability: any single die plus the
+  Performer's action, the same price as their basic. Moving is *the attack you did not make*. It
+  swaps with any occupant so it can never fizzle under commit-and-lock, and it carries no symbol --
+  the cheapest action in the game must not also be the best chain opener.
+- **One step, orthogonally.** Centre slots offer four moves, edges three, corners two. Free
+  placement made the grid a menu -- anyone anywhere every turn, so the formation had no state worth
+  defending. The diagonal is excluded specifically: it crosses a rank AND a file for one die, which
+  changes both "who can reach me" and "what line catches me" at once.
+- **Enemies keep a fixed block and do not move.** Only the party is a grid. The two sides share one
+  positional *language* (`row` and `column` work on either) without sharing a layout, which is what
+  lets a boss encounter be a different shape from a corridor one.
 - **Frost stacks are a shared resource** (§6), not one character's counter. Rebar builds and spends
   them on control; other Performers are meant to read the same number and do something else with
   it — damage on freeze, or a shred per stack.
@@ -827,19 +1073,20 @@ against — see §9.
 1. **Enemy kits.** Every mechanic built recently needs enemies worth using it on. Mobs have one
    ability each; nothing checks a tank, nothing punishes a formation, nothing is worth freezing.
    This is now the bottleneck on *everything* — see §9's note on what front-row attacks are for.
-2. **Party / lineup management.** Positioning is implemented and unreachable: roster order is the
-   formation, and there is no screen to change it. Rebar stands in front because he was moved to
-   second in a list.
-3. **The remaining four kits** — Kael, Maxine, Aethis, Brax.
+2. **Party / lineup management.** In-battle repositioning covers the positional half now, so what
+   is left is the *pre-battle* screen: which five perform, and their starting arrangement. Rebar
+   stands in front because he was moved to second in a list.
+3. **The remaining four kits** — Kael, Maxine, Aethis, Brax. Two shapes exist now that did not when
+   they were written: a passive can change the **pool** rather than a stat (`extraDie`), and an
+   upgrade tier can grant any passive at all. Note their tiers' +10% stat bonus is genuine filler —
+   only Benjamin converts personal stats into team stats — so their passives have to carry them.
+4. **A chain trigger for Rebar**, which his own §8 entry lists as outstanding. He carries symbols
+   and benefits from none of them.
 
-**Still open:**
+**Smaller, and unordered:**
 
-- **Statuses proper** — paralyze, burn and friends. The last structural piece; modifiers already
-  share their clock (§6).
-- **The other five kits.** Two shapes exist now that did not when they were written: a passive can
-  change the *pool* rather than a stat, and an upgrade tier can grant any passive at all. Their
-  tiers' +10% stat bonus is genuine filler — only Benjamin converts personal stats into team stats
-  — so their passives have to carry them.
+- **More statuses** — paralyze, burn and friends. Frost, freeze and sleep are built and are the
+  shape to copy (§6); nothing structural is missing, so each new one is content.
 - Whether revealed intent can be disrupted (§5)
 - Whether action-denying statuses are deterministic or chance-based (§6 — a recommendation, not a
   decision)

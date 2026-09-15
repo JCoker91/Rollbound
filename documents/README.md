@@ -12,9 +12,10 @@ Companion documents:
 
 - **`BATTLE_DESIGN.md` — the battle system the game is being rebuilt towards. READ THIS FIRST if
   you are touching battle code.** Most of it is now implemented and §5 below describes the engine
-  as it actually stands; the two agree except where §5 says otherwise. **Symbols and chains are
-  built**; what is left is **statuses** (§6 there) and the four remaining kits.
-  `BATTLE_DESIGN.md` §8 holds the per-Performer kit specs; **Benjamin is the only one built.**
+  as it actually stands; the two agree except where §5 says otherwise. Chains, statuses, three-rank
+  positioning and the mutable dice pool are all **built**. `BATTLE_DESIGN.md` §8 holds the
+  per-Performer kit specs; **Benjamin and Rebar are built, four are not.** The bottleneck is now
+  **enemy kits** — nothing in the bestiary is worth using any of it on.
 - `STAGEBOUND_STORY_REFERENCE.md` — premise, tone, terminology, and the long-term mystery.
 - `SPRITE_STYLE_GUIDE.md` — the art standard every sprite is generated against. Non-negotiable
   for anything that ships.
@@ -262,11 +263,23 @@ list of names and one panel explains whatever is under the pointer. It sits with
 than with the upgrade tiers because it is not something you buy: it is true before any dice are
 spent, and it is the line that states what the Performer is *for*.
 
+**`Reposition` is a second chip below it, not a fifth ability.** It is a rule of the **board**
+rather than a thing this kit chose — every Performer has it and none of them authored it — so
+listing it among four authored abilities said it was part of the kit, which is the one thing it is
+not. It is also what made the sheet scroll: five rows did not fit the band, and the correct
+structure and the layout fix turned out to be the same move.
+
+It is shaped like the passive chip (both answer *"what is true of this Performer regardless of their
+kit"*) but coloured like an ability, because unlike the passive it is a thing you click and spend a
+die on. `kind: 'move'` is what separates the two lists, so a future board action lands beside it
+automatically rather than back in the kit. **Measured: zero overflow on every panel, for all five
+Performers and an enemy.**
+
 | | passive | |
 | --- | --- | --- |
 | Benjamin | **Drillmaster** | the party rolls an extra die while he stands — see below |
 | Kael | Second Wind | frenzy 20 — the reward for being hurt makes walking in a plan |
-| Rebar | Bristling Hide | thorns 15 — a guardian's intent stated as a threat |
+| Rebar | **Winterhide** | frosted enemies deal 4% less damage per stack, cap 5 — see below |
 | Maxine | Rime Siphon | lifesteal 10 — sustain from her own damage, not from a teammate's turn |
 | Aethis | Quiet Bloom | regen 4 — mends unasked, which frees her turn for somebody else |
 | Brax | Slagskin | resilient 10 — flat reduction, for a wall that is not the one attacking |
@@ -283,11 +296,10 @@ spent, and it is the line that states what the Performer is *for*.
 > other units is still unbuilt, and is still what the type would need to carry every intent — but it
 > settles the one character the gap was blocking, and it is the precedent for the next one.
 
-> **The passive list shows INNATE passives only.** `activePassives()` also returns the ones bought
-> upgrades granted — correct for the engine, wrong for this panel now that the tiers are all
-> visible. Rendering both printed every purchase twice under two different names: Aethis bought
-> *Herbalist* and grew a second entry called *regen* doing exactly the same thing. No Performer has
-> an innate passive today, so the list renders nothing for them and the tier list carries it alone.
+> **The panel shows INNATE passives only.** `activePassives()` also returns the ones bought upgrades
+> granted — correct for the engine, wrong for this panel now that the tiers are all visible.
+> Rendering both printed every purchase twice under two different names: Aethis bought *Herbalist*
+> and grew a second entry called *regen* doing exactly the same thing.
 - **Nothing overlays the stage**, so the cast stands on the floor the backdrop draws.
 
 Five arrangements of the controls were tried before this one, and each failure is worth not
@@ -412,7 +424,7 @@ src/
   web/
     App.tsx        Hub router, profile state, dev entry
     BattleScreen.tsx  The entire battle UI
-    Avatar.tsx     SVG role badges, creature glyphs, and ElementIcon
+    Avatar.tsx     SVG role badges, creature glyphs, ElementIcon, SymbolIcon
     Figure.tsx     Character renderer for menus
     clipAnimation.ts  Sprite-strip keyframe generation and clip geometry
     animationData.ts  Loads the authored art/actors/*/*.anim.json settings
@@ -531,10 +543,10 @@ replaced Kael sheet once kept the old aspect ratio in `content.ts` and rendered 
 
 ## 5. Systems
 
-> **The battle layer is mid-rebuild toward `BATTLE_DESIGN.md`.** The turn loop (§5.2) and enemy
-> intent (§5.3) are BUILT and current. Still to come: damage types with split defenses, status
-> effects, and symbols/chains — until those land, §5.4's upgrade tiers and the ability data model
-> are the older system and will move.
+> **The battle layer's MECHANICS are built; its CONTENT is not.** Everything in `BATTLE_DESIGN.md`
+> §2–§6 now exists — the turn loop, split defences and elements, symbols and chains, enemy intent,
+> timed modifiers, and frost/freeze/sleep. What is missing is things to use them on: four of six
+> kits are still placeholders and every enemy has one ability.
 >
 > The dice economy in §5.1 survives the rebuild unchanged; it is the game's identity and is
 > format-independent. §5.5–§5.7 (stars, levels, idle, summoning) are unaffected throughout.
@@ -643,23 +655,120 @@ Performer holds one slot unless an ability moves them.
 - **A tank is therefore valuable for standing somewhere**, before it has a single tank ability.
   That is why Rebar's kit assumes he is in the front rank and never mentions taunting.
 
-**Which Performer stands where is the party's own order** (`STANDARD_PARTY_SLOTS` is listed in fill
-order: front, front, middle, middle, back, back). So arranging the formation is exactly the "choose
-which five perform, and in what order" roadmap item — **the mechanic is built and the screen to
-drive it is not.** Rebar stands in front because he was moved to second in `ROSTER`, which is a
-stopgap and commented as one.
+#### The party is a 3×3 grid
 
-**Movement is an ability, not a universal action** — a `move` effect shifting whole ranks, priced
-at a wildcard die like a basic, so moving costs you the attack you did not make. One unit **swaps**
-with whoever is in the slot it wants; a group **shifts**, and anyone who cannot go stays. The two
-are different on purpose: swapping each member of a group in turn shuffles the formation instead of
-moving it.
+**Nine slots for five Performers**, and both axes are mechanical:
 
-> **A group move does nothing in a full party, and that is correct.** Six units in six slots is a
-> rigid body — every destination is occupied and the back rank has nothing behind it. Movement in a
-> packed formation is reorganisation, not translation, so the useful group shape is a **rank
-> exchange** rather than a shift. No kit uses `move` yet; design the semantics with the character
-> that needs it.
+| | asks | read by |
+| --- | --- | --- |
+| **column** (`x`) | *who can reach me* — rank, front to back | `withinReach` counts the defender's occupied columns |
+| **row** (`y`) | *how many of us does this catch* | `scope: 'column'` and `scope: 'row'` |
+
+That second one is what makes it a grid rather than staging. Before, `y` was decorative: moving a
+Performer up or down changed nothing any rule could read, so a "3×3" was a 3×1 with cosmetic
+stacking. **`row` and `column` scopes cut the formation along either axis**, so the same five
+Performers catch one attack or three depending on how they are spread — and the two axes pull
+against each other, because the column that keeps you out of an enemy's reach is also the column a
+column-attack cuts through.
+
+**Four slots are empty, and they have to be.** A full board is a rigid body with nowhere to go; nine
+and five is what makes the grid navigable. It is also why the old note that *"a group move does
+nothing in a full party"* stopped applying.
+
+**Repositioning is a wildcard action every Performer has** — `REPOSITION`, injected into every
+player character in `createBattle` rather than authored on a kit, so a new Performer cannot ship
+unable to move and nobody has to remember. On the sheet it is a chip in the identity block rather
+than a row in the kit list, for the same reason it is injected: it is the board's rule, not theirs. It costs **any single die and the Performer's action**,
+the same price as their basic attack, which is the whole design: moving is not free and not a
+separate resource, it is *the attack you did not make*. A universal free reposition would make
+formation a solved problem every turn.
+
+**One step at a time, orthogonally.** A reposition may only reach a slot at Manhattan distance 1 —
+never a diagonal — so where you stand decides how much the die you spend is worth:
+
+| from | moves available |
+| --- | --- |
+| centre | **4** |
+| edge | **3** |
+| corner | **2** |
+
+Free placement made the grid a menu: anyone could be anywhere every turn, so the formation had no
+state worth defending and no cost to being wrong. One step makes position something you hold or give
+up over several turns. **The diagonal is excluded because it is the one step that would undo that** —
+it crosses a rank and a file at once, changing both *who can reach me* and *what line catches me* for
+a single die.
+
+Two type-level pieces make it work, and both are narrow on purpose:
+
+- **`scope: 'slot'`** aims at a *square* rather than a unit, occupied or not. That is the one thing
+  `one`/`all` cannot express, and it is why the fizzle guard now checks `scope === 'one'` rather
+  than `!== 'all'` — an empty square is the point, not a failure.
+- **`do: 'reposition'`** walks the caster into the aimed slot, **swapping** with any occupant. The
+  swap is what makes it safe under commit-and-lock: a reposition queued behind another can never
+  find its destination taken and fizzle, which would be a silent loss of the die it was paid for.
+  Every reposition resolves.
+
+It carries **no symbol**, deliberately — arming a chain with the cheapest action in the game would
+make repositioning the best chain opener, and the arming decision is supposed to cost something.
+
+**Performers walk.** `.stage-slot` transitions `left` and `top` over 420ms, so a reposition is a
+figure crossing the stage and a swap is two of them passing each other — both animate off the same
+state change. It works because units are keyed by character id, so React keeps the DOM node to
+animate; unkeyed they would be torn down and rebuilt at the destination, which is a teleport.
+Slower than the 220ms lunge on purpose: a lunge is a jab that snaps back inside one action.
+
+**Aiming at slots needs the floor clickable, which is a different problem from aiming at bodies.**
+A `.stage-slot` is a box the height of its sprite, so a unit in a nearer row has a box covering the
+slots behind it — the click landed on a bystander's *transparent pixels*. The `moving` class (set
+when the aimed ability is `scope: 'slot'`) is what fixes it, and the load-bearing part is
+`pointer-events`, not paint order:
+
+| while `moving` | |
+| --- | --- |
+| bystanders | `pointer-events: none`, opacity 0.2 |
+| **the mover's own box** | `pointer-events: none`, opacity 0.72 |
+| swappable neighbours | clickable, **green** rim — a trade, not a hit |
+| footprints | `z-index: 250`, above every unit |
+
+The mover being click-through *and* semi-transparent is not belt-and-braces: rows are ~13% of the
+stage apart while a sprite is ~30% tall, so **the slot behind you is always somewhere on your own
+body**. The figure most likely to be covering the footprint you are trying to read is you.
+
+> **Two z-index traps, both silent.** The footprint carried an inline `zIndex` copied from the unit
+> pattern, and an inline style beats the stylesheet — so the `z-index: 250` meant to lift it over
+> every sprite never applied and footprints sat at 161–183, *among* the units. Depth ordering was
+> wrong for them anyway: a marker is not a body. And the green swap glow was written before the
+> `.aiming` rules at **equal specificity**, so order alone silently discarded it — the third time
+> that has happened in this file.
+
+> **A `Pos` does not say where on the stage something is.** The party occupies columns 0–2 and the
+> enemy block 2–4, so **column 2 is both the party's front rank and the enemy's** — a deliberate
+> overlap the rules are fine with, because every reach question is asked about one side at a time
+> (`withinReach` resolves the defender's side first). A *renderer* is asking a different question,
+> and `slotAt` searched the party first and took the first match: every col-2 enemy drew at a party
+> slot, so **the front two enemies' intent dice appeared under the front two Performers**. It takes
+> a `Side` now, and so does `Floater` — anything mapping a position to a drawing needs to know whose
+> board it is on.
+
+> **A fill list masquerading as a board cost two of the nine squares.** `slotFor` looked a unit up in
+> `encounter.partySlots` — which is a *fill order*, seven of the nine — so a Performer who
+> repositioned into either of the other two found no slot and **rendered as nothing**. It reads the
+> whole `PARTY_SLOTS_ALL` now. Anything that maps a position to a drawing must use the board, never
+> the deployment list.
+
+> The AI scores `kind: 'move'` at **zero**. It has no positional sense at all, and an auto-battler
+> that repositions at random is worse than one that never does. That is correct behaviour, not a gap.
+
+**The older relative `move` effect still exists** — `{ do: 'move', ranks }`, shifting whole ranks,
+with one unit swapping and a group *shifting* so a blocked line stays a line rather than shuffling.
+The two coexist on purpose: a kit ability that shoves a line back a rank does not want the player
+picking destinations, and a Performer choosing where to stand does. No kit uses it yet.
+
+**Which Performer starts where is the party's own order** (`STANDARD_PARTY_SLOTS` is a fill order
+drawn from the nine). The default spread is deliberately *reasonable rather than optimal* — a
+starting formation with nothing wrong with it gives the mechanic nothing to do. Rebar stands in
+front because he was moved to second in `ROSTER`, which is a stopgap and commented as one; in-battle
+repositioning is the interim answer to the missing lineup screen.
 
 **Slots carry two coordinate systems, deliberately kept apart:**
 
@@ -685,13 +794,20 @@ formation worth arranging: a boss behind two ranks of adds cannot be touched by 
 the adds are gone. Support abilities are exempt; the party is two columns deep and gating heals on
 depth would add fiddle without adding a decision.
 
-**Target scope is one of three shapes**, and deliberately only three:
+**Target scope:**
 
 | `scope` | reaches | `range` applies? |
 | --- | --- | --- |
 | `one` (default) | a single unit | yes, for attacks |
 | `self` | the caster, and nothing else | no |
 | `all` | every living unit on the affected side | no |
+| `column` | everyone sharing the aimed slot's column — one rank, front to back | yes |
+| `row` | everyone sharing the aimed slot's row — one file, across all ranks | yes |
+| `slot` | a *square* on the caster's own side, occupied or not | no |
+
+`column` and `row` are named by the **line** they cut, not by the slot pointed at — "every enemy in
+one rank" is what the player arranges against, and which square was clicked to say so is an input
+detail. `slot` exists for repositioning and nothing else.
 
 This replaced an `aoeRadius` measured in formation slots, where a blast splashed onto its target's
 *neighbours*. That asked the player to hold the enemy's grid layout in their head to work out what an
@@ -747,10 +863,19 @@ reads `range > 1` as its melee test.
   matchups. Lightning was added with the elemental Understudies and only moved one existing edge:
   earth used to beat water and now grounds lightning, with lightning conducting into water. Both
   read without explanation, which is the test a matchup wheel has to pass.
-- **The stat scale is small on purpose.** A level-1 Performer has about **12 HP**; the average hit
-  across a whole battle is **2.8**, so it takes ~4.6 of them to drop a Performer and 2.5 to drop an
-  Understudy. Basics land for 1–2, ultimates for 4–7. An HP bar the player can count is worth more than one reading
-  780, and −3 of 11 registers as an event in a way −53 of 780 never did. Two things carried the old
+- **The stat scale is small, but not so small that rounding eats it.** A level-1 Performer has about
+  **50 HP** (the five 3★ starters average exactly that); the average hit across a battle is **13**,
+  so it takes ~4 of them to drop a Performer. Basics land for 4–9, ultimates for 10–27. An HP bar
+  the player can count is worth more than one reading 780, and −15 of 44 registers as an event in a
+  way −53 of 780 never did.
+
+  > **It was ~12 HP first, and that was too small.** At an average hit of 2.8, **27% of all damage
+  > landed on the `max(1, …)` floor** — so every percentage effect in the game was being partly
+  > discarded, and `resilient 10%` delivered 1.3%. Multiplying HP and ATK by four (DEF untouched —
+  > mitigation is a pure ratio and already scale-free) moved the average hit to 13 and dropped
+  > floor-hits to **0.0%**. Every percentage now delivers what it claims, exactly.
+
+  Two things carried the old
   balance across the change: `DEF` and `MITIGATION_ANCHOR` were divided by the **same** number, so
   every mitigation percentage is exactly what it was; and everything scaling off ATK — damage,
   heals, lifesteal, thorns — moved together, so their ratios held. Heal powers were then trimmed
@@ -780,17 +905,18 @@ reads `range > 1` as its melee test.
   Re-tuning could not have fixed it: 3 is the modal hit and `3 × 0.85` rounds back to 3, so a single
   point of resilience flips 37% of all damage at once — a cliff, not a curve.
 
-  | stated | was | now |
-  | --- | --- | --- |
-  | 8% | 0.7% | 5.4% |
-  | 10% | 1.3% | 6.7% |
-  | 15% | 7.8% | 10.0% |
-  | 18% | 21.3% | 12.1% |
-  | 30% | 27.9% | 20.0% |
+  | stated | at ~12 HP, unbanked | at ~12 HP, banked | at ~50 HP |
+  | --- | --- | --- | --- |
+  | 8% | 0.7% | 5.4% | **8.0%** |
+  | 10% | 1.3% | 6.7% | **10.0%** |
+  | 15% | 7.8% | 10.0% | **15.0%** |
+  | 18% | 21.3% | 12.1% | **18.0%** |
+  | 30% | 27.9% | 20.0% | **29.9%** |
 
-  Smooth and monotonic now. It under-delivers by a predictable third because **27% of hits are
-  already 1** and the `max(1, …)` floor will not take one to zero — that is correct ("you always
-  take at least 1") and, unlike the old behaviour, consistent. Author against the right column.
+  **Banking fixed the cliff; the scale fixed the shortfall.** Both were needed and both are still
+  needed — banking is what makes a percentage exact rather than lumpy, and it is still doing work on
+  regen, thorns, lifesteal and `chill`. Author against the right-hand column: numbers now mean what
+  they say.
 
   > Split into `peekResilience` and `spendResilience` because **`computeDamage` has to stay pure**:
   > the forecast panel calls it to show what a hit *would* do and the AI calls it dozens of times a
@@ -806,24 +932,40 @@ reads `range > 1` as its melee test.
   10 a turn, applied to both defence tracks at once — could not express a duration, could not tell
   two sources apart, and could not name a track. See **§5.2b** for the stacking and percentage
   rules, which are the part with teeth.
-- **Damage**: `ATK × power × (K / (K + DEF)) × elementResist`, then passive modifiers — where `DEF`
-  is the track matching the ability's **damage type**, including any modifiers on it.
+- **Damage**: `ATK × power × (ATK / (ATK + DEF)) × elementResist`, then passive modifiers — where
+  `DEF` is the track matching the ability's **damage type**, including any modifiers on it.
+- **Armour is measured against the ATTACKER. There is no mitigation constant.**
+
+  | | lands | effective HP |
+  | --- | --- | --- |
+  | DEF = 0 | 100% | ×1.0 |
+  | DEF = half their ATK | 67% | ×1.5 |
+  | **DEF = their ATK** | **50%** | **×2.0** |
+  | DEF = twice their ATK | 33% | ×3.0 |
+
+  **Equal stats halve the blow.** That is the whole reason this replaced a fixed `MITIGATION_ANCHOR`
+  of 100: `DEF 50` meant nothing against `ATK 104` — the two were the same size by coincidence and
+  unrelated by construction, so nothing on a sheet told a player what a point of armour was worth.
+  Now DEF is read against the ATK opposite it.
 - **Mitigation is a ratio, not a subtraction.** `K / (K + DEF)` has diminishing returns, never goes
   negative, never reaches immunity, and buys a constant slice of effective HP per point.
   Subtractive `ATK − DEF` has none of those: it needs clamping at zero, creates hard thresholds
   where an attacker flips from useful to useless, and makes many small hits worthless against
   armour.
-- **`K` is anchored to the ATTACKER's `powerScale`, and that is the whole trick.** With a fixed
-  `K` the formula quietly expires: stats grow with level but the constant does not, so
-  mitigation drifted 0.69 → 0.24 between level 1 and 80 and the *same* fight stretched from 7.5
-  hits to 22. Scaling `K` with the attacker holds an even fight at a constant length —
-  **9.4 hits at level 1 and at level 80** — and because `DEF` still carries the defender's scale, a
-  level gap falls out of the same expression for free.
+- **Level-invariance is structural, not a trick.** Both sides of `ATK / (ATK + DEF)` carry the same
+  level scale, so it divides out: **mitigation measures 0.722 at levels 1, 20, 40 and 80**, and a
+  fight is 4.7 hits at every one of them. The previous form needed `powerScale` threaded into the
+  damage formula to cancel the defender's growth — one more thing that could go stale, and it is
+  gone. `powerScaleOf` was deleted with it.
 
-> **No separate level-difference multiplier exists, deliberately.** The anchor already produces one:
-> an out-levelled attacker is resisted, an over-levelled one cuts through. Adding an explicit term
-> would count level twice — and its swing is bounded (±10 levels is ×0.42 to ×1.62) so it stays
-> under composition's ×3.55 ceiling and cannot displace `BATTLE_DESIGN.md` §1.
+> **No separate level-difference multiplier exists, deliberately** — the opposed form produces one
+> for free, because the two sides' scales no longer match when levels differ.
+>
+> **But it is small, and the docs used to credit it with far more.** Measured, mitigation moves only
+> **1.19× to 0.86×** across a ±10 level gap. The real level-gap effect is large — a level-20 party
+> has a **5.06×** advantage at stage 10 and **1.05×** at stage 30 — but it comes from ATK and HP
+> scaling on opposite sides, *not* from mitigation. An earlier note here claimed the anchor gave
+> "×0.42 to ×1.62", which would have sent anyone tuning it to a lever that does almost nothing.
 
 **Encounters carry an `enemyLevel`**, which is the difficulty dial for the idle layer: the same five
 creatures at level 30 are a wall the same five at level 1 are not. Re-using an encounter at a higher
@@ -835,9 +977,9 @@ the level it declares without having to remember to.
   block can say "armoured, but soft to magic"; `true` is mitigated by nothing. Blades and shields
   swing steel, staves cast, and every attack in content sets its type explicitly so nothing relies
   on the default. True has to be *priced* rather than balanced — as a full-strength type it would
-  never be wrong, and the never-wrong option erases the decision. At ~55% power its crossover sits
-  at **exactly DEF 8** — eight times `MITIGATION_ANCHOR` / 10: worse than typed against a mob,
-  better only against something armoured on both tracks.
+  never be wrong, and the never-wrong option erases the decision. At ~55% power its crossover sits where
+  **DEF is about 80% of the attacker's ATK** on both tracks: worse than typed against a mob, better
+  only against something genuinely armoured against everything.
 - **A guard buff and a defensive star node raise both tracks.** Splitting them would halve every
   defensive ability without adding a decision worth making; per-type warding is elemental
   resistance's job, which is a separate axis.
@@ -924,6 +1066,36 @@ and the ability is **worded** in that order too, so the rules text and the execu
 construction. Kits still authored the old way (`kind` + `power`) fall back to the legacy path, and
 `describeAbility` reads whichever is present.
 
+> **`scope` and `on` are different questions, and pinning one does not answer the other.** `scope`
+> decides where an ability may be POINTED; `on` decides where each effect LANDS. Three abilities had
+> effects pinned to `on: 'self'` and no `scope`, so they defaulted to `one`: Hibernate, Frost Armor
+> and Bulwark all offered every ally as a legal target, applied to the caster whichever you picked,
+> and printed "heal · any ally" underneath. All three are `scope: 'self'` now.
+>
+> **The same confusion made Bulwark's chain trigger inert.** `retarget` deliberately moves only
+> effects aimed at the ability's own target and leaves anything pinned to `self` alone — a trigger
+> that widened a self-buff would be changing what the ability *is*. Bulwark's effect was pinned, so
+> the chain fired, the log announced *"guards the whole team instead of himself"*, and **exactly one
+> unit was buffed**. Scoped to self with the effect left on the default `target`, the base case is
+> identical and the trigger works: measured, 6 units buffed instead of 1.
+>
+> The general shape: **if an ability only ever affects its caster, say so in `scope`.** Pinning the
+> effects says it too quietly, and the parts of the engine that ask "where may this be aimed" and
+> "what does a trigger move" both read `scope` and `on` respectively.
+
+> **The effect-list heal forgot to divide by `ATK_PER_DAMAGE`, and nothing caught it for a session.**
+> `computeHeal` (the forecast) divided; the resolution path in `battle.ts` multiplied ATK by the
+> power and stopped. Hibernate healed **54** while the panel beside it promised **5** — a factor of
+> ten, in the direction that looks like generosity rather than a crash. Both now call one function.
+>
+> This is the third instance of the same shape: **two readers of the same authored field, disagreeing**
+> (`describeAbility` vs the engine, `scoreAction` vs the engine, now the forecast vs the engine). When
+> a value can be read two ways, make one function the only reader.
+>
+> `do: 'heal'` also gained `of: 'attack' | 'maxHp'`. Support heals scale off the caster's ATK so a
+> healer cannot out-damage the blades; a **tank's self-heal** scales off max HP, because the ATK rule
+> gates them on the stat they are deliberately worst at. Rebar's Hibernate is the only user.
+
 > A brief bug worth remembering: `describeAbility` kept reading the legacy fields after the effect
 > list landed, so the ability panel described a damage-plus-shred as a plain hit and a percentage
 > buff as "+20 ATK". The generator's promise is that it *cannot* drift from the engine — adding a
@@ -945,19 +1117,60 @@ was cast on, so **a 2-turn cooldown locks out the next two turns** and is ready 
   `3 × (freezes + 1)` freezes the target, **spends** the stacks and raises the bar. Consumption is
   what makes 3 / 6 / 9 an escalation — leaving them on would make every freeze after the first cost
   the same three.
-- **It decays 1 a round**, at the End Turn of the side that did *not* apply it. So one Performer
-  applying one stack a turn nets **zero** — frost only accumulates as a team effort, which is the
-  composition goal enforcing itself. Application rates are the balance lever: below ~3 a round a
-  frost team gets one freeze a fight.
+- **It decays 1 a round**, at the End Turn of the side that **carries** it, so a stack always
+  survives exactly one of the frosted unit's own turns. It used to decay on the *applier's* End
+  Turn, which ran before the frosted side had acted — `startEnemyPhase` ends the player's turn and
+  then hands over — making any one-stack-a-round source **inert** rather than weak: a Performer acts
+  once a round, decay cancelled it exactly, and the stack never existed for chill or the bar to
+  read. The rate is unchanged, so accumulation speed did not move; only whether the stack is alive
+  for the turn it was meant to affect.
+- **One stack a round still nets zero, and that is a use.** It cannot reach the bar alone, but it
+  *holds* the target at one stack — chill reads it every enemy phase, and the target stays one step
+  nearer the threshold for anyone else feeding it. That is the job of a **wildcard**: spending a die
+  that would otherwise go unused to keep the frost from melting is maintenance rather than
+  construction, and a specific reason to cast one. Accumulation still takes more than one stack a
+  round or more than one Performer, which is the composition goal enforcing itself — below ~3 a
+  round a frost team gets one freeze a fight.
+- **Frost does not stack on the frozen — it shatters** for `SHATTER_PER_STACK` (4) damage each, flat
+  and unmitigated. Freezing something must not also be the cheapest way to set up freezing it again,
+  and nothing is lost by spending frost into a frozen target.
+- **A freeze is held for the whole phase it denies** and consumed at that phase's End Turn, for both
+  sides — one place, symmetric. It used to be burned per-unit in two different places, which cost
+  nothing in balance and almost everything in legibility: the chips vanished one at a time as the
+  enemy phase walked the line. Frozen from the instant the stacks max out, frozen for the entire
+  phase being missed, thawed when it is over.
 - **Freeze costs an action, not a turn.** Frost landing on your turn cancels the enemy phase that
   follows, including a declared intent; frost landing reactively, mid-swing, takes the next action
   instead of being wasted. One rule, both directions.
 - **A frozen enemy declares no intent**, which is the payoff — the player sees the gap before
   planning and spends the turn elsewhere.
+- **The count is on the CREATURE**, in the badge column above it: `❄ 2/3`, or a filled `❄ frozen`
+  when it lands. It was on the roster rows only, which is the one place it could not do its job —
+  the design rests on the count and the bar being visible so freezing is a decision made *before*
+  the dice are spent, and a number in a side panel is not competing on equal terms with the intent
+  die drawn at the creature's feet. Shown as a **fraction** because the bar is the half that moves:
+  after a freeze it reads `2/6`, which is the escalation stating itself without a word of
+  explanation.
+  > Rendered for **both sides**. Nothing frosts the party yet, but `frost` is a status like any
+  > other and a party that could not see its own would be a bug waiting for the first enemy that
+  > applies it. Sleep is already player-side — Rebar puts himself under.
 - **Sleep wakes on any damage**, and a sleeping unit cannot be planned.
+- **Regen is a COUNT of heals owed, not a duration.** `Statuses.regen` holds charges; one is spent
+  at Start Turn for 10% of max HP. A duration could not keep the promise on the sheet: a status
+  applied mid-turn has already missed that turn's Start, so "2 turns" counted down at End Turn
+  leaves exactly **one** tick. Charges make the number honest whenever it was applied — the same
+  shape `frozen` already uses for actions owed.
+  > This is the line §6 calls "two clocks — do not conflate them": **`Modifier` is the thing with a
+  > duration, `Statuses` are counters.** Tick effects belong on the counter side, and reaching for a
+  > duration is what makes an N that does not deliver N.
 - `Modifier.riposte` is the one reactive hook: *"frost the attacker when the holder takes damage of
   this type."* It rides on the modifier so it expires with the buff, and no code anywhere has to
   know the string "Frost Armor".
+  > **Reactive frost is worth less than proactive frost.** A riposte stack lands mid-enemy-phase,
+  > after the attacker has already swung, and melts at that phase's End Turn — the player cannot
+  > bank it. No single decay point serves both, because the two application moments sit at opposite
+  > ends of the round; the proper fix is aging stacks individually, which is not worth the machinery
+  > until a second reactive source exists.
 
 `Modifier.stat` is a `ModKey` — a `ModStat` **or** an `Element`. Timed elemental resistance shares
 the modifier list rather than living in a parallel structure, because it wants identical behaviour
@@ -1040,7 +1253,9 @@ This is the single most important content distinction.
 are about to be rebuilt anyway.
 
 Passives available: `regen`, `thorns`, `resilient`, `frenzy`, `lifesteal` — all percentages applied
-to their owner — plus `extraDie`, which is not (see §5.1, *Contributed dice*).
+to their owner — plus two that are not: `extraDie` (§5.1, *Contributed dice*) and `chill`, the first
+that reads the **other side**. `chill` is an aura owned by a living defender and keyed off the
+ATTACKER's frost stacks, which is why `computeDamage` takes the defending side as an argument.
 
 ### 5.4 In-battle upgrades
 
@@ -1073,6 +1288,35 @@ passives, and ability modification (power / range / dice cost).
 
 **Spare duplicates are derived, never stored**: `copies − 1 − starSpend(level)`. A save cannot drift
 into a state where spares and star level disagree.
+
+#### The rarity ceiling — DECIDED, NOT BUILT
+
+The intended relationship between rarity and stars, which no kit has been authored against yet:
+
+| | is worth about |
+| --- | --- |
+| a **maxed 3★** | a **rank-3 5★** |
+| a **maxed 4★** | a **rank-4 5★** |
+| a **rank-5 5★** | game-breaking — raw damage, or utility past what the rest of the cast can reach |
+
+**This is not a statement about raw stats.** It is about what the character is worth in a fight, so
+a 3★ may reach parity through utility, matchup or conditional spikes rather than through numbers.
+The desired shape is that **a maxed 3★ elemental specialist out-damages a mismatched rank-1 5★** —
+so that sometimes fielding a lower rarity is the correct answer to a specific fight, not a
+concession. What must *not* happen is 3★ being sought in preference to 5★. 3★ damage dealers falling
+short of 5★ damage dealers at equal investment is correct and intended.
+
+**3★ should star up more slowly**, because the draw rates hand you far more of them. Two things this
+needs are absent from the code today:
+
+- `starCost(level) = level + 1` **has no rarity term** — every rarity costs the same 15 duplicates
+  to max, so "3★ grow slower" is not expressible.
+- **The tree shape is identical at every rarity**: the same choice / +12% HP / choice / +10% ATK /
+  choice for everyone. A 5★'s rungs are not worth more per rung, and there is no capstone slot for
+  the game-breaking fifth.
+
+Neither blocks authoring a 3★, which is why they are recorded rather than built — but both have to
+land before a 4★ or a second 5★ can be tuned against anything.
 
 ### 5.6 Levels (spends XP)
 
@@ -1172,16 +1416,23 @@ different arrangement supplies its own.
 Authored against **`SPRITE_STYLE_GUIDE.md`**, which is the source of truth. Read §10 of it before
 generating any animation — that section exists because of the bugs listed below.
 
-**Stills.** Two spec revisions are in the roster at once while the 128px migration runs, and the
-pipeline tells them apart **by which files exist** rather than by a list of names — so migrating an
-actor is only ever a matter of dropping the new files in.
+**Stills.** Style guide **v3.0 moved the standard canvas from 128 to 256**, so two spec revisions
+are in the roster at once while that migration runs. The pipeline tells them apart by **measuring
+the file**, not by a list of names — so migrating an actor is only ever a matter of dropping the new
+art in, and 128 and 256 sprites stand correctly beside each other in the meantime.
 
-| | v1 (Kael, Rebar, Maxine, Aethis) | v2 (Benjamin) |
+| | v2 (Kael, Rebar, Maxine, Aethis) | v3 (Benjamin, Brax) |
 | --- | --- | --- |
-| Native grid | 64px | **128px** |
-| Measured from | `<name>_LQ.png` (256px, ÷4) | `<name>.png` — it *is* the native canvas |
-| Ships | `<name>_HQ.png`, smoothed | `<name>.png`, nearest-neighbour |
-| Detected by | `<name>_LQ.png` present | `<name>_LQ.png` absent |
+| Native grid | 128px | **256px** |
+| Standard body band | 82–92 px | **164–184 px** |
+| Ground line / margin | y=112, ≥8px | **y=224, ≥16px** |
+| Exterior outline | 1px | **2px** |
+| Detected by | canvas measures 128 | canvas measures 256 |
+
+Every v3 threshold is exactly v2 doubled, so a character described by either revision stands the
+**same height on stage** — the canvas is a detail budget, not a size multiplier, and stature stays
+`body ÷ canvas`. An unrecognised canvas falls back to `CURRENT_SPEC` (v3), so a bad upload is told
+to redraw at 256 rather than at the size the guide no longer asks for.
 
 `<name>_preview.png` is a review aid, **not** shipped: the guide requires it to be an integer
 nearest-neighbour enlargement of the same pixels, so shipping it would ship a pre-scaled duplicate.
@@ -1447,11 +1698,54 @@ sustain cliff: simultaneous enemy phases that cannot be healed through mid-burst
 damage **ramp** (§5.3), which is the same lesson inverted — a *growing* damage source cannot be
 healed through at all.
 
-**Cast — six, all with sprites and idle animations.** Five 3★ as tutorial unlocks: Benjamin
-(elementless blade, **rebuilt**), Rebar (ice tank, **rebuilt**), Kael (wind blade), Maxine (water
-staff, artillery), Aethis (earth staff, healer). Plus **Brax**, the first 5★ and the first actor on
-a 256px canvas — an earth/fire tank with a **placeholder kit**, fieldable so compositions can be
-tested rather than balanced.
+**Cast — seven.** Five 3★ as tutorial unlocks: Benjamin (elementless blade, **fully rebuilt**,
+utility / debuff / damage), Rebar (ice tank, **fully rebuilt**, frost application), Maxine (water
+staff, **in redesign** — see below), Kael (wind blade), Aethis (earth staff, healer). Two 5★:
+**Brax**, an earth/fire tank, and **Veyra**, a magic dealer — both with **placeholder kits**,
+fieldable so compositions can be tested rather than balanced.
+
+**Maxine is next, as the 3★ magical frost damage dealer.** She is frost in name only today — Rime
+Siphon, Frostbolt, Rime Shard, Glacial Lance, Absolute Zero, Frost Ward, and not one stack applied
+or consumed — while `Statuses.frost` has always described itself as a shared resource that
+*"Rebar builds and spends on control, and other Performers are meant to read and do something else
+with."* She is that second reader. Three other defects to fix while she is open:
+
+- Her sheet comment claims *"the lowest HP and defence on the roster paired with the highest
+  attack"*; Veyra now has ATK 124 to Maxine's 108 on the same P.DEF 20, so the identity is stale and
+  she merely ties Kael, a melee blade.
+- **Her signature AoE is beaten by a blade's.** Absolute Zero costs 10 for 4 dmg/die; Kael's Tempest
+  Fall costs 7 for 7 dmg/die across the whole line.
+- **Lifesteal appears three times** in her progression — passive 10%, star node 12%, upgrade 18% —
+  and two of them are both called "Mana Siphon". Her upgrade tiers and star tree are the same two
+  knobs (resilient/frenzy/lifesteal vs lifesteal/frenzy).
+
+Settled so far: her **wildcard** is a basic frost attack at **100% ATK, any target, 1 frost stack,
+no other riders**. 100% ATK is deliberately the low end of the damage scale — the opposed-stat
+formula is level-invariant, so it is ≈10% of a target's health bar at level 1, 20 and 50 alike, or
+ten casts to kill. One stack nets zero against decay, and that is the point: a wildcard exists to
+spend dice that would otherwise go unused, so converting a dead die into *"the frost does not melt
+this round"* is maintenance — a specific job worth having. **Blizzard** and **Ice Lance** are named
+but not yet designed.
+
+**Veyra is the roster's glass cannon, and her identity is not built yet.** HP 40 on P.DEF 20 with
+the highest ATK in the game (124): she answers a fight by ending it a turn sooner, and anything that
+reaches her wins. She is *meant* to be the Performer with a **rotating elemental affinity** — her
+element changing each round, revealed before the player plans, making her the coverage answer to a
+boss that locks an element out. Nothing in the engine can express that today, so her four abilities
+carry **fixed** elements spread across the cycle as scaffolding. Treat those elements as a
+placeholder, not a design.
+
+> Her empty `resistances` *are* deliberate, though. She channels elements rather than being one —
+> the same reasoning that keeps Benjamin elementless and the False Lead's own attacks colourless.
+> Giving a rotating caster a fixed weakness would answer the question her kit exists to ask.
+
+> **She has no sprite.** `art/actors/veyra/veyra.png` is a **1254×1254 HQ render** carrying 624k
+> semi-transparent pixels, not a packed 64/128/256 canvas with binary alpha — so the pipeline reads
+> it as a 128 canvas with a 1168px body and derives a stature **9× everyone else's**. She renders as
+> her role badge until the art is re-exported at 256 (the spec Brax uses). `caspian` has sat in
+> `sprites.generated.ts` in exactly this state for a while: packed metrics for unusable art are
+> harmless **as long as nothing references them**, which is why `CharacterDef.sprite` is omitted
+> rather than pointed at a broken entry.
 
 **Two kits are authored against `BATTLE_DESIGN.md`; four are not.**
 
@@ -1471,33 +1765,45 @@ Five are numbers applied to their owner; Benjamin's is not (see below).
 | --- | --- | --- |
 | Benjamin | **Drillmaster** | the party rolls an extra die while he stands |
 | Kael | Second Wind | `frenzy 20` |
-| Rebar | Bristling Hide | `thorns 15` |
+| Rebar | **Winterhide** | frosted enemies hit 4% softer per stack, cap 5 |
 | Maxine | Rime Siphon | `lifesteal 10` |
 | Aethis | Quiet Bloom | `regen 4` |
 | Brax | Slagskin | `resilient 10` |
 
-**Every stat was rescaled down.** A level-1 Performer now has **9–20 HP** (about 12 on average),
-ATK 18–27 and DEF 20–100, both in **tenths of a damage point**. The mechanics are in §5.2. The
-level-1 roster, against a Red Understudy (7 HP, P.DEF 40, M.DEF 20) — basics land for 1–2 and
-ultimates for 4–7, on a bar you can count:
+**The stat scale is HP 36–88 at level 1**, the five 3★ starters averaging exactly **50**, with ATK
+60–108 and DEF 20–100 in **tenths of a damage point**. The mechanics are in §5.2. The level-1 roster,
+against a Red Understudy (28 HP, P.DEF 40, M.DEF 20):
 
 | | HP | ATK | P.DEF | M.DEF | basic | signature | ultimate |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Benjamin | 11 | 26 | 50 | 30 | −1 | −2 | −4 |
-| Kael | 12 | 27 | 60 | 40 | −1 | −2 | −3 |
-| Rebar | 15 | 19 | 80 | 50 | −1 | −1 | +2 hp |
-| Maxine | 9 | 27 | 20 | 40 | −2 | −4 | −7 |
-| Aethis | 9 | 18 | 30 | 40 | −1 | +1 hp | +2 hp |
-| Brax | 20 | 21 | 100 | 70 | −1 | — | −2 |
+| Benjamin | 44 | 104 | 50 | 30 | −6 | −8 | −15 |
+| Kael | 48 | 108 | 60 | 40 | −5 | −6 | −10 |
+| Rebar | 88 | 60 | 95 | 35 | −6 | +5 hp | −5 |
+| Maxine | 36 | 108 | 20 | 40 | −9 | −16 | −20 |
+| Aethis | 36 | 72 | 30 | 40 | −4 | +5 hp | +5 hp |
+| Brax | 80 | 84 | 100 | 70 | −5 | −8 | −10 |
 
 **Chains are live.** Every ability may carry a symbol; playing one arms it for the rest of the
 round, and a later ability sharing it fires that ability's own trigger. Benjamin carries `anvil`
 (Quick Cut, Sunder) and `lantern` (Rally, Perfect Form), with triggers on Sunder and Rally per
-`BATTLE_DESIGN.md` §8. The other four carry **symbols but no triggers** — their kits are disposable
-and inventing trigger effects for abilities about to be rewritten is work thrown away, but without a
-second carrier nothing could arm Benjamin's and the mechanic would be unreachable in play. They
-enable chains without benefiting from them, which is the "completes other people's chains" role
-Rebar was always meant to have. Give them triggers when their kits are authored.
+`BATTLE_DESIGN.md` §8. **Everyone else carries symbols but no triggers** — including Rebar, whose
+own §8 entry lists a trigger as the thing he still needs. For the four unbuilt kits that is
+deliberate: inventing trigger effects for abilities about to be rewritten is work thrown away, but
+without a second carrier nothing could arm Benjamin's and the mechanic would be unreachable in play.
+They enable chains without benefiting from them, which is the "completes other people's chains" role
+a symbol-heavy Performer is for. Give them triggers when their kits are authored.
+
+**A symbol is drawn, not spelled.** `SymbolIcon` carries all ten marks, and the rules line is the
+mark plus — only if the ability has a trigger — **`Chained: shreds 15% deeper.`** It used to read
+*"Anvil. If Anvil was already played this turn, shreds 15% deeper."*, and a carrier with no trigger
+read *"Thorn. Plays Thorn for whoever acts after."* Both spent three lines restating a rule the
+shape states by existing, once per ability, on every kit, forever.
+
+What survives as text is only what the mark cannot say: **what this ability does differently when it
+chains**. The carrier/trigger distinction — the one real thing the prose was carrying — is now the
+chip's fill: an ability with a trigger gets a gold filled chip, a pure carrier an outlined one, so
+"which two of these four chain, and which of them benefits" is answerable from the kit list without
+hovering anything.
 
 **Brax fills the 5★ summon tier**, which was previously empty — and his canvas is the interesting
 part. **Stature is `body / canvas`, so a bigger canvas is a detail
@@ -1536,26 +1842,42 @@ The thing that makes them his was a synergy that already existed and was never w
 different question — what keeps him able to keep doing it — and both answers point the same way,
 because Rally's worth and Drillmaster's die both end the turn he does.
 
-**Benjamin is the only redesigned kit.** He is specced in `BATTLE_DESIGN.md` §8 and built: Quick
-Cut (wildcard), Sunder (6, damage then a physical-defence shred), Rally (4, buffs an ally by a % of
-*Benjamin's current* stats), Perfect Form (10, self-buff then a large strike, 2-turn cooldown).
-Authoring him is what drove the turn phases, timed modifiers, ordered effects, player cooldowns and
-elementless attacks into the engine. **The other four are still disposable** — treat their
-abilities as placeholders authored for a system that is going away.
+**The four unbuilt kits are still disposable** — Kael, Maxine, Aethis and Brax. Treat their
+abilities as placeholders authored against a system that is going away, and do not read balance
+into them. Benjamin's and Rebar's kits are in `BATTLE_DESIGN.md` §8.
 
-**Art migration to style guide v2 (128px) is in progress:**
+**Art migration to style guide v3 (256px) is in progress.** Body heights below are the figure, not
+the bounding box — see `PROP_HEADROOM` in §9 for why those differ on the hat-wearers.
 
-| | spec | still | idle |
-| --- | --- | --- | --- |
-| Benjamin | **v2** | 85 native px, audits clean | 8 frames |
-| Maxine | **v2** | 108 native px — over the guide's range, see §9 | 8 frames |
-| Kael | v1 | 42 native px | — |
-| Rebar | v1 | 37 native px | — |
-| Aethis | v1 | 43 native px | — |
+| | spec | canvas | body | band | idle |
+| --- | --- | --- | --- | --- | --- |
+| Benjamin | **v3** | 256 | 184 | 164–184 | 13 frames |
+| Brax | **v3** | 256 | 207 | 164–184 | 8 frames |
+| Kael | v2 | 128 | 90 | 82–92 | 8 frames |
+| Aethis | v2 | 128 | 86 | 82–92 | 8 frames |
+| Maxine | v2 | 128 | 85 | 82–92 | 8 frames |
+| Rebar | v2 | 128 | 80 | 82–92 | 5 frames |
 
-The remaining three are to be rebuilt at 128px with **a single idle each**. The pipeline detects
-which spec an actor is on from their files, so migrating one is just dropping the new files in — see
-[`art/` in, `public/` out](#art-in-public-out) for the full contract and the pre-flight list.
+**Benjamin is the reference sprite, and he landed at the top of his band.** 184 of 164–184 puts his
+figure at `184/256 = 0.719` of canvas against the old art's `83/128 = 0.648` — 11% taller, and
+taller than Kael, who is meant to be the larger man. Since the guide makes the sword character the
+visual source of truth that every later sprite is matched to, the rest of the roster either scales
+up with him (pushing Kael to ~200 and Maxine to ~189, both above the Standard ceiling) or he is
+regenerated nearer the middle of the band. Today's statures restated on 256, which is the height
+spec for the rebuild if the current proportions are to be kept: **Benjamin 166, Kael 180, Aethis
+172, Maxine 170, Rebar 160, Brax 207** — Brax already correct.
+
+Two audit notes are open and both are declarations rather than defects: **Brax** at 207 fits the
+`large` band (184–208) but declares no class, and **Rebar** reports 80 against 82–92 although the
+guide measures quadrupeds by length, not height, so the humanoid band should not apply — there is no
+`quadruped` class in the packer yet.
+
+The pipeline detects which spec an actor is on by measuring their file, so migrating one is just
+dropping the new art in — see [`art/` in, `public/` out](#art-in-public-out) for the full contract
+and the pre-flight list. Note that replacing an actor's whole folder also replaces
+`<name>.pack.json`, which wipes the fingerprint proving the pipeline owns their output; the next run
+then refuses with *"not written by this script"*. Clearing `public/sprites/<name>/` and re-running is
+the documented recovery.
 
 **Enemies:** five elemental **Understudies** — Red (fire), Yellow (lightning), Blue (water),
 Orange (earth), Green (wind) — one per element in the cycle, identical in every other respect so
@@ -1578,8 +1900,7 @@ mechanical rather than decorative: melee cannot reach it until the Understudies 
 **Encounters:** Curtain Call, fielding five `Understudy` — one creature repeated, with two abilities
 weighted 75 / 25. Deliberately one creature: the thing being exercised is the selector and the
 reveal, and five different kits would make a bug in the machinery indistinguishable from a quirk of
-one enemy's abilities. The old five-enemy lineup is kept as `BESTIARY` for reference, not deployed.
-Numbers are placeholders, not a balance pass.
+one enemy's abilities. Numbers are placeholders, not a balance pass.
 
 **Hub screens:** Home (idle scene + claim), Characters (roster, stars, levels), Summon (working
 gacha), Inventory (currencies real, items labelled placeholders), Events (real countdowns,
@@ -1668,10 +1989,27 @@ sheet from the base roster, so any stage can be tried at any level without grind
   Nothing in the game *said* so; the number looked reasonable on the sheet and the passive simply
   did not work. See §5.2 for the before/after table. **When a percentage meets a small integer,
   measure it rather than reading it** — and if you author a new percentage effect, bank it.
-- **A 1-damage hit cannot be reduced**, by resilience or by anything else: the `max(1, …)` floor
-  will not take one to zero, and 27% of hits are already 1. Every damage-reduction number therefore
-  under-delivers by about a third. That is correct behaviour, but it is a permanent tax and the
-  stated numbers should be authored knowing it.
+- **The damage floor is a FRACTION, not a number.** `MIN_DAMAGE_FRACTION` (0.05): a blow always
+  lands for at least 1, *and* at least 5% of what it would deal unmitigated. Stated the other way
+  round it is a cap on stacked mitigation — armour, elemental resistance, `resilient` and `chill`
+  together may absorb at most **95%** of a hit.
+
+  The flat `max(1, …)` it replaced was the fourth scale-dependent constant found in this codebase,
+  and the most quietly wrong: **it has never once bound above level 1** (measured, 0 of 140 possible
+  hits at levels 1, 10, 20, 40, 60 and 80), so the promise that "a heavily mitigated hit still
+  registers" was being kept by accident. The ratio formula is scale-free, so the weakest hit in the
+  game sits at a steady **~2.5% of the tankiest HP bar at every level** — which is the property
+  worth having, and it now has a rule behind it instead of a coincidence. Against a 10,000 HP tank
+  that is ~250 damage, not 1.
+
+  Ordinary damage is **completely unchanged** by the fraction at every level; it is a backstop that
+  binds only when resistance, armour and reduction all stack hard. Immunity stays exempt — an attack
+  labelled IMMUNE that deals a trickle is a worse lie than one that deals nothing.
+- ~~**A 1-damage hit cannot be reduced.**~~ **Resolved by the ×4 rescale.** The floor still exists and
+  still cannot take a hit to zero, but at an average hit of 13 it catches **0.0%** of damage instead
+  of 27%, so damage-reduction numbers no longer pay a tax. The lesson generalises: *a percentage is
+  only worth what the number it multiplies can resolve* — if the average hit drops back near 1, every
+  percentage in the game quietly stops working.
 - ~~**The auto-battler cannot evaluate an enabler.**~~ **Resolved as a non-issue — do not fix it.**
   `scoreAction` is genuinely myopic (it scores the damage an action deals *now*, to the target it
   names, so Benjamin's shred and self-buff are invisible and his free basic outscores his whole kit
@@ -1705,21 +2043,33 @@ sheet from the base roster, so any stage can be tried at any level without grind
 
 **Art**
 
-- **The cast has no agreed scale, and the mobs inherit the problem.** Body heights, with the
-  pipeline's own outline discounted: Rebar 80, Benjamin 83, Kael 90, Understudies 91–93, Aethis 95,
-  Maxine 106. That is a 32% spread with no stated intent, so "the mobs are too tall" has no fixed
-  reference — they are taller than three Performers and shorter than two.
-  The Understudies at 91–93 are **approved as they are**; three of the five sit 1px over Standard
-  and the audit says so, which is close enough to ignore. Settling the Performers' own scale
-  classes is the larger and more useful decision — Rebar (80) and Maxine (106) are the two real
-  outliers.
-- **Maxine is 108 native px**, past the guide's Standard band (82–92) *and* Large (92–104). She sits
-  at 0.84 of her canvas while everyone else is 0.58–0.66, so she reads as the tallest of the cast by
-  a wide margin. Either bring her to ~86–90 with the rest or make the deviation deliberate — the
-  audit will keep reporting it until the numbers agree.
-- **Kael, Rebar and Aethis are still v1** and carry the old defects: Kael has 4 delivery px of
-  margin where the guide wants 16, and Rebar and Aethis sit 3 native px above the ground line. All
-  three are moot once they are rebuilt at 128px, which is the plan — do not fix them in place.
+- **The height lint measured the bounding box, not the body — now fixed.** The guide's bands are
+  about the figure, "excluding raised weapons, oversized hats, capes, hair extensions, and effects",
+  but the audit read the opaque box. Maxine's compliant 85px body reported as 106 and Aethis's 86 as
+  95: two false alarms against art that obeys the rule, raised by the one check that exists to catch
+  art that does not. `PROP_HEADROOM` in `scripts/pack_sprites.py` now records the native pixels of
+  prop standing above the crown (`maxine: 21`, `aethis: 9`, zero for everyone else) and
+  `body_height()` discounts it.
+  > **Lint only, deliberately.** It must not touch stature, because stature already excludes the
+  > prop without being told: the renderer scales the whole cropped image by `contentPx / canvas`, so
+  > the body lands at `bodyPx / canvas` and the hat scales with it rather than stealing from it.
+  > Measured across the roster — Benjamin 0.664, Maxine 0.672, Aethis 0.680, Kael 0.711 — the cast
+  > already stood correctly. Feeding these numbers into the render would shrink exactly the two
+  > characters they exist to vindicate.
+  >
+  > Values are in each sprite's **own** canvas pixels, so a redraw onto 256 invalidates them and
+  > they roughly double. Left stale the check under-counts the prop, which is why the note names the
+  > discount explicitly.
+- **The cast's real spread is tight; the mobs are the outliers.** Bodies, outline discounted:
+  Rebar 80, Maxine 85, Aethis 86, Kael 90, Understudies 91–93. That is 80–93, not the 32% the
+  bounding-box reading suggested. The Understudies are **approved as they are** — three of five sit
+  1px over Standard. What is still unsettled is scale *classes*: Rebar at 80 is under Standard
+  because he is a quadruped and the guide measures those by length, and Brax at 207 fits `large` but
+  declares nothing. Both want a declaration, not a redraw.
+- **Scale-class bands are now fractions of each sprite's own canvas.** They were hard-coded 128-grid
+  pixels while only `boss` was canvas-relative. Nothing misreported, because `SCALE_CLASS` is empty
+  — but the first class declared on 256 art would have been measured against a 128 band and reported
+  at twice its size. They resolve to the guide's Section 4 numbers on both canvases.
 - **The generators anti-alias**, which the guide forbids (§ "no anti-aliasing"). The pipeline copes:
   it keys the backdrop, skips `unmatte` on pixel art, and redraws the silhouette outline. But a
   clean hard-edged export would make three separate heuristics unnecessary — worth trying to get
@@ -1900,18 +2250,22 @@ cannot be judged, a formation cannot be punished, and nothing is worth freezing.
      enemy dearly. Freeze is built and has nothing to deny.
    The boss ramp (§5.3) and the False Lead's rotating resistance stay boss-shaped; ordinary mobs
    should get neither.
-2. **Party / lineup management.** Positioning is built and unreachable — roster order *is* the
-   formation and there is no screen to change it. This is now a mechanic with no interface rather
-   than a convenience feature.
-3. **The remaining four kits** — Kael, Maxine, Aethis, Brax — against `BATTLE_DESIGN.md`. Author
-   them one at a time and let each one specify the next mechanic, which is how the last two went.
-   Shapes now available that were not when their kits were written: a passive can change the
-   **pool** rather than a stat (Benjamin), a passive can be a **reactive rider** (Rebar's riposte),
-   an upgrade tier can grant any passive, and **frost is a shared resource** waiting for a second
-   reader — damage on freeze, or a shred per stack, were both explicitly left for a later character.
+2. **Party / lineup management.** In-battle repositioning covers the positional half now (§5.2), so
+   what is left is the *pre-battle* screen: which five perform, and their starting arrangement.
+   Roster order is still the formation, and there is still no screen to change it.
+3. **The remaining four kits** — **Maxine first (in progress)**, then Kael, Aethis, Brax — against
+   `BATTLE_DESIGN.md`. Author them one at a time and let each one specify the next mechanic, which
+   is how the last two went. Maxine claims the second-reader slot on frost that was left open for a
+   later character; Kael, Aethis and Brax still need theirs. Shapes now available that were not when
+   their kits were written: a passive can change the **pool** rather than a stat (Benjamin), a
+   passive can be a **reactive rider** (Rebar's riposte), and an upgrade tier can grant any passive.
    Note the tiers' +10% stat bonus is genuine filler for all four, since only Benjamin converts
    personal stats into team stats — so their passives have to carry their tiers.
-4. **Rebuild the art at 128px** — Kael and Aethis. Benjamin, Maxine and Rebar are done.
+4. **Rebuild the art at 256px** (style guide v3.0) — Kael, Aethis, Maxine and Rebar. Benjamin is
+   done and Brax was already there. Deliberately **not urgent**: 128 and 256 sprites render at
+   correct relative scale side by side, so the roster migrates one actor at a time. Settle
+   Benjamin's height first — he is the reference every later sprite is matched to, and he currently
+   sits at the top of the Standard band rather than the middle (see §8).
 5. **Enemy art** — they are role badges on a painted stage; the most visible gap.
 6. **Stage progression** — winning advances `profile.stage`, grants rewards, raises the idle rate.
    The missing link between the two halves of the game, and independent of the battle work.

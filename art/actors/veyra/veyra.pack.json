@@ -1,0 +1,21 @@
+{
+  "clips": {
+    "idle": {
+      "anchorX": 0.446,
+      "aspect": 0.773109,
+      "footPad": 0.0,
+      "frames": 8,
+      "loops": true,
+      "normalised": 1.0,
+      "pxH": 119,
+      "restFill": 0.978992,
+      "size": 71638,
+      "src": "/sprites/veyra/veyra_idle.png",
+      "trimmed": 0
+    }
+  },
+  "stamp": {
+    "sha256": "bd0a4efc5f5831c95ca0ad094e0300dfb163b1bb37aafb4c8d20272337bb2fbb",
+    "size": 138976
+  }
+}

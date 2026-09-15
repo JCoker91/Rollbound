@@ -1,21 +1,21 @@
 {
   "clips": {
     "idle": {
-      "anchorX": 0.496,
-      "aspect": 1.352941,
+      "anchorX": 0.504,
+      "aspect": 1.25,
       "footPad": 0.0,
-      "frames": 8,
+      "frames": 13,
       "loops": true,
       "normalised": 1.0,
-      "pxH": 85,
-      "restFill": 0.988235,
-      "size": 38007,
+      "pxH": 192,
+      "restFill": 0.984375,
+      "size": 288507,
       "src": "/sprites/benjamin/benjamin_idle.png",
       "trimmed": 0
     }
   },
   "stamp": {
-    "sha256": "f727286aa44d9452a717319489f08d84ffe641d45779fde3c04301a5d35d396a",
-    "size": 7824
+    "sha256": "b463f2cb225a033644ff484f8669e5d6de0b8e763710dbbca36c83e3c77e9fac",
+    "size": 27089
   }
 }

@@ -1,4 +1,4 @@
-import type { CharacterDef, Element, Role, Side } from '../engine/types.ts';
+import type { ChainSymbol, CharacterDef, Element, Role, Side } from '../engine/types.ts';
 
 /**
  * Character tokens: a role glyph on an element-tinted badge.
@@ -338,6 +338,115 @@ export function ElementIcon({ element, size = 13 }: { element: Element; size?: n
       return (
         <svg {...common} fill="currentColor">
           <path d="M10.6 1.4a6.6 6.6 0 1 0 0 13.2 5.6 5.6 0 0 1 0-13.2Z" />
+        </svg>
+      );
+  }
+}
+
+/**
+ * A chain symbol, as a mark rather than a word.
+ *
+ * Symbols are the one piece of ability data that is *only* an identity -- a
+ * symbol does nothing itself, it matches. Spelling "Anvil" out and then
+ * explaining what an anvil does cost three lines to say what a shape says at a
+ * glance, and it had to be repeated on every ability that carried one. The mark
+ * is the mechanic: two abilities showing the same shape chain, and that is the
+ * whole rule.
+ *
+ * Drawn on the same 16px grid as `ElementIcon` and in `currentColor`, so the
+ * two sit together in a rules line without either one being the loud one. Each
+ * is a single filled silhouette wherever possible -- these are read at 13px
+ * against a dark panel, where an outline closes up and a thin stroke vanishes.
+ */
+export function SymbolIcon({ symbol, size = 15 }: { symbol: ChainSymbol; size?: number }) {
+  const common = {
+    width: size,
+    height: size,
+    viewBox: '0 0 16 16',
+    'aria-hidden': true,
+    focusable: false as const,
+    fill: 'currentColor',
+  };
+  switch (symbol) {
+    case 'anvil':
+      // Horn left, waist, splayed foot. The horn is what stops it reading as a
+      // plain hourglass at this size.
+      return (
+        <svg {...common}>
+          <path d="M1.4 4.2h9.2c1.6 0 2.6.5 3.6 1.5-1.4.2-2 .8-2.7 1.6-.7.8-1.5 1.3-2.7 1.4v1.5h1.6L12.2 14H3.8l1.8-3.8h1.6V8.7C5 8.4 3.6 7.2 3.1 6H1.4Z" />
+        </svg>
+      );
+    case 'lantern':
+      // Ring, cap, body, base -- four bands, which is what makes it a lantern
+      // and not a bell.
+      return (
+        <svg {...common}>
+          {/* Four bands of DIFFERENT widths -- cap, shoulder, body, foot. Equal
+              widths read as a bottle, which is what the first attempt was. */}
+          <path d="M6.3 .6a1.7 1.7 0 0 1 3.4 0 1.7 1.7 0 0 1-1 1.5h.4v1H6.9v-1h.4a1.7 1.7 0 0 1-1-1.5ZM3.6 3.9h8.8v1.7H3.6Zm1.1 2.3h6.6c.4 1.2.6 2.4.6 3.5s-.2 2.2-.6 3.2H4.7a9.4 9.4 0 0 1-.6-3.2c0-1.1.2-2.3.6-3.5ZM2.8 13.5h10.4v1.9H2.8Z" />
+        </svg>
+      );
+    case 'thorn':
+      // A barb that curves and tapers. Straight spikes read as arrows.
+      return (
+        <svg {...common}>
+          <path d="M14.4 1c-4 .6-7.2 2.6-9.2 5.6C3.4 9 2.4 11.7 2 14.8c1.8-2.6 3.5-4.3 5.2-5.1-.8-.5-1.7-.7-2.7-.6C6.9 6.3 10.1 3.5 14.4 1Z" />
+        </svg>
+      );
+    case 'tide':
+      // Two wave bands. One alone reads as a swash; two say water.
+      return (
+        <svg {...common} fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round">
+          <path d="M1.4 5.6c1.3-1.7 2.7-1.7 4 0s2.7 1.7 4 0 2.7-1.7 4 0" />
+          <path d="M1.4 10.6c1.3-1.7 2.7-1.7 4 0s2.7 1.7 4 0 2.7-1.7 4 0" />
+        </svg>
+      );
+    case 'crescent':
+      return (
+        <svg {...common}>
+          <path d="M10.8 1.3a7 7 0 1 0 0 13.4 5.9 5.9 0 0 1 0-13.4Z" />
+        </svg>
+      );
+    case 'ember':
+      // A four-point spark, deliberately NOT the fire element's teardrop -- the
+      // two appear in the same rules line and must not be mistaken for a pair.
+      return (
+        <svg {...common}>
+          <path d="M8 .9 9.8 6.2 15.1 8 9.8 9.8 8 15.1 6.2 9.8.9 8l5.3-1.8Z" />
+        </svg>
+      );
+    case 'veil':
+      // A hung drape: rod, gathered top, scalloped hem.
+      return (
+        <svg {...common}>
+          {/* Rod, then a drape whose hem is three DEEP points. Shallow scallops
+              closed up entirely at 13px and it read as a scroll. */}
+          <path d="M.9 1h14.2v1.8H.9Zm1.6 2.6h11c.6 2.2.9 4.3.9 6.3 0 1.8-.2 3.5-.7 5.1l-2-3.4-2 3.4-1.7-3-1.7 3-2-3.4-2 3.4A19 19 0 0 1 1.6 10c0-2 .3-4.1.9-6.4Z" />
+        </svg>
+      );
+    case 'spiral':
+      return (
+        <svg {...common} fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
+          {/* Nested half-arcs of growing radius -- the standard way to draw a
+              spiral as one path, and the only shape here that has to be a
+              stroke: filled, a spiral is a disc. */}
+          {/* Alternating half-turns of shrinking radius, each one starting where
+              the last ended. Nested full arcs with sweep flags drew three
+              overlapping circles instead. */}
+          <path d="M14 8A6 6 0 0 1 2 8 5 5 0 0 1 12 8 4 4 0 0 1 4 8 3 3 0 0 1 10 8 2 2 0 0 1 6 8 1 1 0 0 1 8 8" />
+        </svg>
+      );
+    case 'crown':
+      return (
+        <svg {...common}>
+          <path d="M1.2 3.6 4.4 7l3.6-4.6L11.6 7l3.2-3.4-1.3 8.2H2.5Zm1.3 9.4h11v1.8h-11Z" />
+        </svg>
+      );
+    case 'quill':
+      // Feather with a nib, angled so it does not read as a leaf.
+      return (
+        <svg {...common}>
+          <path d="M14.6 1.1c-4.6.2-8 1.7-10 4.4-1.4 1.9-2 4.2-1.8 6.8l-1.7 1.8 1.2 1.1 1.7-1.8c2.5.3 4.7-.3 6.5-1.7H6.9l4-2.8H7.6c2.9-1.2 5.2-3.8 7-7.8Z" />
         </svg>
       );
   }

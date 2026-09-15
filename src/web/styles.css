@@ -368,8 +368,27 @@ body {
   /* left/top are the slot's point on the floor, so the sprite hangs above it and
      is centred on it -- feet land on the mark rather than the box doing. */
   transform: translate(-50%, -100%) translateX(var(--px, 0));
-  transition: transform 220ms cubic-bezier(0.33, 1, 0.68, 1);
+  /*
+   * `left` and `top` are transitioned as well as `transform`, which is what
+   * makes a reposition a WALK. The two units in a swap cross each other because
+   * both are animating at once off the same state change, and React keeps each
+   * DOM node (they are keyed by character id) so there is a node to animate --
+   * unkeyed, they would be torn down and rebuilt at the destination.
+   *
+   * Slower than the lunge on purpose: a lunge is a jab that has to snap back
+   * inside one action, a reposition is somebody crossing the stage.
+   */
+  transition:
+    transform 220ms cubic-bezier(0.33, 1, 0.68, 1),
+    left 420ms cubic-bezier(0.4, 0, 0.2, 1),
+    top 420ms cubic-bezier(0.4, 0, 0.2, 1);
   cursor: pointer;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stage-slot {
+    transition: none;
+  }
 }
 
 /*
@@ -420,6 +439,47 @@ body {
   opacity: 0.32;
 }
 
+/*
+ * Aiming at SLOTS rather than at bodies.
+ *
+ * `pointer-events: none` is the load-bearing half, and it is what actually made
+ * the footprints selectable. A `.stage-slot` is a BOX the height of its sprite,
+ * and a unit standing in a nearer row has a higher z-index and a box that
+ * covers the slots behind it -- so the click landed on a bystander's
+ * transparent pixels and selected them instead. Nothing here is about paint
+ * order; the target was being swallowed before it was ever reached.
+ *
+ * Only the ones that are not targets, so an adjacent ally stays clickable --
+ * clicking them is how you swap. And only while `moving`: during ordinary
+ * aiming, clicking a non-target to select it is still useful.
+ */
+.stage-frame.moving .stage-slot:not(.targetable):not(.selected) {
+  opacity: 0.2;
+  pointer-events: none;
+}
+
+/*
+ * The mover's OWN box does not take clicks either.
+ *
+ * Standing still is not a move -- their slot is removed from `targets` -- so
+ * the box has nothing to offer, and at 112x92 it is big enough to cover a
+ * neighbour's centre and swallow the click that was meant to swap with them.
+ * While `moving`, only footprints and swappable neighbours are clickable, which
+ * is exactly the set of legal answers.
+ */
+.stage-frame.moving .stage-slot.selected {
+  pointer-events: none;
+  /*
+   * And slightly see-through. Rows are ~13% of the stage apart while a sprite
+   * is ~30% tall, so the slot BEHIND you is always somewhere on your own body
+   * -- the mover is the figure most likely to be standing over the footprint
+   * they are trying to read. Enough transparency to see the mark through them,
+   * not enough to lose track of who is walking.
+   */
+  opacity: 0.72;
+}
+
+
 .stage-frame.aiming .stage-slot.targetable .unit {
   --mark: drop-shadow(0 0 7px var(--reach-edge)) drop-shadow(0 0 15px rgba(130, 190, 255, 0.4));
 }
@@ -428,6 +488,23 @@ body {
    by the hovered splash keeps the orange that says so. */
 .stage-frame.aiming .stage-slot.splash .unit {
   --mark: drop-shadow(0 0 8px #ffb14a) drop-shadow(0 0 16px rgba(255, 177, 74, 0.4));
+}
+
+/*
+ * Aiming at slots, written AFTER the `.aiming` rules above on purpose.
+ *
+ * Same specificity, so order alone decides it -- and placed before them these
+ * silently lost, which is the third time that has happened in this file. A
+ * reposition is not a hit: green says "trade places with them", where the blue
+ * the attack rules use says "this is who takes it".
+ */
+.stage-frame.moving .stage-slot.selected .unit {
+  --mark: drop-shadow(0 0 7px rgba(122, 176, 255, 0.95))
+    drop-shadow(0 0 16px rgba(122, 176, 255, 0.45));
+}
+
+.stage-frame.moving .stage-slot.targetable .unit {
+  --mark: drop-shadow(0 0 7px #8fd0a8) drop-shadow(0 0 15px rgba(143, 208, 168, 0.45));
 }
 
 /* Caught by the splash of whatever is currently hovered. */
@@ -498,17 +575,42 @@ body {
 
 /* On every carrier, lit only where it fires -- seeing the unlit one is what
    makes the reorder buttons mean something. */
-.queue .sym {
-  margin-left: 5px;
-  padding: 0 4px;
-  border-radius: 3px;
+/*
+ * A carried symbol, on a queue row and on an ability row.
+ *
+ * A bordered chip holding a MARK, not a word. It was the symbol's name in
+ * uppercase, which is three to seven characters of a rule the shape already
+ * states -- and it stated it once per ability, on every kit, forever.
+ *
+ * The chip is kept even though the glyph could float on its own: it is what
+ * makes the lit state (`on`) a thing that happens to a token rather than a
+ * colour change nobody notices.
+ */
+.queue .sym,
+.ability .sym {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  padding: 1px 4px;
+  border-radius: 4px;
   border: 1px solid rgba(255, 255, 255, 0.18);
-  color: rgba(255, 255, 255, 0.45);
-  font-size: 9px;
-  font-style: normal;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  vertical-align: 1px;
+  color: rgba(255, 255, 255, 0.5);
+  vertical-align: -2px;
+}
+
+/*
+ * An ability that has a TRIGGER on its symbol, not just a carrier.
+ *
+ * The distinction the old prose spent a whole sentence on -- "plays Thorn for
+ * whoever acts after" versus "if Thorn was already played..." -- is the one
+ * thing the mark alone cannot say, so it is the one thing left as a signal. A
+ * filled chip means this ability does something extra when it chains; an
+ * outlined one only ever arms for somebody else.
+ */
+.ability .sym.has-trigger {
+  border-color: rgba(196, 154, 60, 0.75);
+  background: rgba(196, 154, 60, 0.16);
+  color: #e6c47a;
 }
 
 .queue .sym.on {
@@ -526,8 +628,24 @@ body {
   line-height: 1.3;
 }
 
+/* The mark, then only what the mark cannot say. */
 .rules .sub.chain {
+  display: flex;
+  /* Top, not centre: the trigger text wraps to two lines and a centred mark
+     drifts down beside it, reading as a bullet that has come loose. */
+  align-items: flex-start;
+  gap: 7px;
   color: #d8b968;
+}
+
+.rules .sub.chain svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.rules .sub.chain strong {
+  color: #f0d089;
+  font-weight: 700;
 }
 
 .queue .ord {
@@ -1731,6 +1849,47 @@ select {
   color: #a9c6ef;
 }
 
+/*
+ * A status the creature is carrying, in the badge column above it.
+ *
+ * Frost reads as a FRACTION on purpose -- `2/3` says both where it is and what
+ * it costs, and the bar is the half that moves: after a freeze it becomes 2/6,
+ * which is the escalation stating itself without a word of explanation. A bare
+ * stack count would hide the only number that changes.
+ */
+.status-mark {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  border: 1px solid;
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  background: rgba(10, 14, 24, 0.92);
+}
+
+.status-mark.frost {
+  border-color: #58a6d8;
+  color: #bfe6ff;
+}
+
+/* Filled rather than outlined: frozen is a thing that HAPPENED, not a meter. */
+.status-mark.frozen {
+  border-color: #9fe0ff;
+  background: rgba(38, 96, 136, 0.95);
+  color: #ecfaff;
+  box-shadow: 0 0 10px rgba(120, 200, 255, 0.45);
+}
+
+.status-mark.asleep {
+  border-color: #8d7fc4;
+  color: #ded5ff;
+}
+
 /* The sentence the badge is short for. */
 .ramp-note {
   margin-top: 4px;
@@ -1745,6 +1904,75 @@ select {
 .ramp-note em {
   font-style: normal;
   font-weight: 700;
+}
+
+/*
+ * An empty square of the party grid, while a reposition is being aimed.
+ *
+ * A footprint on the stage floor rather than a tile: the backdrop is painted
+ * theatre, and a hard-edged square reads as a debug overlay laid on top of it.
+ * Anchored the way a unit is -- centred on the slot's own floor point -- so it
+ * sits exactly where the Performer who moves there will stand.
+ *
+ * ABOVE EVERY UNIT (`z-index: 250` against their 100-190), because sprites are
+ * drawn from the feet UP: anyone standing in a nearer row extends a full body
+ * height over the footprints behind them, and being painted under one made a
+ * slot you could see the edge of and not much else. A marker drawn over the
+ * character in front of it reads as "the spot is behind them", which is true.
+ *
+ * The BUTTON is much bigger than the mark it draws. The ellipse is a
+ * pseudo-element, so the visual stays a discreet footprint while the hit target
+ * is a comfortable 72x44 -- the thing being clicked is a gap between sprites,
+ * and sizing the target to the drawing made it a pixel hunt.
+ */
+.open-slot {
+  position: absolute;
+  z-index: 250;
+  width: 72px;
+  height: 44px;
+  padding: 0;
+  transform: translate(-50%, -50%);
+  border: 0;
+  background: none;
+  cursor: pointer;
+  animation: open-slot-breathe 1.9s ease-in-out infinite;
+}
+
+.open-slot::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 48px;
+  height: 23px;
+  transform: translate(-50%, -50%);
+  border: 2px dashed rgba(150, 195, 255, 0.92);
+  border-radius: 50%;
+  background: radial-gradient(ellipse at center, rgba(122, 176, 255, 0.3), rgba(10, 16, 30, 0.45) 72%);
+  /* A dark ring under the dashes. The mark is drawn OVER whoever is standing in
+     front of it, so it has to hold its edge against pixel art as often as
+     against floorboards -- a light dash alone disappears into a bright sprite. */
+  box-shadow: 0 0 0 2px rgba(6, 10, 20, 0.55), 0 0 10px rgba(6, 10, 20, 0.5);
+}
+
+.open-slot:hover::before,
+.open-slot:focus-visible::before {
+  border-color: #cfe1ff;
+  background: radial-gradient(ellipse at center, rgba(160, 200, 255, 0.45), transparent 72%);
+  box-shadow: 0 0 16px rgba(122, 176, 255, 0.55);
+}
+
+/* Slow, so it reads as "available" rather than as an alarm. */
+@keyframes open-slot-breathe {
+  0%, 100% { opacity: 0.65; }
+  50% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .open-slot {
+    animation: none;
+    opacity: 0.85;
+  }
 }
 
 .casting {
@@ -2769,6 +2997,69 @@ select {
 .passive-chip strong {
   font-size: 12.5px;
   color: #cfc4ff;
+}
+
+/*
+ * REPOSITION, beside the passive rather than in the ability list.
+ *
+ * Shaped like the passive chip because both answer "what is true of this
+ * Performer regardless of their kit" -- one is what they are, the other is what
+ * the board lets anyone do. Coloured like an ABILITY, though, because unlike
+ * the passive it is a thing you click and spend a die on: the same blue an
+ * ability row lights up in, so a live one reads as available rather than as
+ * more identity text.
+ */
+.board-chip {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  margin: 6px 0 0;
+  padding: 5px 8px;
+  border: 1px solid #33456b;
+  border-radius: 7px;
+  background: rgba(58, 96, 160, 0.14);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.board-chip:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.board-chip.ready:not(:disabled):hover {
+  border-color: var(--accent);
+  background: rgba(78, 130, 214, 0.28);
+}
+
+/* Chosen, and waiting for a slot to be clicked. */
+.board-chip.on {
+  border-color: var(--accent);
+  background: #26374f;
+}
+
+.board-chip .tag {
+  flex: none;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--dim);
+  font-size: 9px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.board-chip.ready:not(:disabled) .tag {
+  background: rgba(122, 176, 255, 0.24);
+  color: #cfe1ff;
+}
+
+.board-chip strong {
+  font-size: 12.5px;
+  color: #c3d8ff;
 }
 
 /*
