@@ -92,7 +92,19 @@ export function countBits(mask: number): number {
  * only name dice you can actually spend" is a property of the pool rather than
  * of whoever is asking.
  */
-export function payingMasks(pool: Die[], ability: Ability): number[] {
+/**
+ * Does this ability cost a single die for this caster right now?
+ *
+ * The one place that knows, because the answer stopped being a property of the
+ * ability alone the moment a charge could grant it -- and two implementations
+ * of "is this a wildcard" would drift the first time the rule moved. Callers
+ * with no unit in hand pass nothing and get the sheet's own answer.
+ */
+export function paysAsWildcard(ability: Ability, freeCast?: string | null): boolean {
+  return !!ability.wildcard || (!!freeCast && freeCast === ability.name);
+}
+
+export function payingMasks(pool: Die[], ability: Ability, freeCast?: string | null): number[] {
   const out: number[] = [];
   for (let mask = 1; mask < 1 << pool.length; mask++) {
     let sum = 0;
@@ -110,7 +122,7 @@ export function payingMasks(pool: Die[], ability: Ability): number[] {
     }
     if (!legal) continue;
     // Wildcards ignore the value entirely and eat exactly one die.
-    if (ability.wildcard ? count === 1 : sum === ability.cost) out.push(mask);
+    if (paysAsWildcard(ability, freeCast) ? count === 1 : sum === ability.cost) out.push(mask);
   }
   return out;
 }

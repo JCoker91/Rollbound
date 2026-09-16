@@ -995,6 +995,80 @@ bigger rather than appending a second event that reads as two hits in the log.
 
 **What he still needs:** enemies worth being a tank against — see §9.
 
+### Maxine — the Frost Artillery
+
+**Goal:** turn the cold somebody else put on the board into damage.
+
+Frost was authored as *"a shared resource rather than one character's private counter"* — Rebar
+builds it and spends it on control, and the counter was always waiting for a second reader to do
+something else with it. Maxine is that reader, and the first Performer whose damage is a function of
+the board state rather than of her own sheet.
+
+| | cost | effect | symbol |
+| --- | --- | --- | --- |
+| **Frostbolt** | wildcard | 100% ATK, **any target**, then 1 frost. | crescent |
+| **Blizzard** | 3 | 60% ATK to the whole line, then 1 frost to all. | crescent — *chained:* a second frost to every enemy |
+| **Glacial Lance** | 7 | 150% ATK, **200% against a frozen target**. | tide — *chained:* strikes 30% harder |
+| **Deep Cold** | 10 | 100% ATK to the whole line, **+25% per frost stack on each**. | tide — *chained:* 35% per stack instead of 25% |
+| *Killing Frost* | passive | +10% damage to frosted enemies, +20% to frozen. | |
+
+**The counter is the rules text.** Freezing SPENDS the stacks, so Deep Cold pays its minimum against
+exactly the targets Glacial Lance pays its maximum against. Frosted, cast Deep Cold; frozen, cast
+the Lance. Nothing explains that — the number above the creature's head does, and she holds one
+single-target and one area option on each side of the line.
+
+**Stacks are read, never spent.** An ability that consumed them would compete with the control half
+of the frost engine for the same resource, and two Performers quietly cancelling each other is the
+worst kind of interaction because nothing on either sheet admits it is happening.
+
+**Her ceiling rises with the fight rather than with the level.** The freeze bar escalates, so a
+creature can hold `3 × (freezes + 1) − 1` stacks before spending them: Deep Cold's reachable bonus is
++50% before a creature's first freeze, +125% before its second, +200% before its third. The control
+half of the team doing its job is what raises it.
+
+> A consequence worth authoring around: **Rebar's first Avalanche cannot set Deep Cold up**, because
+> its 3 stacks *are* the first threshold — it freezes and spends them. The second banks, the bar now
+> being 6. So his ultimate alternates between **freezing** (the turn for the Lance) and **loading**
+> (the turn for Deep Cold) — rhythm neither sheet states and both produce.
+
+**She is deliberately not self-sufficient, and that is the design rather than a gap.** Her appliers
+resolve `[damage, then frost]`, and decay clears the stack before her next turn, so nothing she does
+sets up her own bonuses: Killing Frost and the Lance's 200% pay out only on a *teammate's* frost.
+Reordering her effects would hand her a permanent flat buff and quietly make owning Rebar matter
+less. She is a damage dealer you **build around** — strong, and not complete alone.
+
+**And her chains want a partner who is not Rebar.** He carries `lantern` and `thorn`; her `crescent`
+comes from Kael or Veyra and her `tide` from Aethis. Fully powered she wants a three-character core.
+Giving every ice character one shared symbol would have made the composition puzzle trivial.
+
+**Her upgrade tiers ramp on purpose** — cheap and unremarkable, then nice to have, then the one worth
+saving for. Upgrades cost dice *and* a turn, so the question should always be which Performer
+deserves the investment; a tier list that opens with its best card never asks it.
+
+| | cost | effect |
+| --- | --- | --- |
+| **Deepening Chill** | 6 | A second `exploitCold`, stacking the passive to +20% / +30%. |
+| **Frostfever** | 8 | +5% ATK per frost stack landed on the enemy, for the rest of the turn. |
+| **Glacier Sight** | 12 | Whenever an enemy freezes, the next Glacial Lance costs any single die. |
+
+Frostfever is counted **per stack**, which is what makes it a team payoff: her own basic is worth
++5%, while Rebar's Avalanche across five creatures is worth +75%. It only reaches abilities resolved
+*after* the frost, so under commit-and-lock it is bought with turn ORDER rather than with dice — and
+since a Performer acts once a round, nothing she applies can pay for her own cast.
+
+Glacier Sight adds no damage; it removes the reason she could not afford to deal it. Her most
+expensive single-target hit is free on exactly the turn the board makes it worth 200%. Measured with
+all three tiers and Rebar opening on Avalanche: Glacial Lance goes 46 → **150** and costs one die.
+
+**What she introduced to the engine:** conditional power (`versus`), power that scales off a status
+counter (`perFrost`), the target-state twin of `frenzy` (`exploitCold`), a passive that fires on the
+ACT of applying a status (`frostFervor`), and a charge that changes what an ability costs
+(`freeCastOnFreeze`). `ChainTrigger` gained `sharpen`. All the damage-side pieces resolve inside
+`computeDamage`, so the forecast shows them before dice are committed.
+
+**What she still needs:** a star tree — hers, like every revamped character's, is placeholder
+content being redone as a batch.
+
 ---
 
 ## 9. Settled, and still open
@@ -1076,12 +1150,18 @@ bigger rather than appending a second event that reads as two hits in the log.
 2. **Party / lineup management.** In-battle repositioning covers the positional half now, so what
    is left is the *pre-battle* screen: which five perform, and their starting arrangement. Rebar
    stands in front because he was moved to second in a list.
-3. **The remaining four kits** — Kael, Maxine, Aethis, Brax. Two shapes exist now that did not when
-   they were written: a passive can change the **pool** rather than a stat (`extraDie`), and an
-   upgrade tier can grant any passive at all. Note their tiers' +10% stat bonus is genuine filler —
-   only Benjamin converts personal stats into team stats — so their passives have to carry them.
-4. **A chain trigger for Rebar**, which his own §8 entry lists as outstanding. He carries symbols
-   and benefits from none of them.
+3. **The remaining three kits** — Kael, Aethis, Brax. Benjamin, Rebar and Maxine are done. Shapes
+   that exist now and did not when the rest were written: a passive can change the **pool** rather
+   than a stat (`extraDie`), can be a **reactive rider** (`riposte`), can read the **target's state**
+   (`exploitCold`) or the **act of applying a status** (`frostFervor`); an ability's power can be
+   conditional (`versus`) or scale off a counter (`perFrost`); and an upgrade tier can grant a
+   **charge that changes what an ability costs** (`freeCastOnFreeze`). Note their tiers' +10% stat
+   bonus is genuine filler — only Benjamin converts personal stats into team stats — so their
+   passives have to carry them.
+   > **Frost has its two readers and wants no more.** Rebar builds it, Maxine converts it. A third
+   > would make the frost team the answer to everything; these three should each claim their own.
+4. **Redo every star tree.** All of them predate the kit rewrites and several reference mechanics
+   their character no longer has. Being done as a batch once the kits above are settled.
 
 **Smaller, and unordered:**
 

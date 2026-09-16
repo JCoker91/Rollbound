@@ -14,6 +14,7 @@ import type {
   ModStat,
   Side,
   Unit,
+  VersusPower,
 } from './types.ts';
 import {
   alive,
@@ -26,7 +27,7 @@ import {
 import { Rng } from './rng.ts';
 import { applyLevel } from './levels.ts';
 import { bestPlan, type Action } from './allocate.ts';
-import { byIds, rollPool, sumOf, usable, type DieEntry, STANDARD_D6 } from './dice.ts';
+import { byIds, paysAsWildcard, rollPool, sumOf, usable, type DieEntry, STANDARD_D6 } from './dice.ts';
 import {
   activePassives,
   baseStat,
@@ -213,6 +214,7 @@ export function createBattle(
       cooldowns: {},
       carry: {},
       resistMods: {},
+      freeCast: null,
       pending: null,
       intent: null,
       };
@@ -575,8 +577,8 @@ function checkAction(
   if (!picked.every(usable)) return 'Those dice cannot be spent.';
 
   const sum = sumOf(picked);
-  if (ability.wildcard ? picked.length !== 1 : sum !== ability.cost) {
-    return ability.wildcard
+  if (paysAsWildcard(ability, unit.freeCast) ? picked.length !== 1 : sum !== ability.cost) {
+    return paysAsWildcard(ability, unit.freeCast)
       ? `${ability.name} takes exactly one die.`
       : `${ability.name} costs ${ability.cost}; you selected ${sum}.`;
   }
@@ -730,6 +732,10 @@ export function commitNext(s: BattleState): PlannedAction | null {
     }
 
     unit.hasActed = true;
+    // Spent on USE, not on the next freeze -- a charge that silently refreshed
+    // would make the upgrade "Glacial Lance is free whenever anything is frozen"
+    // rather than "the next one is".
+    if (unit.freeCast === ability.name) unit.freeCast = null;
     // `+1` because Start Turn counts every cooldown down, including the turn
     // this was cast on. A 2-turn cooldown therefore locks out the next two
     // turns and is ready on the third -- turns you cannot use it, which is how
@@ -788,8 +794,8 @@ export function commitAction(
 
   const values = picked.map((d) => d.value);
   const sum = sumOf(picked);
-  if (ability.wildcard ? picked.length !== 1 : sum !== ability.cost) {
-    return ability.wildcard
+  if (paysAsWildcard(ability, unit.freeCast) ? picked.length !== 1 : sum !== ability.cost) {
+    return paysAsWildcard(ability, unit.freeCast)
       ? `${ability.name} takes exactly one die.`
       : `${ability.name} costs ${ability.cost}; you selected ${sum}.`;
   }
@@ -801,6 +807,7 @@ export function commitAction(
 
   for (const d of picked) d.spent = true;
   unit.hasActed = true;
+  if (unit.freeCast === ability.name) unit.freeCast = null;
   if (ability.cooldown) unit.cooldowns[ability.name] = ability.cooldown + 1;
   s.log.push({ t: 'act', side: s.phase, actor: unit.def.name, ability: ability.name, dice: values });
 
@@ -888,6 +895,8 @@ function applyEffects(
         for (const target of targets) {
           strike(s, source, ability, target, {
             power: fx.power,
+            versus: fx.versus,
+            perFrost: fx.perFrost,
             damageType: fx.damageType ?? ability.damageType,
             element: fx.element ?? ability.element,
           });
@@ -985,12 +994,22 @@ function strike(
   source: Unit,
   ability: Ability,
   target: Unit,
-  over?: { power?: number; damageType?: DamageType; element?: Element },
+  over?: {
+    power?: number;
+    versus?: VersusPower;
+    perFrost?: number;
+    damageType?: DamageType;
+    element?: Element;
+  },
 ): void {
   const shot: Ability = over
     ? {
         ...ability,
         power: over.power ?? ability.power,
+        // Taken from the EFFECT when it names one, so an effect list can hold a
+        // conditional without the ability-level field having to agree with it.
+        versus: over.versus ?? ability.versus,
+        perFrost: over.perFrost ?? ability.perFrost,
         damageType: over.damageType ?? ability.damageType,
         element: over.element ?? ability.element,
       }
@@ -1125,11 +1144,28 @@ function triggeredEffects(ability: Ability, trigger: ChainTrigger): Effect[] {
   // does bigger, rather than appending a second hit that reads as two events.
   if (trigger.empower !== undefined) {
     const by = trigger.empower;
-    fx = fx.map((e) => (e.do === 'damage' ? { ...e, power: e.power + by } : e));
+    fx = fx.map((e) => {
+      if (e.do !== 'damage') return e;
+      // The CONDITIONAL powers move with the base one. `powerAgainst` returns
+      // `versus.frozen` INSTEAD of `power`, so raising only `power` would make
+      // a chain worth nothing against exactly the targets a `versus` ability
+      // was written for -- Glacial Lance would strike 30% harder on a thawed
+      // creature and not a point harder on a frozen one.
+      const versus =
+        e.versus && Object.fromEntries(
+          Object.entries(e.versus).map(([k, v]) => [k, (v as number) + by]),
+        );
+      return { ...e, power: e.power + by, ...(versus ? { versus } : null) };
+    });
   }
   if (trigger.deepen !== undefined) {
     const by = trigger.deepen;
     fx = fx.map((e) => (e.do === 'frost' ? { ...e, stacks: e.stacks + by } : e));
+  }
+  if (trigger.sharpen !== undefined) {
+    const by = trigger.sharpen;
+    // Only where scaling already exists. See `ChainTrigger.sharpen`.
+    fx = fx.map((e) => (e.do === 'damage' && e.perFrost ? { ...e, perFrost: e.perFrost + by } : e));
   }
   if (trigger.guardAlso) {
     // ADDS a type rather than replacing one -- the guard still answers what it
@@ -1157,8 +1193,38 @@ function applyAbility(
   centre: Pos,
   trigger?: ChainTrigger,
 ): void {
-  if (ability.effects) {
-    applyEffects(s, source, ability, centre, trigger && triggeredEffects(ability, trigger));
+  /*
+   * A trigger's magnitudes all operate on the EFFECT LIST, so an ability
+   * authored the legacy way -- a bare `power` and no list -- used to fall
+   * through to the switch below and drop its trigger entirely. Silently: the
+   * chain still logged as firing, and nothing happened.
+   *
+   * Nothing shipped had the bug, but only by luck; every triggered ability so
+   * far happened to be written with effects. Synthesising the one-effect list
+   * an attack is equivalent to closes it for good, so a trigger works wherever
+   * it is written rather than only where the author guessed right.
+   */
+  const own: Effect[] | null =
+    ability.effects ??
+    (trigger && ability.kind === 'attack'
+      ? [
+          {
+            do: 'damage',
+            power: ability.power,
+            ...(ability.versus ? { versus: ability.versus } : null),
+            ...(ability.perFrost ? { perFrost: ability.perFrost } : null),
+          },
+        ]
+      : null);
+
+  if (own) {
+    applyEffects(
+      s,
+      source,
+      ability,
+      centre,
+      trigger ? triggeredEffects({ ...ability, effects: own }, trigger) : own,
+    );
     return;
   }
 
@@ -1334,8 +1400,52 @@ const hasRiposte = (u: Unit): boolean => u.modifiers.some((m) => m.riposte);
  * what turns "3, then 6, then 9" into an escalation. Leaving them on the
  * target would make every freeze after the first cost the same three.
  */
+/**
+ * Pay out `frostFervor` to whoever is standing opposite the frosted unit.
+ *
+ * Read off the TARGET's side rather than from a source parameter, the same way
+ * `chill` is: `addFrost` is called reactively as well as from an effect list,
+ * and a riposte has no caster to attribute the stack to.
+ *
+ * ACCUMULATES within the turn instead of refreshing. `applyModifier` keys on
+ * ability + stat and replaces what it finds, which is right for a buff cast
+ * twice and exactly wrong here -- five creatures frosted one at a time have to
+ * add up to five, not overwrite each other down to one.
+ */
+function payFrostFervor(s: BattleState, target: Unit, stacks: number): void {
+  for (const u of s.units) {
+    if (u.side === target.side || !alive(u)) continue;
+    for (const p of activePassives(u)) {
+      if (p.kind !== 'frostFervor') continue;
+      // `targetBase` with the holder as both parties: a percentage of their own
+      // BASE attack, so the buff is worth the same whether or not it is the
+      // second one this turn. Reading `casterCurrent` would compound.
+      const gained = resolveModifierAmount(u, u, 'attack', p.percent * stacks, 'targetBase');
+      const had = u.modifiers.find((m) => m.ability === FERVOR && m.stat === 'attack');
+      applyModifier(s, u, {
+        ability: FERVOR,
+        stat: 'attack',
+        amount: (had?.amount ?? 0) + gained,
+        // ONE turn: earned and spent inside the round it was set up in. See
+        // BATTLE_DESIGN section 2 -- a duration applied this turn ticks at the
+        // end of this turn.
+        turns: 1,
+        by: u.side,
+      });
+    }
+  }
+}
+
+/** The modifier key the fervor buff accumulates under. */
+const FERVOR = 'Frostfever';
+
 function addFrost(s: BattleState, target: Unit, stacks: number): void {
   if (!alive(target) || stacks <= 0) return;
+
+  // Paid on APPLICATION, before the branches below decide what becomes of the
+  // stacks. Frost that freezes, and frost that shatters on something already
+  // frozen, were both applied -- the passive reads the act, not the outcome.
+  payFrostFervor(s, target, stacks);
 
   // ALREADY FROZEN: the stacks shatter instead of banking. See
   // `SHATTER_PER_STACK` -- a creature that is already out of an action cannot
@@ -1374,6 +1484,14 @@ function addFrost(s: BattleState, target: Unit, stacks: number): void {
     spent,
     nextThreshold: freezeThreshold(target),
   });
+
+  // Arm `freeCastOnFreeze` for the side that is not the one freezing.
+  for (const u of s.units) {
+    if (u.side === target.side || !alive(u)) continue;
+    for (const p of activePassives(u)) {
+      if (p.kind === 'freeCastOnFreeze') u.freeCast = p.ability;
+    }
+  }
 }
 
 /** Sleep until damaged. Self-inflicted so far; the wake is in `strike`. */

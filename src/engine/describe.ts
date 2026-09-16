@@ -1,5 +1,5 @@
 import { describeDie } from './dice.ts';
-import type { Ability, Effect, ModStat, Passive } from './types.ts';
+import type { Ability, Effect, ModStat, Passive, VersusPower } from './types.ts';
 import { DEFAULT_MODIFIER_TURNS } from './combat.ts';
 import { STRONG_RESIST, WEAK_RESIST, strongAgainst, weakTo } from './elements.ts';
 
@@ -7,6 +7,23 @@ const cap = (s: string): string => s[0]!.toUpperCase() + s.slice(1);
 const pct = (n: number): string => `${Math.round(n * 100)}%`;
 
 const slots = (n: number): string => `${n} slot${n === 1 ? '' : 's'}`;
+
+/**
+ * " -- 200% against a frozen target" and nothing at all when no condition is set.
+ *
+ * Written as a trailing clause rather than a second sentence so it survives
+ * being joined into a multi-effect list, where "Deals X. If frozen, Y." would
+ * put a full stop in the middle of one.
+ */
+function versusClause(v: VersusPower | undefined): string {
+  if (v?.frozen === undefined) return '';
+  return ` — ${pct(v.frozen)} against a frozen target`;
+}
+
+/** ", +25% per frost stack on it" — the counter is read, never spent. */
+function perFrostClause(per: number | undefined): string {
+  return per ? `, +${pct(per)} per frost stack on it` : '';
+}
 
 /**
  * How deep into the enemy line this reaches. Ranks are counted over those that
@@ -90,7 +107,10 @@ function describeEffect(a: Ability, fx: Effect, sameTargetAsPrevious: boolean): 
       const type = fx.damageType ?? a.damageType ?? 'physical';
       const element = fx.element ?? a.element;
       const kind = type === 'true' ? 'true' : element ? `${cap(element)} ${type}` : type;
-      return `deals ${pct(fx.power)} of ATK as ${kind} damage to ${name}`;
+      return (
+        `deals ${pct(fx.power)} of ATK as ${kind} damage to ${name}` +
+        `${versusClause(fx.versus)}${perFrostClause(fx.perFrost)}`
+      );
     }
     case 'heal':
       // Says what the percentage is OF, because "90% of ATK" and "25% of max
@@ -174,7 +194,10 @@ export function describeAbility(a: Ability): string {
       const type = a.damageType ?? 'physical';
       const kind =
         type === 'true' ? 'true' : a.element ? `${cap(a.element)} ${type}` : type;
-      return `Deals ${pct(a.power)} of ATK as ${kind} damage to ${targetPhrase(a)}.`;
+      return (
+        `Deals ${pct(a.power)} of ATK as ${kind} damage to ${targetPhrase(a)}` +
+        `${versusClause(a.versus)}${perFrostClause(a.perFrost)}.`
+      );
     case 'heal':
       return `Restores ${pct(a.power)} of ATK as HP to ${targetPhrase(a)}.`;
     case 'move':
@@ -244,6 +267,14 @@ export function describePassive(p: Passive): string {
       return (
         `While this Performer is standing, frosted enemies deal ${p.percent}% less damage per ` +
         `frost stack, up to ${p.max} stacks — ${p.percent * p.max}% at full.`
+      );
+    case 'frostFervor':
+      return `Gains ${p.percent}% attack for the rest of the turn each time frost lands on an enemy.`;
+    case 'freeCastOnFreeze':
+      return `Whenever an enemy freezes, the next ${p.ability} costs any single die.`;
+    case 'exploitCold':
+      return (
+        `Deals ${p.frosted}% more damage to frosted enemies, and ${p.frozen}% more to frozen ones.`
       );
     case 'dormant':
       return `Takes ${p.percent}% less damage while asleep.`;

@@ -7,6 +7,7 @@ import { scoreAction, canTarget, scoreUpgrade } from './combat.ts';
 import { countBits, maskToDice, maskToIds, payingMasks } from './dice.ts';
 
 export { countBits, maskToDice, maskToIds, payingMasks };
+export { paysAsWildcard } from './dice.ts';
 
 export interface Action {
   unit: Unit;
@@ -76,7 +77,7 @@ function optionsFor(unit: Unit, dice: Die[], allies: Unit[], enemies: Unit[]): O
     if ((unit.cooldowns[ability.name] ?? 0) > 0) continue;
     const placement = bestTarget(unit, ability, allies, enemies);
     if (!placement) continue;
-    for (const mask of payingMasks(dice, ability)) {
+    for (const mask of payingMasks(dice, ability, unit.freeCast)) {
       const existing = byMask.get(mask);
       if (existing && existing.action.score >= placement.score) continue;
       byMask.set(mask, {

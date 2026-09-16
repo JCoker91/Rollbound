@@ -112,8 +112,63 @@ export type EffectTarget =
  * construction, and a kit that wants the other behaviour writes the effects
  * the other way round.
  */
+/**
+ * A REPLACEMENT power, used when the target is in a given state.
+ *
+ * "Deals 150% of ATK; if the target is frozen, 200% instead" -- the sheet says
+ * *instead*, so this replaces `power` rather than multiplying it. A multiplier
+ * would compound with the element wheel and with crit, and the ability would
+ * quietly pay out more than its own text promises; a replacement pays exactly
+ * the number written.
+ *
+ * Resolved inside the damage formula rather than at resolution time, which is
+ * what makes it legible: `computeDamage` is what the forecast panel calls, so
+ * aiming at a frozen creature SHOWS the larger number before any dice are
+ * spent. Under commit-and-lock that is not a nicety -- a payoff the player
+ * cannot see until after committing is a payoff they cannot plan around.
+ *
+ * Keyed by status so a second condition is one field rather than a new system.
+ * Only `frozen` exists because only `frozen` has a character built on it.
+ */
+export interface VersusPower {
+  frozen?: number;
+}
+
+/**
+ * Extra power per frost stack ON THE TARGET, added to whatever base applies.
+ *
+ * The counter is read, never spent -- an ability that consumed stacks would be
+ * competing with the control half of the frost engine for the same resource,
+ * and two Performers quietly undoing each other is the worst kind of
+ * interaction because nothing in either sheet says it is happening.
+ *
+ * Its ceiling is the escalating freeze bar rather than a cap written here. A
+ * creature cannot hold more than `3 x (freezes + 1) - 1` stacks without
+ * freezing and spending them, so the reachable bonus rises only as that
+ * creature is frozen more often: 2 stacks before its first freeze, 5 before its
+ * second, 8 before its third. That is the scaling stating itself through a rule
+ * that already exists.
+ *
+ * And it carries its own drawback, which is the point. A FROZEN creature has
+ * just spent every stack it had, so this pays its minimum against exactly the
+ * targets a `versus.frozen` ability pays its maximum against. The two shapes
+ * answer opposite board states, so the frost counter tells the player which
+ * ability to reach for without a word of explanation.
+ */
+export type PerFrostPower = number;
+
 export type Effect =
-  | { do: 'damage'; power: number; damageType?: DamageType; element?: Element; on?: EffectTarget }
+  | {
+      do: 'damage';
+      power: number;
+      /** See `VersusPower`. Overrides the ability's own, same as `power`. */
+      versus?: VersusPower;
+      /** See `PerFrostPower`. Overrides the ability's own, same as `power`. */
+      perFrost?: PerFrostPower;
+      damageType?: DamageType;
+      element?: Element;
+      on?: EffectTarget;
+    }
   /**
    * Restore HP, as a fraction of `of`.
    *
@@ -259,6 +314,20 @@ export interface ChainTrigger {
   /** Added to the `stacks` of every `frost` effect. */
   deepen?: number;
   /**
+   * Added to the `perFrost` of every damage effect that already has one.
+   *
+   * Steepens existing scaling rather than creating it, which is what makes it
+   * safe to write on any ability: one that reads no counter is left alone
+   * instead of silently growing a new mechanic from a chain.
+   *
+   * The reason to reach for this over `empower` on an area ability: `empower`
+   * pays out per target whether or not anyone set the caster up, so on a
+   * five-target spell it is several times the band for no condition. `sharpen`
+   * pays nothing at all against a clean board and everything against a cold
+   * one, so the chain rewards the same preparation the ability already wants.
+   */
+  sharpen?: number;
+  /**
    * Widen a riposte to answer this damage type as well as its own.
    *
    * A guard that only answers steel is a deliberate hole -- see Rebar, whose
@@ -305,6 +374,12 @@ export interface Ability {
    * amount added to the target's stat.
    */
   power: number;
+  /**
+   * Conditional power against a target in a given state. See `VersusPower`.
+   */
+  versus?: VersusPower;
+  /** Added power per frost stack on the target. See `PerFrostPower`. */
+  perFrost?: PerFrostPower;
   /**
    * What the hit is made of, or absent for no element at all.
    *
@@ -479,6 +554,58 @@ export type Passive = {
    * reach the bar.
    */
   | { kind: 'chill'; percent: number; max: number }
+  /**
+   * This character HITS COLD TARGETS HARDER: `frosted` percent more damage
+   * against anything carrying frost, `frozen` percent more against anything
+   * actually frozen.
+   *
+   * `frenzy` read the same way round for its own side -- more damage under a
+   * condition -- but the condition was the ATTACKER's health. This is its twin
+   * pointed at the victim, and the reason the numeric-passive helper could not
+   * serve it: one percentage is not enough to describe two board states.
+   *
+   * The two are exclusive rather than cumulative. Freezing SPENDS the stacks,
+   * so a frozen creature is carrying none and the `frosted` case cannot apply
+   * to it -- the states are already disjoint in the engine, and writing them as
+   * a branch says so rather than relying on it.
+   *
+   * Deliberately flat, not per-stack. A per-stack version would be `chill`
+   * inverted, and it would double up with an ability that already scales on the
+   * counter (`perFrost`) so the same stack paid twice on the same cast. Flat
+   * means the passive answers "is it cold at all" and the ability answers "how
+   * cold", which keeps the two readable side by side.
+   */
+  | { kind: 'exploitCold'; frosted: number; frozen: number }
+  /**
+   * WHENEVER FROST LANDS ON THE OTHER SIDE, this character's attack rises by
+   * `percent` PER STACK for the rest of the turn.
+   *
+   * Counted per stack and not per cast, which is what makes it a team payoff
+   * rather than a personal one: a basic applying one is worth +5%, while an
+   * area applier covering five creatures with three stacks each is worth +75%.
+   * The ceiling is set by what the rest of the party does, and it is spent the
+   * same turn it is earned.
+   *
+   * Order is the whole cost. The buff only reaches abilities resolved AFTER the
+   * frost, so under commit-and-lock it is paid for by queueing the appliers
+   * first -- and a Performer acts once a round, so nothing the holder applies
+   * can ever pay for their own cast.
+   */
+  | { kind: 'frostFervor'; percent: number }
+  /**
+   * When anything on the other side FREEZES, the named ability may next be cast
+   * for any single die, as a wildcard.
+   *
+   * Stored as a charge on the unit (`Unit.freeCast`) rather than as a discount
+   * written onto the ability, because ability definitions are shared content:
+   * writing to one would make every later copy of it free for everybody.
+   *
+   * Names one ability rather than applying to all of them. "Your whole kit is
+   * free after a freeze" is a different and much larger upgrade; the point of
+   * this one is to make a specific expensive nuke reachable on the exact turn
+   * the board is set up for it.
+   */
+  | { kind: 'freeCastOnFreeze'; ability: string }
   /**
    * Takes `percent` less damage WHILE ASLEEP.
    *
@@ -935,6 +1062,13 @@ export interface Unit {
    * immunity is exactly this with a one-round life.
    */
   resistMods: Partial<Record<Element, number>>;
+  /**
+   * An ability name this unit may next cast as a wildcard, or null.
+   *
+   * A CHARGE, spent on use, granted by `freeCastOnFreeze`. Lives on the unit so
+   * the shared ability definition is never written to.
+   */
+  freeCast: string | null;
   /** A telegraphed ability that has been announced but has not landed yet. */
   pending: PendingCast | null;
   /**

@@ -252,10 +252,47 @@ function unmitigatedDamage(source: Unit, ability: Ability): number {
   return (unitAttack(source) * (1 + frenzy / 100) * ability.power) / ATK_PER_DAMAGE;
 }
 
+/**
+ * The power this ability actually pays against THIS target.
+ *
+ * Exported because the panel wants to say "200% instead" without re-deriving
+ * the rule, and two places computing the same condition is how they drift.
+ */
+export function powerAgainst(ability: Ability, target: Unit): number {
+  const base =
+    ability.versus?.frozen !== undefined && target.statuses.frozen > 0
+      ? ability.versus.frozen
+      : ability.power;
+  // Added AFTER the conditional base rather than folded into it, so the two
+  // compose predictably if an ability ever carries both. In practice they never
+  // pay out together: freezing spends the stacks, so a frozen target has none.
+  return base + (ability.perFrost ?? 0) * target.statuses.frost;
+}
+
+/**
+ * Bonus percent from `exploitCold`, read off the TARGET's cold state.
+ *
+ * Summed across sources like every other passive, so a second one stacks rather
+ * than replacing. Frozen and frosted are a branch, not a sum: freezing spends
+ * the stacks, so nothing is ever both.
+ */
+function coldBonus(source: Unit, target: Unit): number {
+  let pct = 0;
+  for (const p of activePassives(source)) {
+    if (p.kind !== 'exploitCold') continue;
+    if (target.statuses.frozen > 0) pct += p.frozen;
+    else if (target.statuses.frost > 0) pct += p.frosted;
+  }
+  return pct;
+}
+
 function elementalDamage(source: Unit, ability: Ability, target: Unit): number {
   const frenzy = source.hp * 2 <= unitMaxHp(source) ? passive(source, 'frenzy') : 0;
-  const atk = unitAttack(source) * (1 + frenzy / 100);
-  const base = (atk * ability.power) / ATK_PER_DAMAGE;
+  // Added to frenzy rather than multiplied with it, for the reason
+  // `reductionPercent` gives on the other side of the formula: additive is the
+  // thing a player can do in their head.
+  const atk = unitAttack(source) * (1 + (frenzy + coldBonus(source, target)) / 100);
+  const base = (atk * powerAgainst(ability, target)) / ATK_PER_DAMAGE;
   // Mitigation is `K / (K + DEF)` -- diminishing returns, never negative damage,
   // never immunity, and each point of DEF buys a constant slice of effective HP.
   // Subtractive `ATK - DEF` has none of those properties: it needs clamping at

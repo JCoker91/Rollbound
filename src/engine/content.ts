@@ -737,25 +737,237 @@ export const ROSTER: CharacterDef[] = [
     // shell the boss from outside the only attack that threatens her.
     maxHp: 36, attack: 108, physicalDefense: 20, magicalDefense: 40,
     sprite: sprite('maxine'),
-    // Nine HP behind the line, so the sustain has to come from the damage she
-    // deals rather than from anyone spending a turn on her.
-    passives: [{ name: 'Rime Siphon', kind: 'lifesteal', percent: 10 }],
+    /*
+     * Replaced Rime Siphon (10% lifesteal), which was frost-flavoured and did
+     * nothing with frost -- and was one of THREE sources of the same stat on
+     * her, alongside a star node at 12% and an upgrade tier at 18%, two of them
+     * both called "Mana Siphon".
+     *
+     * This ties the whole kit to the one counter her play is about. Every
+     * ability she owns gets better against a cold target, not just the two that
+     * name frost in their rules text, so the passive states her play style
+     * rather than adding an unrelated number to it.
+     *
+     * 10/20 is deliberately small. The ability-level conditionals are where her
+     * real swings live -- Glacial Lance 150 -> 200 and Deep Cold 100 -> 225 --
+     * and a passive big enough to compete with those would flatten the choice
+     * between them into "whichever is buffed more right now". At these numbers
+     * it amplifies both sides of that decision without moving where the
+     * crossover sits: against a frozen target the Lance still wins by roughly
+     * double, and from about three stacks Deep Cold still wins.
+     *
+     * IT PAYS OUT ONLY ON A TEAMMATE'S FROST, AND THAT IS THE DESIGN. Her own
+     * appliers resolve damage before frost, and decay clears the stack before
+     * her next turn, so nothing she does sets her own bonus up. Reordering her
+     * effects to `[frost, damage]` would hand her a permanent +10% on the two
+     * abilities that apply it, turning a board-state reward into a flat buff
+     * with extra steps -- and it would quietly make owning Rebar matter less.
+     * She is meant to be a damage dealer you BUILD AROUND: strong, and not
+     * self-sufficient. That is a decision, not a gap to close.
+     */
+    passives: [{ name: 'Killing Frost', kind: 'exploitCold', frosted: 10, frozen: 20 }],
     abilities: [
-      // The only ranged wildcard in the roster: low power, but it means she
-      // contributes from safety on a die nobody else wanted.
-      { symbol: 'crescent', name: 'Frostbolt', cost: 0, wildcard: true, kind: 'attack', damageType: 'magical', power: 0.7, element: 'water', range: 3 },
-      { symbol: 'crescent', name: 'Rime Shard', cost: 3, kind: 'attack', damageType: 'magical', power: 1.15, element: 'water', range: 4 },
-      // Her identity. Costs 7 and outranges the whole board.
-      { symbol: 'tide', name: 'Glacial Lance', cost: 7, kind: 'attack', damageType: 'magical', power: 2.0, element: 'water', range: 5 },
-      // Inherits the 10 slot the healer vacated -- uncontested by every other kit.
-      { symbol: 'tide', name: 'Absolute Zero', cost: 10, kind: 'attack', damageType: 'magical', power: 1.5, element: 'water', range: 4, scope: 'all' },
+      /*
+       * Her basic, and the shape of her whole kit in one ability: reach
+       * anything, chip it, keep the cold on it.
+       *
+       * 100% of ATK is deliberately the LOW end of the damage scale and not the
+       * high end it looks like. The opposed-stat formula is level-invariant, so
+       * a power value is a fixed share of a health bar at every level: 100%
+       * lands at ~10% of the target's bar at level 1, 20 and 50 alike. Ten
+       * casts to kill is chip damage by any reading.
+       *
+       * One frost stack nets ZERO against decay, and that is the job rather
+       * than a shortfall. A wildcard exists to spend dice that would otherwise
+       * go unused, so turning a dead die into "the cold does not melt this
+       * round" is maintenance: it HOLDS a target one step in, where chill reads
+       * it every enemy phase and anyone else feeding frost starts from one
+       * instead of zero. Building toward a freeze still takes more than one
+       * stack a round or more than one Performer, which is the composition goal
+       * enforcing itself.
+       *
+       * Against an already-frozen target the stack shatters instead of banking,
+       * so the basic keeps paying out with no rider written for it.
+       */
+      {
+        symbol: 'crescent', name: 'Frostbolt', cost: 0, wildcard: true, kind: 'attack',
+        damageType: 'magical', power: 1.0, element: 'water', range: 5,
+        // DAMAGE BEFORE FROST, and the order is load-bearing -- do not "fix" it.
+        // Effects resolve top to bottom, so writing it this way means the stack
+        // she applies cannot buy her own Killing Frost bonus on the same cast,
+        // and decay clears it before her next turn. Her passive therefore pays
+        // out only on frost a TEAMMATE put there. That is the design: she is a
+        // damage dealer you have to build around, not one who sets herself up.
+        // See her `passives` entry.
+        effects: [
+          { do: 'damage', power: 1.0 },
+          { do: 'frost', stacks: 1 },
+        ],
+      },
+      /*
+       * Her cheap area tool, and the reason the whole line is worth frosting.
+       *
+       * Replaced Rime Shard, which was the same card as Frostbolt wearing a
+       * price tag -- same symbol, same single target, same element, paying
+       * three dice for +0.45 power and one rank of reach. That is an
+       * affordability check rather than a decision, and a kit with four
+       * abilities cannot afford to spend one on it.
+       *
+       * 60% is deliberately the LOWEST area power on the roster, and the low
+       * number is what protects the rest of the kit rather than a shortfall in
+       * it. Per target it is ~6% of a health bar, about seventeen casts to kill
+       * -- chip. Were it competitive AND frosting the whole line for one die it
+       * would be the only thing she ever casts, and Glacial Lance would never
+       * be worth seven. Reading its 5x60% as "300%" overstates it: that total
+       * is spread across five separate bars and shortens none of them.
+       *
+       * The frost is the real payload -- five stacks a cast, which rivals
+       * Avalanche per die. What keeps that honest is the decay rule: one stack
+       * nets zero, so this can never freeze on its own. It HOLDS a line at one
+       * stack where chill reads it and where a real applier starts from one
+       * instead of zero. Maintenance; Avalanche detonates.
+       *
+       * Cost 3 pays 78.2% of the time on 5d6 -- just under the reliable 4-6
+       * band, which is the right feel for something cast most turns but not
+       * bankable.
+       */
+      {
+        symbol: 'crescent', name: 'Blizzard', cost: 3, kind: 'attack',
+        damageType: 'magical', power: 0.6, element: 'water', range: 5, scope: 'all',
+        /*
+         * The chain buys a RULE, not a number, which is the best thing a
+         * trigger can do. One stack a round nets zero against decay, so
+         * unchained this holds a line at one stack forever; two nets +1, so
+         * chained it climbs toward the bar. Maintenance becomes construction
+         * for the price of a matching symbol.
+         *
+         * Deliberately no `empower` alongside it. At +20% power across five
+         * targets the damage alone measured 4.2x the band §4 sets for a
+         * trigger (+25 against Glacial Lance's +6), and it would have ridden on
+         * top of the frost rather than instead of it -- two payoffs where the
+         * budget is one, and a chain that is strictly better in every dimension
+         * with nothing given up.
+         */
+        trigger: { text: 'applies a second frost to every enemy', deepen: 1 },
+        // Damage before frost, for the reason spelled out on Frostbolt.
+        effects: [
+          { do: 'damage', power: 0.6 },
+          { do: 'frost', stacks: 1 },
+        ],
+      },
+      /*
+       * Her payoff, and the reason the rest of the kit applies frost at all.
+       *
+       * 150% normally, 200% into a frozen target -- a REPLACEMENT, not a
+       * multiplier, so the ability pays exactly the number on the sheet rather
+       * than compounding with the wheel and with crit. Down from a flat 200%:
+       * the old version was the best thing she could do at every moment, which
+       * left the frost half of her kit decorative.
+       *
+       * The window is the point. A freeze is held for the phase it denies and
+       * thaws at that phase's End Turn, so a target frozen on the player's turn
+       * is frozen for the REST of that turn -- long enough for someone else to
+       * cash it, not long enough to bank. She cannot set it up and cash it
+       * herself, because a Performer acts once a round; it wants Rebar freezing
+       * first, or a second frost carrier. That is a 3-star pair being worth
+       * more than the sum of its parts, which is the composition goal stated at
+       * the level of two specific characters.
+       */
+      {
+        symbol: 'tide', name: 'Glacial Lance', cost: 7, kind: 'attack',
+        damageType: 'magical', power: 1.5, versus: { frozen: 2.0 },
+        element: 'water', range: 5,
+        // The canonical trigger from §4 -- "deal an additional 30% of ATK" --
+        // on the one ability in her kit with no rider to deepen instead.
+        // `empower` raises the frozen case as well as the base, so the chain is
+        // worth the same 30% against the targets this ability is FOR; see
+        // `triggeredEffects`.
+        trigger: { text: 'strikes 30% harder', empower: 0.3 },
+        // Written as a list because a trigger's magnitudes operate on one.
+        effects: [{ do: 'damage', power: 1.5, versus: { frozen: 2.0 } }],
+      },
+      /*
+       * Her ultimate, and the only ability on the roster that reads a status
+       * counter as a damage input.
+       *
+       * 100% base is low for ten dice ON PURPOSE: the floor is what she gets
+       * with no help, and the ceiling is what the team builds for her. Against
+       * a line Blizzard is maintaining at one stack it is 125%; against one
+       * Rebar has loaded to three it is 175%; at five, 225%. A flat 150% paid
+       * the same whether or not anyone set it up, which is the version that
+       * made the frost half of her kit decorative.
+       *
+       * It GROWS with the fight rather than with the level, because the freeze
+       * bar escalates. A creature can hold `3 x (freezes + 1) - 1` stacks before
+       * it freezes and spends them, so the reachable bonus is +50% before its
+       * first freeze, +125% before its second, +200% before its third. The
+       * ceiling is raised by the control half of the team doing its job, which
+       * is the composition goal paying out in a number.
+       *
+       * The drawback is the same rule read the other way, and it is what makes
+       * her kit a decision instead of a rotation: a FROZEN creature has just
+       * spent every stack, so this pays its minimum exactly where Glacial Lance
+       * pays its maximum. Frosted, cast Deep Cold; frozen, cast the Lance. The
+       * counter above the creature's head says which without a word of rules
+       * text, and she now holds one nuke and one area spell on each side of
+       * that line -- Frostbolt and the Lance single-target, Blizzard and this
+       * across the line.
+       *
+       * Stacks are READ, never spent. Consuming them would put her in direct
+       * competition with Rebar for the same resource, and two Performers
+       * quietly cancelling each other is the worst kind of interaction: nothing
+       * on either sheet says it is happening.
+       */
+      {
+        symbol: 'tide', name: 'Deep Cold', cost: 10, kind: 'attack',
+        damageType: 'magical', power: 1.0, perFrost: 0.25,
+        element: 'water', range: 5, scope: 'all',
+        /*
+         * Steepens the scaling rather than the base, so the chain is worth
+         * NOTHING against a clean board and her biggest turn in the game
+         * against a cold one -- 110 either way at zero stacks, 220 -> 255 at
+         * three, 280 -> 345 at five.
+         *
+         * An `empower` here would have paid out across five targets whether or
+         * not anyone set her up, which is the opposite of what the ability is
+         * for. This sits above the flat band on purpose: it is conditional
+         * three times over -- ten dice, AND a matching symbol, AND stacks
+         * already on the board -- where the band's +30% examples are
+         * conditional only on the symbol.
+         */
+        trigger: { text: 'each frost stack adds 35% instead of 25%', sharpen: 0.1 },
+        effects: [{ do: 'damage', power: 1.0, perFrost: 0.25 }],
+      },
     ],
+    /*
+     * Three tiers that all buy DAMAGE, in a deliberate ramp -- cheap and
+     * unremarkable, then nice to have, then the one worth saving for. Upgrades
+     * cost dice and a turn, so the question a player should be asking is which
+     * Performer deserves the investment; a tier list that opens with its best
+     * card never asks it.
+     *
+     * The old set was resilient / frenzy / lifesteal, of which frenzy and
+     * lifesteal were also sitting on her star tree's third rung -- two of three
+     * tiers duplicating a rung she may already have taken.
+     */
     upgrades: [
-      // Ordered against her weakness: survive first, then push damage. A caster
-      // this brittle dies to one bad approach without the opening tier.
-      { name: 'Frost Ward', cost: 6, passive: { kind: 'resilient', percent: 14 } },
-      { name: 'Overchannel', cost: 8, passive: { kind: 'frenzy', percent: 35 } },
-      { name: 'Mana Siphon', cost: 12, passive: { kind: 'lifesteal', percent: 18 } },
+      // Doubles Killing Frost's frosted half and adds half again to its frozen
+      // half, reaching +20/+30 -- `coldBonus` sums across sources, so a second
+      // `exploitCold` stacks with the innate one rather than replacing it.
+      // Cheap, always useful, never the reason you picked her.
+      { name: 'Deepening Chill', cost: 6, passive: { kind: 'exploitCold', frosted: 10, frozen: 10 } },
+      // The team payoff. Worth +5% per STACK, so her own basic is +5% and an
+      // area applier working a full line is worth ten times that -- Rebar's
+      // Avalanche at three stacks across five creatures pays +75% attack for
+      // the turn. Spent the same turn it is earned, and only reaching abilities
+      // resolved after the frost, so it is bought with turn ORDER under
+      // commit-and-lock rather than with dice alone.
+      { name: 'Frostfever', cost: 8, passive: { kind: 'frostFervor', percent: 5 } },
+      // The one to save for. Her biggest single-target hit is her most
+      // expensive, and the board state that makes it worth 200% is exactly the
+      // one that now makes it cost a single die -- so the tier does not add
+      // damage, it removes the reason she could not afford to deal it.
+      { name: 'Glacier Sight', cost: 12, passive: { kind: 'freeCastOnFreeze', ability: 'Glacial Lance' } },
     ],
     starTree: starTree(
       [
@@ -771,7 +983,7 @@ export const ROSTER: CharacterDef[] = [
       // ...and the payoff rung follows it: wider blast, or a cheaper sniper that
       // reaches 6 and can open on anything on the board.
       [
-        node('maxine-zero', 'Deeper Winter', [{ kind: 'ability', ability: 'Absolute Zero', power: 0.35 }]),
+        node('maxine-zero', 'Deeper Winter', [{ kind: 'ability', ability: 'Deep Cold', power: 0.35 }]),
         node('maxine-lance', 'Piercing Lance', [
           { kind: 'ability', ability: 'Glacial Lance', cost: -1, range: 1 },
         ]),

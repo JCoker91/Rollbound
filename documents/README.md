@@ -280,7 +280,7 @@ Performers and an enemy.**
 | Benjamin | **Drillmaster** | the party rolls an extra die while he stands — see below |
 | Kael | Second Wind | frenzy 20 — the reward for being hurt makes walking in a plan |
 | Rebar | **Winterhide** | frosted enemies deal 4% less damage per stack, cap 5 — see below |
-| Maxine | Rime Siphon | lifesteal 10 — sustain from her own damage, not from a teammate's turn |
+| Maxine | **Killing Frost** | +10% damage to frosted enemies, +20% to frozen — see §8 |
 | Aethis | Quiet Bloom | regen 4 — mends unasked, which frees her turn for somebody else |
 | Brax | Slagskin | resilient 10 — flat reduction, for a wall that is not the one attacking |
 
@@ -1176,6 +1176,42 @@ was cast on, so **a 2-turn cooldown locks out the next two turns** and is ready 
 the modifier list rather than living in a parallel structure, because it wants identical behaviour
 and the two unions are disjoint. None of the duration machinery had to be written twice.
 
+### 5.2d Conditional power — reading the board into a number
+
+A family of mechanics added with Maxine, all resolving inside `computeDamage` rather than at
+resolution time. **That placement is the whole point**: `computeDamage` is what the forecast panel
+calls, so a conditional payoff is visible *before* dice are committed. Under commit-and-lock a bonus
+the player cannot see until afterwards is one they cannot plan around.
+
+| on | field | means |
+| --- | --- | --- |
+| `Ability` / damage `Effect` | `versus: { frozen: n }` | REPLACEMENT power against a target in that state |
+| `Ability` / damage `Effect` | `perFrost: n` | added power per frost stack on the target |
+| `Passive` | `exploitCold { frosted, frozen }` | this character deals x% more to cold targets |
+| `Passive` | `frostFervor { percent }` | +x% ATK per stack landed on the other side, this turn |
+| `Passive` | `freeCastOnFreeze { ability }` | on any freeze, that ability next costs one die |
+| `ChainTrigger` | `sharpen: n` | added to `perFrost`, where scaling already exists |
+
+`powerAgainst(ability, target)` is the single place the first two resolve. **`versus` replaces
+rather than multiplies** because the sheet says *instead*: a multiplier would compound with the
+element wheel and with crit, and the ability would pay more than its own text promises.
+
+**`perFrost` is capped by a rule that already exists** rather than by a number: a creature cannot
+hold more than `3 × (freezes + 1) − 1` stacks without freezing and spending them, so the reachable
+bonus rises only as that creature is frozen more often. It also carries its own drawback — a frozen
+creature has just spent every stack, so `perFrost` pays its minimum against exactly the targets a
+`versus.frozen` ability pays its maximum against.
+
+`exploitCold` is `frenzy`'s twin pointed at the victim rather than the attacker, and needed its own
+kind because one percentage cannot describe two board states. It **sums across sources**, so an
+upgrade tier granting a second one stacks with the innate one.
+
+`freeCastOnFreeze` writes `Unit.freeCast`, a charge spent on use. It is stored on the unit and never
+on the ability, because ability definitions are shared content — writing to one would make every
+later copy free for everybody. **`paysAsWildcard(ability, freeCast)` in `dice.ts` is the only place
+that knows what "costs one die" means**; every cost check, the planner and the UI call it, because
+two implementations of that question would drift the first time the rule moved.
+
 ### 5.3 Enemies are NOT built like player characters
 
 This is the single most important content distinction.
@@ -1289,6 +1325,17 @@ passives, and ability modification (power / range / dice cost).
 **Spare duplicates are derived, never stored**: `copies − 1 − starSpend(level)`. A save cannot drift
 into a state where spares and star level disagree.
 
+#### Every revamped character's tree is being redone — DEFERRED
+
+The trees predate the kit rewrites and none of them has been revisited since. Benjamin's, Rebar's
+and Maxine's all offer rungs that duplicate an upgrade tier or reference a mechanic their kit no
+longer has — Maxine's ★3 is `lifesteal 12` / `frenzy 28`, neither of which touches frost.
+
+**They are being redone together, after the remaining kits**, not one at a time. A tree is the place
+a character's identity is specialised, so it can only be authored once that identity is settled, and
+doing them as a batch is also the moment to give rarity a say (below). Treat every existing
+`starTree` as placeholder content and do not tune against it.
+
 #### The rarity ceiling — DECIDED, NOT BUILT
 
 The intended relationship between rarity and stars, which no kit has been authored against yet:
@@ -1388,7 +1435,7 @@ redesign should use, and Benjamin is the worked example.
 Benjamin's rebuild moved him off 3/5/9:
 
 ```
- 1: Aethis                    2: Rebar, Kael          3: Maxine
+ 1: Aethis                    2: Rebar, Kael          3: Maxine (Blizzard)
  4: Benjamin, Kael            5: Aethis, Brax         6: Benjamin
  7: Kael, Maxine              8: Rebar, Aethis, Brax
 10: Benjamin, Maxine, Brax   12: Rebar
@@ -1704,28 +1751,53 @@ staff, **in redesign** — see below), Kael (wind blade), Aethis (earth staff, h
 **Brax**, an earth/fire tank, and **Veyra**, a magic dealer — both with **placeholder kits**,
 fieldable so compositions can be tested rather than balanced.
 
-**Maxine is next, as the 3★ magical frost damage dealer.** She is frost in name only today — Rime
-Siphon, Frostbolt, Rime Shard, Glacial Lance, Absolute Zero, Frost Ward, and not one stack applied
-or consumed — while `Statuses.frost` has always described itself as a shared resource that
-*"Rebar builds and spends on control, and other Performers are meant to read and do something else
-with."* She is that second reader. Three other defects to fix while she is open:
+**Maxine is fully built** — the 3★ magical frost damage dealer, and the second reader of frost that
+`Statuses.frost` always described itself as waiting for. Everything but her star tree is done.
 
-- Her sheet comment claims *"the lowest HP and defence on the roster paired with the highest
-  attack"*; Veyra now has ATK 124 to Maxine's 108 on the same P.DEF 20, so the identity is stale and
-  she merely ties Kael, a melee blade.
-- **Her signature AoE is beaten by a blade's.** Absolute Zero costs 10 for 4 dmg/die; Kael's Tempest
-  Fall costs 7 for 7 dmg/die across the whole line.
-- **Lifesteal appears three times** in her progression — passive 10%, star node 12%, upgrade 18% —
-  and two of them are both called "Mana Siphon". Her upgrade tiers and star tree are the same two
-  knobs (resilient/frenzy/lifesteal vs lifesteal/frenzy).
+```
+passive  Killing Frost   +10% vs frosted, +20% vs frozen
+ 0  Frostbolt      100% ATK, any target, +1 frost          [crescent]
+ 3  Blizzard        60% ATK, whole line, +1 frost to all   [crescent] chained: a second frost to every enemy
+ 7  Glacial Lance  150% ATK, 200% vs frozen                [tide]     chained: strikes 30% harder
+10  Deep Cold      100% ATK, whole line, +25% per stack    [tide]     chained: 35% per stack instead of 25%
+ 6  Deepening Chill   exploitCold {10,10} — stacks with the passive to +20/+30
+ 8  Frostfever        +5% ATK per frost stack landed, this turn only
+12  Glacier Sight     on any freeze, the next Glacial Lance costs one die
+```
 
-Settled so far: her **wildcard** is a basic frost attack at **100% ATK, any target, 1 frost stack,
-no other riders**. 100% ATK is deliberately the low end of the damage scale — the opposed-stat
-formula is level-invariant, so it is ≈10% of a target's health bar at level 1, 20 and 50 alike, or
-ten casts to kill. One stack nets zero against decay, and that is the point: a wildcard exists to
-spend dice that would otherwise go unused, so converting a dead die into *"the frost does not melt
-this round"* is maintenance — a specific job worth having. **Blizzard** and **Ice Lance** are named
-but not yet designed.
+**The frost counter tells the player which half of the kit to reach for.** Freezing spends the
+stacks, so Deep Cold pays its minimum against exactly the targets Glacial Lance pays its maximum
+against — at level 20 a frozen target takes 22 from Deep Cold and 45 from the Lance; one holding
+three stacks takes 39 and 34. No rules text explains that; the number above the creature's head
+does. **Stacks are read, never spent**, so she never competes with Rebar for the same resource.
+
+**She is deliberately not self-sufficient.** Her two appliers resolve `[damage, then frost]` and
+decay clears the stack before her next turn, so nothing she does sets up her own bonuses — Killing
+Frost and Glacial Lance's 200% both pay out only on a *teammate's* frost. **Do not "fix" this by
+reordering her effects**; it would turn a board-state reward into a permanent flat buff and quietly
+make owning Rebar matter less. The comment on Frostbolt says so at the site.
+
+**Her ceiling rises with the fight, not the level**, because the freeze bar escalates (`3 × (freezes
++ 1)`). One consequence is worth knowing: **Rebar's first Avalanche cannot set Deep Cold up**,
+because its 3 stacks *are* the first threshold — it freezes and spends them. The second banks, the
+bar now being 6. So his ultimate alternates between freezing (the turn for the Lance) and loading
+(the turn for Deep Cold).
+
+**The upgrade tiers ramp on purpose** — cheap and unremarkable, then nice to have, then the one
+worth saving for, because upgrades cost dice *and* a turn and the question should be which Performer
+deserves the investment. Measured payoff turn with all three bought and Rebar opening on Avalanche:
+Glacial Lance goes from 46 to **150** (3.3×) and costs one die instead of seven; Frostfever pays
++75% ATK (3 stacks × 5 enemies × 5%) and expires at End Turn.
+
+**Chains need a partner who is not Rebar.** He carries `lantern` and `thorn`, neither of hers, so
+crescent comes from Kael or Veyra and tide from Aethis. Fully powered she wants Rebar *plus* one of
+those three — a three-character core. That is deliberate: sharing one symbol across every ice
+character would make the composition puzzle trivial.
+
+**Still open on her:** only the **star tree**, which is being redone for every revamped character
+together (§5.5) — it still holds `lifesteal 12` / `frenzy 28` on ★3, neither of which does anything
+with frost. Her sheet comment also still claims *"the lowest HP and defence on the roster paired
+with the highest attack"*, which Veyra now owns at ATK 124 to Maxine's 108.
 
 **Veyra is the roster's glass cannon, and her identity is not built yet.** HP 40 on P.DEF 20 with
 the highest ATK in the game (124): she answers a fight by ending it a turn sooner, and anything that
@@ -1766,7 +1838,7 @@ Five are numbers applied to their owner; Benjamin's is not (see below).
 | Benjamin | **Drillmaster** | the party rolls an extra die while he stands |
 | Kael | Second Wind | `frenzy 20` |
 | Rebar | **Winterhide** | frosted enemies hit 4% softer per stack, cap 5 |
-| Maxine | Rime Siphon | `lifesteal 10` |
+| Maxine | **Killing Frost** | `exploitCold` +10% frosted / +20% frozen |
 | Aethis | Quiet Bloom | `regen 4` |
 | Brax | Slagskin | `resilient 10` |
 
@@ -1786,10 +1858,11 @@ against a Red Understudy (28 HP, P.DEF 40, M.DEF 20):
 **Chains are live.** Every ability may carry a symbol; playing one arms it for the rest of the
 round, and a later ability sharing it fires that ability's own trigger. Benjamin carries `anvil`
 (Quick Cut, Sunder) and `lantern` (Rally, Perfect Form), with triggers on Sunder and Rally per
-`BATTLE_DESIGN.md` §8. **Everyone else carries symbols but no triggers** — including Rebar, whose
-own §8 entry lists a trigger as the thing he still needs. For the four unbuilt kits that is
-deliberate: inventing trigger effects for abilities about to be rewritten is work thrown away, but
-without a second carrier nothing could arm Benjamin's and the mechanic would be unreachable in play.
+`BATTLE_DESIGN.md` §8. **Rebar and Maxine now carry triggers too** — Rebar on Hibernate, Frost Armor and
+Avalanche; Maxine on Blizzard, Glacial Lance and Deep Cold. For the three kits still unbuilt the
+absence is deliberate: inventing trigger effects for abilities about to be rewritten is work thrown
+away, but without a second carrier nothing could arm Benjamin's and the mechanic would be
+unreachable in play.
 They enable chains without benefiting from them, which is the "completes other people's chains" role
 a symbol-heavy Performer is for. Give them triggers when their kits are authored.
 
@@ -1842,9 +1915,10 @@ The thing that makes them his was a synergy that already existed and was never w
 different question — what keeps him able to keep doing it — and both answers point the same way,
 because Rally's worth and Drillmaster's die both end the turn he does.
 
-**The four unbuilt kits are still disposable** — Kael, Maxine, Aethis and Brax. Treat their
-abilities as placeholders authored against a system that is going away, and do not read balance
-into them. Benjamin's and Rebar's kits are in `BATTLE_DESIGN.md` §8.
+**The three unbuilt kits are still disposable** — Kael, Aethis and Brax. Treat their abilities as
+placeholders authored against a system that is going away, and do not read balance into them.
+Benjamin's, Rebar's and Maxine's kits are in `BATTLE_DESIGN.md` §8; **every star tree** is
+placeholder content regardless of whose it is (§5.5).
 
 **Art migration to style guide v3 (256px) is in progress.** Body heights below are the figure, not
 the bounding box — see `PROP_HEADROOM` in §9 for why those differ on the hat-wearers.
@@ -2253,14 +2327,22 @@ cannot be judged, a formation cannot be punished, and nothing is worth freezing.
 2. **Party / lineup management.** In-battle repositioning covers the positional half now (§5.2), so
    what is left is the *pre-battle* screen: which five perform, and their starting arrangement.
    Roster order is still the formation, and there is still no screen to change it.
-3. **The remaining four kits** — **Maxine first (in progress)**, then Kael, Aethis, Brax — against
-   `BATTLE_DESIGN.md`. Author them one at a time and let each one specify the next mechanic, which
-   is how the last two went. Maxine claims the second-reader slot on frost that was left open for a
-   later character; Kael, Aethis and Brax still need theirs. Shapes now available that were not when
-   their kits were written: a passive can change the **pool** rather than a stat (Benjamin), a
-   passive can be a **reactive rider** (Rebar's riposte), and an upgrade tier can grant any passive.
-   Note the tiers' +10% stat bonus is genuine filler for all four, since only Benjamin converts
-   personal stats into team stats — so their passives have to carry their tiers.
+3. **The remaining three kits** — Kael, Aethis, Brax — against `BATTLE_DESIGN.md`. Author them one
+   at a time and let each specify the next mechanic, which is how the last three went. Benjamin,
+   Rebar and **Maxine** are done. Shapes now available that were not when the remaining kits were
+   written: a passive can change the **pool** rather than a stat (Benjamin), can be a **reactive
+   rider** (Rebar's riposte), can **read the target's state** (`exploitCold`) or **the act of
+   applying a status** (`frostFervor`), and an upgrade tier can grant a **charge that changes what
+   an ability costs** (`freeCastOnFreeze`). An ability's power can be conditional on a target state
+   or scale off a status counter (§5.2d). Note the tiers' +10% stat bonus is genuine filler for all
+   three, since only Benjamin converts personal stats into team stats — so their passives have to
+   carry their tiers.
+   > **Frost now has two readers and wants no more for a while.** Rebar builds it, Maxine converts
+   > it. A third character reading the same counter would make the frost team the answer to
+   > everything; Kael, Aethis and Brax should each claim a mechanic of their own.
+
+3b. **Redo every star tree** (§5.5), once the kits above are settled, and give rarity a say in the
+   tree's shape and in `starCost` at the same time.
 4. **Rebuild the art at 256px** (style guide v3.0) — Kael, Aethis, Maxine and Rebar. Benjamin is
    done and Brax was already there. Deliberately **not urgent**: 128 and 256 sprites render at
    correct relative scale side by side, so the roster migrates one actor at a time. Settle
@@ -2363,6 +2445,32 @@ cannot be judged, a formation cannot be punished, and nothing is worth freezing.
 - **Console errors collected over a CDP session are cumulative and include stale HMR failures.** An
   error naming a symbol you just added is usually the *previous* module still in memory; reload and
   re-check before chasing it. Two red herrings this session.
+
+**Engine traps found the hard way**
+
+- **`commitAction` does not chain.** It resolves an ability directly and never arms a symbol; the
+  chain-aware path is `planAction` → `commitNext`, which drains `s.plan`. A test that reaches for
+  `commitAction` will report every chain as not firing and look like a content bug. Verified
+  end-to-end through `planAction`/`commitNext` instead.
+- **A trigger on an ability with no `effects` list used to be silently dropped.** `applyAbility`
+  branched on `if (ability.effects)` and the legacy path never looked at the trigger — the chain
+  still logged as firing. Nothing shipped had the bug, but only by luck: every triggered ability
+  happened to be written with effects. `applyAbility` now synthesises the one-effect list an attack
+  is equivalent to, so a trigger works wherever it is written.
+- **`empower` has to reach `versus` too.** `powerAgainst` returns `versus.frozen` *instead of*
+  `power`, so raising only `power` made a chain worth nothing against exactly the targets a `versus`
+  ability was written for. Any future conditional-power field needs the same treatment.
+- **`applyModifier` replaces, it does not stack.** It keys on ability + stat and overwrites what it
+  finds, which is right for a buff cast twice and exactly wrong for a per-event accumulator — five
+  creatures frosted one at a time have to add up to five, not overwrite down to one. `frostFervor`
+  reads the existing amount and adds to it explicitly.
+- **Upgrade tiers raise max HP, not just attack and defence.** `UPGRADE_STAT_BONUS` applies to all
+  three and `commitUpgrade` grants the new headroom as healing, so buying a tier is also a partial
+  heal. Excluding HP would cost every character 23% of their fully-upgraded pool — a global balance
+  change, not a per-character one.
+- **`ModSource` has no "self" option.** It is `targetBase | casterCurrent`; a self-buff passes the
+  holder as both caster and target and uses `targetBase`, which reads their own BASE stat so a
+  second application does not compound.
 
 **Verification habits that paid off**
 

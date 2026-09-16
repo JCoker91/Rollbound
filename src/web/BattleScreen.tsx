@@ -30,7 +30,7 @@ import {
   type DevMember,
 } from './devRoster.ts';
 import { applyLevel, levelOf, MAX_LEVEL } from '../engine/levels.ts';
-import { payingMasks } from '../engine/allocate.ts';
+import { paysAsWildcard, payingMasks } from '../engine/allocate.ts';
 import { altered, describeDie } from '../engine/dice.ts';
 import { elementResistance } from '../engine/combat.ts';
 import { matchupLabel, RESIST_CAP } from '../engine/elements.ts';
@@ -318,8 +318,8 @@ export function BattleScreen({
    * `payingMasks` now, because "a mask may only name dice you can spend" is a
    * property of the pool rather than of whoever is asking it.
    */
-  function masksFor(ability: Ability): number[] {
-    return payingMasks(battle.dice, ability);
+  function masksFor(ability: Ability, unit = sel.unit): number[] {
+    return payingMasks(battle.dice, ability, unit?.freeCast);
   }
 
   /**
@@ -352,7 +352,8 @@ export function BattleScreen({
     const sum = pickedSum();
     for (const a of sel.unit.def.abilities) {
       if (!(affordable.get(a.name) ?? false)) continue;
-      if (a.wildcard ? sel.dice.length === 1 : sum === a.cost) out.add(a.name);
+      if (paysAsWildcard(a, sel.unit.freeCast) ? sel.dice.length === 1 : sum === a.cost)
+        out.add(a.name);
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1329,13 +1330,21 @@ export function BattleScreen({
                             : !ok
                               ? `No dice in this roll can total ${a.cost}`
                               : !ready
-                                ? a.wildcard
+                                ? paysAsWildcard(a, sel.unit!.freeCast)
                                   ? 'Select any single die'
                                   : `Select dice totalling ${a.cost}`
                                 : undefined
                         }
                       >
-                        <span className="cost">{a.wildcard ? '✳' : a.cost}</span>
+                        {/* A charge that makes this cast free shows AS a
+                            wildcard, because that is what it is for this one
+                            cast -- printing the sheet's 7 beside a die the
+                            player can actually pay with would read as a bug. */}
+                        <span
+                          className={`cost${!a.wildcard && paysAsWildcard(a, sel.unit!.freeCast) ? ' charged' : ''}`}
+                        >
+                          {paysAsWildcard(a, sel.unit!.freeCast) ? '✳' : a.cost}
+                        </span>
                         <span className="body">
                           <strong>
                             {a.name}
@@ -1642,7 +1651,11 @@ export function BattleScreen({
               )}
               {sel.ability && (
                 <span className="hint ok">
-                  <strong>{sel.ability.wildcard ? '1 die' : `${diceSum} / ${sel.ability.cost}`}</strong>
+                  <strong>
+                    {paysAsWildcard(sel.ability, sel.unit?.freeCast)
+                      ? '1 die'
+                      : `${diceSum} / ${sel.ability.cost}`}
+                  </strong>
                   {targets.size === 0 ? ' — nothing in reach' : ' — click a target'}
                 </span>
               )}
