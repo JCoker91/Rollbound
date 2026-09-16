@@ -280,14 +280,44 @@ body {
  * Abilities lay out as a grid that fills the width it is given, so four sit two
  * across on a wide band and one across on a narrow one -- and the LIST stays
  * one object either way, which is what the column flow could not promise.
+ *
+ * Every card is the SAME height, and that takes three declarations working
+ * together because the natural heights are genuinely ragged: a name and a meta
+ * line both vary, so "attack · magical · any rank · water" fits one line while
+ * "attack · magical · all enemies · water" wraps to two. Left alone the cards
+ * in a row end at different depths and the panel reads as broken rather than
+ * as dense.
+ *
+ * `1fr` rows make every row as tall as the tallest card anywhere in the grid,
+ * so the second row matches the first instead of each row sizing to its own
+ * content. Reserving a fixed two lines for the meta would also work and is
+ * worse: it is a magic number that a longer element name or a third clause
+ * quietly breaks.
  */
 .battle .hud-right .abilities {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  grid-auto-rows: 1fr;
   gap: 8px;
   margin: 0;
   padding: 0;
   list-style: none;
+}
+
+/*
+ * The grid stretches the <li>; these two make the BUTTON fill it.
+ *
+ * Without them the row is the right height and the card inside it is not,
+ * which looks identical to having done nothing -- the stretched element is the
+ * invisible one.
+ */
+.battle .hud-right .abilities > li {
+  display: flex;
+  min-width: 0;
+}
+
+.battle .hud-right .abilities > li > .ability {
+  flex: 1;
 }
 
 .battle .hud-right .sheet-id > :first-child,
@@ -1426,6 +1456,12 @@ aside {
 .chip.frozen {
   color: #eaf7ff;
   background: rgba(86, 194, 255, 0.55);
+}
+
+.chip.grudge {
+  color: #ffc9a8;
+  background: rgba(214, 122, 74, 0.2);
+  border: 1px solid rgba(214, 122, 74, 0.45);
 }
 
 .chip.asleep {

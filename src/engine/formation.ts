@@ -127,9 +127,17 @@ export function withinReach(ability: Ability, from: Unit, target: Pos, units: Un
  * to bite on.
  *
  * The party's front is its HIGHEST column (nearest the enemy line), and the
- * enemy's front is its lowest; `occupiedColumns` sorts each accordingly. Note
- * both sides use column 2 -- that is fine and not a collision, because every
- * reach question is asked about one side at a time.
+ * enemy's front is its lowest; `occupiedColumns` sorts each accordingly.
+ *
+ * **The two sides' columns must never overlap.** Party holds 0-2, enemies 3-5.
+ * An earlier pass gave the party a third rank at column 2 -- the enemy's front
+ * -- on the reasoning that reach is always asked about one side at a time. That
+ * is true of reach and false of `unitAt`, which finds a unit by position alone:
+ * an intent naming a front-rank Performer found the enemy standing at the same
+ * coordinates, decided the target was still alive, and resolved the attack into
+ * a slot holding no living player. Five enemies whiffed an entire round.
+ * `targetStillLegal` now also checks the side, so the invariant is enforced
+ * where it matters rather than only maintained by convention.
  */
 const slot = (col: number, row: number, xPct: number, yPct: number): Slot => ({ col, row, xPct, yPct });
 
@@ -249,15 +257,15 @@ export const STANDARD_PARTY_SLOTS: Slot[] = [
  * loses is a crowd that was never the interesting part.
  */
 export const BOSS_ENEMY_SLOTS: Slot[] = [
-  slot(2, 0, 0.60, 0.66),
-  slot(3, 2, 0.70, 0.9),
+  slot(3, 0, 0.60, 0.66),
+  slot(4, 2, 0.70, 0.9),
   // The back rank holds TWO slots (y 0.66 and 0.78), not three, so there is no
   // middle row for a boss to stand in. It goes between them instead: x centred
   // on the pair, y on the lower one's floor line, so it is planted on the same
   // ground its retinue stands on and towers up from there. Placing it at the
   // midpoint y left it floating -- a sprite hangs UPWARD from its feet, and at
   // 2.4x a Performer that half-slot of air is very visible.
-  slot(4, 1, 0.90, 0.8),
+  slot(5, 1, 0.90, 0.8),
 ];
 
 export const STANDARD_ENEMY_SLOTS: Slot[] = [
@@ -273,11 +281,11 @@ export const STANDARD_ENEMY_SLOTS: Slot[] = [
   // the block earlier pushed it left until the two sides looked interlocked
   // instead of facing each other across a stage; the space between them is
   // what makes the formation read as two formations.
-  slot(2, 0, 0.60, 0.64),
-  slot(2, 1, 0.58, 0.82),
-  slot(3, 0, 0.75, 0.6),
-  slot(3, 1, 0.73, 0.74),
-  slot(3, 2, 0.71, 0.9),
-  slot(4, 0, 0.90, 0.64),
-  slot(4, 1, 0.88, 0.8),
+  slot(3, 0, 0.60, 0.64),
+  slot(3, 1, 0.58, 0.82),
+  slot(4, 0, 0.75, 0.6),
+  slot(4, 1, 0.73, 0.74),
+  slot(4, 2, 0.71, 0.9),
+  slot(5, 0, 0.90, 0.64),
+  slot(5, 1, 0.88, 0.8),
 ];

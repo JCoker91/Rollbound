@@ -211,9 +211,15 @@ const DRILL_DIE: DieSpec[] = [
  * back, back), so roster order decides who stands where and therefore who a
  * range-1 enemy ability can reach.
  *
- * Rebar sits second so a tank is in the front rank by default. That is a
- * stopgap: choosing the arrangement is the "party / lineup management" roadmap
- * item, and until that screen exists this list is the only way to say it.
+ * The two TANKS lead, so the front rank is Rebar and Kael. That is not just
+ * tidiness: an enemy `range: 1` reaches only the frontmost occupied rank, so a
+ * tank standing at rank 2 cannot be hit by most attacks -- and Kael's Challenge
+ * refuses outright, because you cannot provoke an attack that could not reach
+ * you anyway. Behind them the order is utility, artillery, healer.
+ *
+ * Still a stopgap. Choosing the arrangement is the "party / lineup management"
+ * roadmap item, and until that screen exists this list is the only way to say
+ * it.
  */
 /**
  * REPOSITION -- every Performer's second free action.
@@ -250,192 +256,6 @@ export const REPOSITION: Ability = {
 };
 
 export const ROSTER: CharacterDef[] = [
-  {
-    id: 'benjamin', name: 'Benjamin', rarity: 3, role: 'blade',
-    // No elemental alignment either way. He is the baseline a player learns
-    // damage and armour on before elements are introduced by anyone else, and
-    // giving him a resistance profile he has no attacks to match would put half
-    // an element back on him by the side door.
-    resistances: {},
-    maxHp: 44, attack: 104, physicalDefense: 50, magicalDefense: 30,
-    sprite: sprite('benjamin'),
-    /*
-     * The Utility Vanguard. See BATTLE_DESIGN.md §8.
-     *
-     * Three of the four cost about one die, so he acts nearly every turn
-     * without eating the shared pool; the ultimate is his only real commitment
-     * at ~2.6 dice, where somebody else sits out. Cost 6 is the most payable
-     * number on 5d6 (97.4%) and his signature ability owns it.
-     *
-     * Effects are authored in the order they happen, and the abilities are
-     * WORDED that way too -- see the ultimate, which buffs before it strikes.
-     */
-    /*
-     * DRILLMASTER -- the troupe rolls a sixth die while he is standing.
-     *
-     * The passive his kit was always asking for. Everything else he does is
-     * enabling: Rally reads HIS stats and hands them to somebody else, Sunder's
-     * shred is for whoever acts after him, Quick Cut arms a chain he may not be
-     * the one to cash. A percentage self-buff -- which is all the other five
-     * passive kinds can say -- states the opposite of that. "The party does
-     * more because he is on stage" says it exactly.
-     *
-     * THE FACES ARE THE BALANCE, AND BLANKS ARE THE ONLY LEVER. A wildcard
-     * costs any single die whatever its value, so lowering a die's numbers does
-     * not weaken it -- over all 7776 rolls of 5d6, adding a d3 is BETTER than
-     * adding a true d6 at every cost from 1 to 12, because small dice are
-     * precision tools for exact sums. Only a blank face removes the extra
-     * action. Three blanks is +0.50 dice a turn against a true die's +1.00.
-     *
-     * The ladder is read at his STAR LEVEL, so it improves for everyone who
-     * gets there rather than costing one of the three choices his tree offers:
-     *
-     *   0-1  three blanks, 1-3   +0.50 dice/turn
-     *   2-3  two blanks,   1-4   +0.67
-     *   4    one blank,    1-5   +0.83
-     *   5    a true d6           +1.00
-     *
-     * And it is gone the turn after he falls. `poolFor` rebuilds from who is
-     * still alive, which is what stops a party-wide buff from being free.
-     */
-    passives: [
-      {
-        name: 'Drillmaster',
-        kind: 'extraDie',
-        die: DRILL_DIE[0]!,
-        ladder: DRILL_DIE,
-      },
-    ],
-    abilities: [
-      {
-        // Arms `anvil` and has no trigger of its own. A free wildcard that
-        // arms for the team is the cheapest possible chain opener -- it costs
-        // one die he was going to spend anyway.
-        name: 'Quick Cut', cost: 0, wildcard: true, kind: 'attack',
-        symbol: 'anvil',
-        damageType: 'physical', range: 1, power: 0.8,
-        effects: [{ do: 'damage', power: 0.8 }],
-      },
-      {
-        // Damage first, shred second: the shred is for whoever acts AFTER him.
-        // Putting it first would let his own strike cash it in and quietly make
-        // this a selfish ability, when the point of it is to set up the team.
-        name: 'Sunder', cost: 6, kind: 'attack',
-        symbol: 'anvil',
-        // Amplify rather than an appended `modify`: modifiers are keyed by
-        // ability name, so a second modify from Sunder would REFRESH the shred
-        // instead of deepening it. -25 becomes -40.
-        trigger: { text: 'shreds 15% deeper', amplify: -15 },
-        damageType: 'physical', range: 2, power: 1.1,
-        effects: [
-          { do: 'damage', power: 1.1 },
-          { do: 'modify', stats: ['physicalDefense'], percent: -25, of: 'targetBase', turns: 3 },
-        ],
-      },
-      {
-        // Reads BENJAMIN'S current stats, not the recipient's. That is what
-        // makes flat stat investment in him pay out across the whole team, what
-        // lets his ultimate feed this a turn later -- and what quietly retires
-        // him once the roster outscales him.
-        name: 'Rally', cost: 4, kind: 'buff', range: 3, power: 20,
-        symbol: 'lantern',
-        // The "convert to whole-team" trigger BATTLE_DESIGN.md §4 warns is an
-        // order of magnitude above the others -- which is exactly why it sits
-        // on a cost-4 ability with no damage on it, per that section's advice.
-        trigger: { text: 'buffs the whole team instead of one ally', retarget: 'allies' },
-        effects: [
-          {
-            do: 'modify',
-            stats: ['attack', 'physicalDefense', 'magicalDefense'],
-            percent: 20, of: 'casterCurrent', turns: 3,
-          },
-        ],
-      },
-      {
-        // "Gain 20% to his own stats for 3 turns, THEN strike" -- the self-buff
-        // is up before the damage lands, because it is written first.
-        //
-        // Off his own BASE rather than his current stats, deliberately. Reading
-        // current would let a recast compound on itself; base keeps the number
-        // honest while still handing Rally a bigger figure to copy.
-        // Carries `lantern` but has NO trigger. Triggers never sit on the ult:
-        // it is already his big turn, and making it bigger when it chains would
-        // collapse the decision into "save the ult for a chain".
-        name: 'Perfect Form', cost: 10, kind: 'attack',
-        symbol: 'lantern',
-        damageType: 'physical', range: 2, power: 2.0, cooldown: 2,
-        effects: [
-          {
-            do: 'modify', on: 'self',
-            stats: ['attack', 'physicalDefense', 'magicalDefense'],
-            percent: 20, of: 'targetBase', turns: 3,
-          },
-          { do: 'damage', power: 2.0 },
-        ],
-      },
-    ],
-    /*
-     * IN-BATTLE UPGRADES -- survive, sustain, then multiply.
-     *
-     * The tiers replaced lifesteal / frenzy / resilient, which were three ways
-     * of saying "Benjamin personally fights better" on a Performer whose entire
-     * kit is about somebody else fighting better. They were the same mismatch
-     * his innate passive had.
-     *
-     * What makes them his is a synergy that already existed and was never
-     * written down: THE +10% STAT BONUS EVERY TIER GRANTS IS ALREADY
-     * TEAM-SCALED FOR HIM ALONE, because Rally copies his CURRENT stats onto an
-     * ally -- the whole team when it chains. Nobody else converts personal
-     * stats into team stats, so "spend a turn investing in yourself" is the
-     * enabling play for him and the tiers should lean into it rather than
-     * fight it. Three tiers is +30% on every Rally for the rest of the fight.
-     *
-     * That leaves the passive slot to answer one question: what keeps him able
-     * to keep doing it? Two things now ride on him being upright -- Rally is
-     * worth whatever HE is worth, and Drillmaster's die is rebuilt each turn
-     * from who is still alive -- so durability on Benjamin is a team stat, not
-     * a selfish one.
-     *
-     * Tier 1 is priced at 6 on purpose: that is Sunder's cost, so the decision
-     * is exactly "Sunder this turn, or make every future Rally bigger".
-     */
-    upgrades: [
-      // ~17% after the damage floor; see `peekResilience` on why stated
-      // resilience under-delivers by a predictable third.
-      { name: 'Hold the Line', cost: 6, passive: { kind: 'resilient', percent: 25 } },
-      // A trouper goes on. ~1 HP a turn on an 11 HP bar, banked so it is
-      // exactly 9% rather than nothing.
-      { name: 'Trouper', cost: 8, passive: { kind: 'regen', percent: 9 } },
-      /*
-       * The capstone, and unique to him: a SECOND die in the shared pool.
-       *
-       * Priced as a real decision rather than a strict gain. Cost 12 spends
-       * ~2.6 dice and his action, and returns +0.50 dice a turn, so it pays
-       * back in about five turns -- inside a long fight, not a short one. And
-       * it is gone at the final curtain: upgrades last one battle.
-       *
-       * Reaching it means buying the two below it first, so the full line is
-       * 26 dice and three of his actions. At six dice a turn that is four
-       * turns of the WHOLE party's pool, which is why it is only ever right in
-       * the fights that run long -- exactly the ones a sixth die matters in.
-       */
-      { name: 'Full Company', cost: 12, passive: { kind: 'extraDie', die: COMPANY_DIE } },
-    ],
-    starTree: starTree(
-      [
-        node('benjamin-edge', 'Honed Edge', [{ kind: 'stat', stat: 'attack', percent: 9 }]),
-        node('benjamin-guard', 'Duelist Guard', [{ kind: 'stat', stat: 'defense', percent: 14 }]),
-      ],
-      [
-        node('benjamin-bleed', 'Bleeding Cuts', [{ kind: 'passive', passive: { kind: 'lifesteal', percent: 10 } }]),
-        node('benjamin-reach', 'Extended Guard', [{ kind: 'ability', ability: 'Sunder', range: 1 }]),
-      ],
-      [
-        node('benjamin-form', 'Flawless Form', [{ kind: 'ability', ability: 'Perfect Form', power: 0.3 }]),
-        node('benjamin-swift', 'Practised Rally', [{ kind: 'ability', ability: 'Rally', cost: -1 }]),
-      ],
-    ),
-  },
   {
     id: 'rebar', name: 'Rebar', rarity: 3, role: 'shield',
     // Ice, so fire is what he is built to stand in front of -- and that lands on
@@ -687,27 +507,157 @@ export const ROSTER: CharacterDef[] = [
   {
     id: 'kael', name: 'Kael', rarity: 3, role: 'blade',
     resistances: aligned('wind'),
-    // Heavier and slower than the support he replaces: an axe bruiser who wants
-    // to be in the middle of things, not circling the edges.
-    maxHp: 48, attack: 108, physicalDefense: 60, magicalDefense: 40,
+    /*
+     * The Provoker. A damage dealer who tanks by CHOOSING to be the target.
+     *
+     * The roster's second tank, and deliberately nothing like the first. Rebar
+     * tanks by standing in the front rank and denying actions; Kael tanks by
+     * pulling one creature's attacks onto himself and getting paid for it. They
+     * answer different threats -- Rebar answers "they attack the front row",
+     * Kael answers "they are going for the healer", which is the case
+     * positioning cannot solve.
+     *
+     * A 3-star, so none of it is extravagant: middling bulk, middling damage,
+     * and a loop that only works if he is actually being attacked.
+     */
+    maxHp: 52, attack: 96, physicalDefense: 68, magicalDefense: 44,
     sprite: sprite('kael'),
-    // A bruiser who wants to be in the middle of it -- the reward for being
-    // hurt is what makes walking in a plan rather than a mistake.
-    passives: [{ name: 'Second Wind', kind: 'frenzy', percent: 20 }],
+    /*
+     * The engine of the kit, and the reason Taunt carries no buff of its own.
+     *
+     * A Performer acts once a round, so the two halves of him compete: taunt
+     * and be hit, or spend what the last taunt earned. That is the decision
+     * every turn, and it is why the passive pays on the turn AFTER the hits
+     * rather than immediately.
+     *
+     * It replaced `frenzy 20`. Frenzy had the right instinct -- the old comment
+     * called being hurt "a plan rather than a mistake" -- and the wrong trigger:
+     * it only pays below half health, which for a tank means it pays when he is
+     * about to die. Counting hits pays him for doing his job instead of for
+     * nearly failing at it.
+     */
+    passives: [{ name: 'Grudge', kind: 'grudge', percent: 5 }],
     abilities: [
-      { symbol: 'anvil', name: 'Cleave', cost: 0, wildcard: true, kind: 'attack', damageType: 'physical', power: 0.85, element: 'wind', range: 1 },
-      { symbol: 'anvil', name: 'Hookstrike', cost: 2, kind: 'attack', damageType: 'physical', power: 1.05, element: 'wind', range: 1 },
-      // Legacy authoring: `kind: 'buff'` with a flat `power`, which the engine
-      // still routes into the modifier list at the default duration. Benjamin's
-      // Rally is the same idea rebuilt on `effects` -- this one is waiting its
-      // turn in the roster redesign.
-      { symbol: 'crescent', name: 'War Cry', cost: 4, kind: 'buff', power: 28, element: 'wind', range: 2, scope: 'all' },
-      { symbol: 'crescent', name: 'Tempest Fall', cost: 7, kind: 'attack', damageType: 'physical', power: 1.75, element: 'wind', range: 1, scope: 'all' },
+      {
+        // A sweep, not a swing: half the damage of an ordinary basic, spread
+        // across the whole line. One die buys 15 total against five creatures
+        // and 6 against the boss line of three -- comparable output to the
+        // roster's other basics in the corridor, and visibly worse at the gate.
+        //
+        // It kills nothing. 3 damage against a 28 HP creature is chip, where
+        // Maxine's single-target basic takes half a bar for the same die. That
+        // is the trade: he is always contributing and never finishing.
+        //
+        // `range: 1` is kept even though scope 'all' makes it vestigial for
+        // targeting -- `thornsDamage` reads `range > 1` as its melee test, and
+        // a man wading in with an axe should take the reflect.
+        symbol: 'anvil', name: 'Cleave', cost: 0, wildcard: true, kind: 'attack',
+        damageType: 'physical', element: 'wind', range: 1, scope: 'all', power: 0.5,
+        effects: [{ do: 'damage', power: 0.5 }],
+      },
+      {
+        // Cheap and unreliable on purpose: 70.4% payable, ~1.15 dice. The
+        // mitigation half of the kit, and the one that does not need his action
+        // to be well spent -- a turn he cannot afford anything else is a turn
+        // he can still make the next volley hurt less.
+        //
+        // An ATK shred rather than a defence shred: it protects whoever the
+        // attack lands on, which for a taunter is usually himself, and it does
+        // NOT reduce what Grudge earns him, because Grudge counts hits.
+        symbol: 'anvil', name: 'Disarm', cost: 2, kind: 'attack',
+        damageType: 'physical', element: 'wind', range: 1, power: 0.7,
+        effects: [
+          { do: 'damage', power: 0.7 },
+          { do: 'modify', stats: ['attack'], percent: -25, of: 'targetBase', turns: 3 },
+        ],
+        trigger: {
+          text: 'the shred bites deeper',
+          amplify: -15,
+        },
+      },
+      {
+        // Parked on 5 (92.2% payable, 1.39 dice) because it is his job. An
+        // answer to a threat you can already see has to be affordable on the
+        // turn you see it; the fragile low costs are right for a gamble and
+        // wrong for this.
+        //
+        // No self-buff, deliberately. Protecting somebody has to cost something,
+        // and here the cost is that he spends his turn doing it and then stands
+        // in the way of everything that creature does. The chain trigger is
+        // where the growth went.
+        symbol: 'crescent', name: 'Challenge', cost: 5, kind: 'attack',
+        damageType: 'physical', element: 'wind', range: 2, power: 0,
+        effects: [{ do: 'taunt' }],
+        trigger: {
+          text: 'he braces for it, taking less damage this round',
+          effects: [
+            {
+              do: 'modify', stats: ['physicalDefense', 'magicalDefense'],
+              percent: 30, of: 'targetBase', turns: 1, on: 'self',
+            },
+          ],
+        },
+      },
+      {
+        // The payoff. Single target rather than a line: he taunted one creature
+        // and spent a round being hit by it, and the answer to that is that
+        // creature specifically. It needs no scaling clause of its own -- Grudge
+        // is already multiplying it by however badly the last round went.
+        //
+        // Priced at 9, not 11. At 11 it was dominated outright: 2.80 dice for 14
+        // damage after a full round of tanking, against Benjamin's Perfect Form
+        // at 2.58 dice for 15 plus a self-buff on the way in. The conditional
+        // payoff never caught up with the unconditional one. Nine is 2.41 dice,
+        // uncontested by any finished kit, and leaves the number itself simple.
+        symbol: 'crescent', name: 'Reckoning', cost: 9, kind: 'attack',
+        damageType: 'physical', element: 'wind', range: 2, power: 2.0,
+        effects: [{ do: 'damage', power: 2.0 }],
+        // Section 4's own worked example, to the decimal: a 2.0 ability taken to
+        // 2.3. Appended rather than amplified because `amplify` only reaches
+        // `modify` percentages, and this is damage.
+        //
+        // It exists so that his ULTIMATE can join a chain at all. Both of his
+        // crescent abilities now carry a trigger, which is the point: a
+        // teammate arming crescent hands Kael a choice rather than an
+        // instruction -- brace behind Challenge, or hit harder with Reckoning.
+        // Same arming, opposite answers.
+        trigger: {
+          text: 'the blow lands with everything behind it',
+          effects: [{ do: 'damage', power: 0.3 }],
+        },
+      },
     ],
+    /*
+     * Survive it, then make it cost less, then make it hurt more.
+     *
+     * No lifesteal anywhere on him, deliberately. He does not top himself up --
+     * a tank who sustains through his own damage does not need anybody, and the
+     * whole reason to field him is that he turns an unanswerable threat into one
+     * a healer can answer. Removing his self-sustain is what makes the rest of
+     * the team matter.
+     */
     upgrades: [
-      { name: 'Ironhide', cost: 6, passive: { kind: 'resilient', percent: 14 } },
-      { name: 'Bloodrage', cost: 8, passive: { kind: 'frenzy', percent: 30 } },
-      { name: 'Stormbreaker', cost: 12, passive: { kind: 'lifesteal', percent: 20 } },
+      // Flat and unconditional: it works on the turn he is caught without a
+      // taunt up, which is the turn he is most likely to die on.
+      { name: 'Ironhide', cost: 6, passive: { kind: 'resilient', percent: 20 } },
+      // The answer to what taunting invites. Each hit makes the next cheaper,
+      // so focusing him has diminishing returns rather than linear ones -- five
+      // attacks on one body are worth visibly less than five spread around, and
+      // the better he does his job the less the job costs.
+      //
+      // Capped at 5 stacks: a full volley from a standard encounter maxes it,
+      // and the number on the sheet is the number, rather than something the
+      // 95% mitigation floor silently truncates later.
+      { name: 'Dig In', cost: 8, passive: { kind: 'grudgeArmor', percent: 10, max: 5 } },
+      // The capstone, and the only tier that changes how he is PLAYED rather
+      // than how long he lasts.
+      //
+      // A base taunt is spent the moment it lands -- it rewrites the intent on
+      // the board and nothing more -- so holding a creature costs him his action
+      // every single round, and he never gets to use the attack the last round
+      // earned him. A second turn is the breathing room: taunt, absorb, and
+      // then spend a turn on Reckoning while the taunt is still holding.
+      { name: 'Standing Challenge', cost: 12, passive: { kind: 'lastingTaunt', turns: 1 } },
     ],
     starTree: starTree(
       [
@@ -716,11 +666,197 @@ export const ROSTER: CharacterDef[] = [
       ],
       [
         node('kael-thorns', 'Braced Plate', [{ kind: 'passive', passive: { kind: 'thorns', percent: 22 } }]),
-        node('kael-rage', 'Battle Rage', [{ kind: 'passive', passive: { kind: 'frenzy', percent: 25 } }]),
+        node('kael-rage', 'Battle Rage', [{ kind: 'passive', passive: { kind: 'grudge', percent: 3 } }]),
       ],
       [
-        node('kael-storm', 'Wider Tempest', [{ kind: 'ability', ability: 'Tempest Fall', power: 0.35 }]),
-        node('kael-rally', 'Longer Rally', [{ kind: 'ability', ability: 'War Cry', range: 2 }]),
+        node('kael-reckon', 'Long Memory', [{ kind: 'ability', ability: 'Reckoning', power: 0.4 }]),
+        node('kael-disarm', 'Broken Guard', [{ kind: 'ability', ability: 'Disarm', cost: -1 }]),
+      ],
+    ),
+  },
+  {
+    id: 'benjamin', name: 'Benjamin', rarity: 3, role: 'blade',
+    // No elemental alignment either way. He is the baseline a player learns
+    // damage and armour on before elements are introduced by anyone else, and
+    // giving him a resistance profile he has no attacks to match would put half
+    // an element back on him by the side door.
+    resistances: {},
+    maxHp: 44, attack: 104, physicalDefense: 50, magicalDefense: 30,
+    sprite: sprite('benjamin'),
+    /*
+     * The Utility Vanguard. See BATTLE_DESIGN.md §8.
+     *
+     * Three of the four cost about one die, so he acts nearly every turn
+     * without eating the shared pool; the ultimate is his only real commitment
+     * at ~2.6 dice, where somebody else sits out. Cost 6 is the most payable
+     * number on 5d6 (97.4%) and his signature ability owns it.
+     *
+     * Effects are authored in the order they happen, and the abilities are
+     * WORDED that way too -- see the ultimate, which buffs before it strikes.
+     */
+    /*
+     * DRILLMASTER -- the troupe rolls a sixth die while he is standing.
+     *
+     * The passive his kit was always asking for. Everything else he does is
+     * enabling: Rally reads HIS stats and hands them to somebody else, Sunder's
+     * shred is for whoever acts after him, Quick Cut arms a chain he may not be
+     * the one to cash. A percentage self-buff -- which is all the other five
+     * passive kinds can say -- states the opposite of that. "The party does
+     * more because he is on stage" says it exactly.
+     *
+     * THE FACES ARE THE BALANCE, AND BLANKS ARE THE ONLY LEVER. A wildcard
+     * costs any single die whatever its value, so lowering a die's numbers does
+     * not weaken it -- over all 7776 rolls of 5d6, adding a d3 is BETTER than
+     * adding a true d6 at every cost from 1 to 12, because small dice are
+     * precision tools for exact sums. Only a blank face removes the extra
+     * action. Three blanks is +0.50 dice a turn against a true die's +1.00.
+     *
+     * The ladder is read at his STAR LEVEL, so it improves for everyone who
+     * gets there rather than costing one of the three choices his tree offers:
+     *
+     *   0-1  three blanks, 1-3   +0.50 dice/turn
+     *   2-3  two blanks,   1-4   +0.67
+     *   4    one blank,    1-5   +0.83
+     *   5    a true d6           +1.00
+     *
+     * And it is gone the turn after he falls. `poolFor` rebuilds from who is
+     * still alive, which is what stops a party-wide buff from being free.
+     */
+    passives: [
+      {
+        name: 'Drillmaster',
+        kind: 'extraDie',
+        die: DRILL_DIE[0]!,
+        ladder: DRILL_DIE,
+      },
+    ],
+    abilities: [
+      {
+        // Arms `anvil` and has no trigger of its own. A free wildcard that
+        // arms for the team is the cheapest possible chain opener -- it costs
+        // one die he was going to spend anyway.
+        name: 'Quick Cut', cost: 0, wildcard: true, kind: 'attack',
+        symbol: 'anvil',
+        damageType: 'physical', range: 1, power: 0.8,
+        effects: [{ do: 'damage', power: 0.8 }],
+      },
+      {
+        // Damage first, shred second: the shred is for whoever acts AFTER him.
+        // Putting it first would let his own strike cash it in and quietly make
+        // this a selfish ability, when the point of it is to set up the team.
+        name: 'Sunder', cost: 6, kind: 'attack',
+        symbol: 'anvil',
+        // Amplify rather than an appended `modify`: modifiers are keyed by
+        // ability name, so a second modify from Sunder would REFRESH the shred
+        // instead of deepening it. -25 becomes -40.
+        trigger: { text: 'shreds 15% deeper', amplify: -15 },
+        damageType: 'physical', range: 2, power: 1.1,
+        effects: [
+          { do: 'damage', power: 1.1 },
+          { do: 'modify', stats: ['physicalDefense'], percent: -25, of: 'targetBase', turns: 3 },
+        ],
+      },
+      {
+        // Reads BENJAMIN'S current stats, not the recipient's. That is what
+        // makes flat stat investment in him pay out across the whole team, what
+        // lets his ultimate feed this a turn later -- and what quietly retires
+        // him once the roster outscales him.
+        name: 'Rally', cost: 4, kind: 'buff', range: 3, power: 20,
+        symbol: 'lantern',
+        // The "convert to whole-team" trigger BATTLE_DESIGN.md §4 warns is an
+        // order of magnitude above the others -- which is exactly why it sits
+        // on a cost-4 ability with no damage on it, per that section's advice.
+        trigger: { text: 'buffs the whole team instead of one ally', retarget: 'allies' },
+        effects: [
+          {
+            do: 'modify',
+            stats: ['attack', 'physicalDefense', 'magicalDefense'],
+            percent: 20, of: 'casterCurrent', turns: 3,
+          },
+        ],
+      },
+      {
+        // "Gain 20% to his own stats for 3 turns, THEN strike" -- the self-buff
+        // is up before the damage lands, because it is written first.
+        //
+        // Off his own BASE rather than his current stats, deliberately. Reading
+        // current would let a recast compound on itself; base keeps the number
+        // honest while still handing Rally a bigger figure to copy.
+        // Carries `lantern` but has NO trigger. Triggers never sit on the ult:
+        // it is already his big turn, and making it bigger when it chains would
+        // collapse the decision into "save the ult for a chain".
+        name: 'Perfect Form', cost: 10, kind: 'attack',
+        symbol: 'lantern',
+        damageType: 'physical', range: 2, power: 2.0, cooldown: 2,
+        effects: [
+          {
+            do: 'modify', on: 'self',
+            stats: ['attack', 'physicalDefense', 'magicalDefense'],
+            percent: 20, of: 'targetBase', turns: 3,
+          },
+          { do: 'damage', power: 2.0 },
+        ],
+      },
+    ],
+    /*
+     * IN-BATTLE UPGRADES -- survive, sustain, then multiply.
+     *
+     * The tiers replaced lifesteal / frenzy / resilient, which were three ways
+     * of saying "Benjamin personally fights better" on a Performer whose entire
+     * kit is about somebody else fighting better. They were the same mismatch
+     * his innate passive had.
+     *
+     * What makes them his is a synergy that already existed and was never
+     * written down: THE +10% STAT BONUS EVERY TIER GRANTS IS ALREADY
+     * TEAM-SCALED FOR HIM ALONE, because Rally copies his CURRENT stats onto an
+     * ally -- the whole team when it chains. Nobody else converts personal
+     * stats into team stats, so "spend a turn investing in yourself" is the
+     * enabling play for him and the tiers should lean into it rather than
+     * fight it. Three tiers is +30% on every Rally for the rest of the fight.
+     *
+     * That leaves the passive slot to answer one question: what keeps him able
+     * to keep doing it? Two things now ride on him being upright -- Rally is
+     * worth whatever HE is worth, and Drillmaster's die is rebuilt each turn
+     * from who is still alive -- so durability on Benjamin is a team stat, not
+     * a selfish one.
+     *
+     * Tier 1 is priced at 6 on purpose: that is Sunder's cost, so the decision
+     * is exactly "Sunder this turn, or make every future Rally bigger".
+     */
+    upgrades: [
+      // ~17% after the damage floor; see `peekResilience` on why stated
+      // resilience under-delivers by a predictable third.
+      { name: 'Hold the Line', cost: 6, passive: { kind: 'resilient', percent: 25 } },
+      // A trouper goes on. ~1 HP a turn on an 11 HP bar, banked so it is
+      // exactly 9% rather than nothing.
+      { name: 'Trouper', cost: 8, passive: { kind: 'regen', percent: 9 } },
+      /*
+       * The capstone, and unique to him: a SECOND die in the shared pool.
+       *
+       * Priced as a real decision rather than a strict gain. Cost 12 spends
+       * ~2.6 dice and his action, and returns +0.50 dice a turn, so it pays
+       * back in about five turns -- inside a long fight, not a short one. And
+       * it is gone at the final curtain: upgrades last one battle.
+       *
+       * Reaching it means buying the two below it first, so the full line is
+       * 26 dice and three of his actions. At six dice a turn that is four
+       * turns of the WHOLE party's pool, which is why it is only ever right in
+       * the fights that run long -- exactly the ones a sixth die matters in.
+       */
+      { name: 'Full Company', cost: 12, passive: { kind: 'extraDie', die: COMPANY_DIE } },
+    ],
+    starTree: starTree(
+      [
+        node('benjamin-edge', 'Honed Edge', [{ kind: 'stat', stat: 'attack', percent: 9 }]),
+        node('benjamin-guard', 'Duelist Guard', [{ kind: 'stat', stat: 'defense', percent: 14 }]),
+      ],
+      [
+        node('benjamin-bleed', 'Bleeding Cuts', [{ kind: 'passive', passive: { kind: 'lifesteal', percent: 10 } }]),
+        node('benjamin-reach', 'Extended Guard', [{ kind: 'ability', ability: 'Sunder', range: 1 }]),
+      ],
+      [
+        node('benjamin-form', 'Flawless Form', [{ kind: 'ability', ability: 'Perfect Form', power: 0.3 }]),
+        node('benjamin-swift', 'Practised Rally', [{ kind: 'ability', ability: 'Rally', cost: -1 }]),
       ],
     ),
   },

@@ -99,6 +99,7 @@ export type Event =
   /** Frost landing on something already frozen: it comes out as damage. */
   | { t: 'shatter'; target: string; stacks: number; amount: number; hpAfter: number }
   | { t: 'sleep'; unit: string }
+  | { t: 'taunt'; unit: string; target: string; onto: string; refused?: string }
   | { t: 'regen'; unit: string; charges: number }
   | { t: 'wake'; unit: string }
   | { t: 'move'; unit: string; from: Pos; to: Pos }
@@ -207,6 +208,8 @@ export function createBattle(
       hp: def.maxHp,
       modifiers: [],
       statuses: noStatuses(),
+      grudge: 0,
+      taunt: null,
       side,
       pos: slotPos(slots[i] ?? slots[slots.length - 1]!),
       hasActed: false,
@@ -364,9 +367,22 @@ function chooseIntents(s: BattleState): void {
     const { ability, roll } = rollForAbility(s, usable);
     const pool = ability.kind === 'attack' ? foes : allies;
     const legal = pool.filter((t) => canTarget(ability, u, t.pos, s.units));
-    const target = legal[s.rng.int(0, legal.length - 1)]!;
+    let target = legal[s.rng.int(0, legal.length - 1)]!;
+    let forced = false;
 
-    u.intent = { ability, target: target.pos, roll };
+    // A taunt still standing picks the victim instead of the die. Single-target
+    // attacks only, for the same reason the immediate redirect refuses a
+    // whole-side ability: there is no named victim to move.
+    const held = u.taunt;
+    if (held && held.turns > 0 && ability.kind === 'attack' && (ability.scope ?? 'one') === 'one') {
+      const taunter = s.units.find((x) => x.def.id === held.by && alive(x));
+      if (taunter) {
+        target = taunter;
+        forced = true;
+      }
+    }
+
+    u.intent = { ability, target: target.pos, roll, ...(forced ? { forced: true } : {}) };
     s.log.push({
       t: 'intent',
       unit: u.def.name,
@@ -923,6 +939,10 @@ function applyEffects(
         for (const target of targets) putToSleep(s, target);
         break;
 
+      case 'taunt':
+        for (const target of targets) taunt(s, source, target);
+        break;
+
       case 'regen':
         // Refresh to the larger count rather than adding: two casts of the same
         // thing should not quietly stack into a much longer one, which is the
@@ -1055,6 +1075,18 @@ function strike(
       source.hp += gained;
       s.log.push({ t: 'heal', target: source.def.name, amount: gained, hpAfter: source.hp });
     }
+  }
+
+  // Earned by being hit, spent on the turn after. Before the riposte block so
+  // the order of the log reads the way the round did: struck, then answered.
+  //
+  // The counter moves for EVERY unit, not only ones carrying a passive that
+  // reads it -- it is a shared number, like frost. Incremented after this hit's
+  // damage is computed, so the blow that grants a stack is not reduced by it;
+  // the stack pays from the next one on.
+  if (dmg > 0) {
+    target.grudge += 1;
+    payGrudge(s, target);
   }
 
   // Reactive frost from an active guard. Deduplicated by the ability that
@@ -1283,6 +1315,11 @@ function applyAbility(
  * and third ability of the same plan.
  */
 function endTurn(s: BattleState, side: Side): void {
+  // Hits-taken resets with the buff it feeds. Both belong to the same window:
+  // collected during the opponent's phase, spent on this side's turn, gone at
+  // the end of it.
+  for (const u of s.units) if (u.side === side) u.grudge = 0;
+
   // Frost decays at the End Turn of the side that CARRIES it, so a stack always
   // survives exactly one of the frosted unit's own turns before melting.
   //
@@ -1308,6 +1345,13 @@ function endTurn(s: BattleState, side: Side): void {
   // be rediscovered.
   for (const u of s.units) {
     if (u.side === side && u.statuses.frost > 0) u.statuses.frost -= 1;
+    // Same clock as frost, and for the same reason: it ticks at the end of the
+    // turn of the side CARRYING it, so a taunt is alive for the phase it was
+    // meant to redirect rather than expiring on the way there.
+    if (u.side === side && u.taunt) {
+      u.taunt.turns -= 1;
+      if (u.taunt.turns <= 0) u.taunt = null;
+    }
   }
 
   /*
@@ -1439,6 +1483,41 @@ function payFrostFervor(s: BattleState, target: Unit, stacks: number): void {
 /** The modifier key the fervor buff accumulates under. */
 const FERVOR = 'Frostfever';
 
+/** The modifier key the grudge buff accumulates under. */
+const GRUDGE = 'Grudge';
+
+/**
+ * Pay out `grudge` to a unit that has just been hit.
+ *
+ * Counts the HIT, not the damage: one call per landed attack regardless of
+ * size. That is what makes taunting a five-creature volley onto one body the
+ * setup it is meant to be, and it keeps the passive honest next to an attack
+ * debuff -- weakening an attacker lowers what the hit costs him without
+ * lowering what it earns.
+ *
+ * Accumulates rather than refreshing, for the same reason `payFrostFervor`
+ * does: four hits have to add up to four, and `applyModifier` replaces what it
+ * finds. `turns: 1` with the holder's own side as `by` is what carries it
+ * across the enemy phase and expires it at the end of the turn he spends it on.
+ */
+function payGrudge(s: BattleState, hit: Unit): void {
+  if (!alive(hit)) return;
+  for (const p of activePassives(hit)) {
+    if (p.kind !== 'grudge') continue;
+    // Off his own BASE attack, so the fifth hit is worth the same as the first
+    // -- reading the current value would compound the stack into itself.
+    const gained = resolveModifierAmount(hit, hit, 'attack', p.percent, 'targetBase');
+    const had = hit.modifiers.find((m) => m.ability === GRUDGE && m.stat === 'attack');
+    applyModifier(s, hit, {
+      ability: GRUDGE,
+      stat: 'attack',
+      amount: (had?.amount ?? 0) + gained,
+      turns: 1,
+      by: hit.side,
+    });
+  }
+}
+
 function addFrost(s: BattleState, target: Unit, stacks: number): void {
   if (!alive(target) || stacks <= 0) return;
 
@@ -1492,6 +1571,58 @@ function addFrost(s: BattleState, target: Unit, stacks: number): void {
       if (p.kind === 'freeCastOnFreeze') u.freeCast = p.ability;
     }
   }
+}
+
+/**
+ * Point a creature's declared intent at whoever taunted it.
+ *
+ * Three refusals, all of them worth showing rather than swallowing, because a
+ * taunt that silently did nothing is indistinguishable from a bug:
+ *
+ * - **No intent.** Frozen, asleep, or mid-telegraph; there is nothing to move.
+ * - **Not an attack.** Redirecting a heal or a self-buff onto the taunter is
+ *   nonsense, not a benefit.
+ * - **Whole-side.** An AoE has no named victim to move. This is the limit that
+ *   keeps one tank from being the answer to everything, and the reason enemy
+ *   kits want a mix of shapes.
+ *
+ * It rewrites the intent that is already on screen, so the player sees the
+ * redirect before committing the rest of the turn. Note the enemy still
+ * validates its intent at execution (`targetStillLegal`): a taunt onto someone
+ * the creature cannot reach is discarded and it picks afresh. That is correct
+ * and ties taunt to the formation -- you cannot pull an attack onto a Performer
+ * standing further back than the attack can reach.
+ */
+function taunt(s: BattleState, taunter: Unit, target: Unit): void {
+  const line = (refused?: string): void => {
+    s.log.push({
+      t: 'taunt',
+      unit: taunter.def.name,
+      target: target.def.name,
+      onto: taunter.def.name,
+      refused,
+    });
+  };
+
+  if (!alive(target) || !target.intent) return line('nothing declared');
+  if (target.intent.ability.kind !== 'attack') return line('not an attack');
+  if ((target.intent.ability.scope ?? 'one') === 'all') return line('hits the whole side');
+  // Deliberately NOT reach-checked. A taunted creature comes for the taunter
+  // wherever they are standing, and `forced` carries that past the validation
+  // at execution -- see `Intent.forced` for why the exception is the ability
+  // rather than a hole in the formation rules.
+  target.intent = { ...target.intent, target: { ...taunter.pos }, forced: true };
+
+  // Recorded as a state as well as a rewrite, so it can outlive the intent it
+  // just changed. At one turn the record does nothing -- the rewrite above is
+  // the whole effect -- and `lastingTaunt` is what carries it into the NEXT
+  // declaration, which is the difference between taunting every round and
+  // having a turn to spend on something else.
+  let turns = 1;
+  for (const p of activePassives(taunter)) if (p.kind === 'lastingTaunt') turns += p.turns;
+  target.taunt = { by: taunter.def.id, turns };
+
+  line();
 }
 
 /** Sleep until damaged. Self-inflicted so far; the wake is in `strike`. */
@@ -1731,10 +1862,19 @@ interface EnemyChoice {
  * threat is exactly the kind of play the reveal is meant to enable.
  */
 function targetStillLegal(s: BattleState, unit: Unit, intent: Intent): boolean {
-  const occupant = unitAt(s, intent.target);
+  // Side-checked, not merely position-checked. Formation columns are disjoint
+  // per side by convention (see `formation.ts`), and this is what stops a
+  // convention being load-bearing: an occupant on the WRONG side is not the
+  // target still standing there, it is a coordinate collision.
+  const found = unitAt(s, intent.target);
+  const occupant = found && found.side !== unit.side ? found : undefined;
   if (occupant && !alive(occupant)) return false;
   // A whole-side ability does not care that one named slot emptied.
   if (intent.ability.scope === 'all') return true;
+  // A taunt overrides depth, not existence: the creature charges whoever
+  // provoked it however far back they stand, but a taunt onto someone who has
+  // since died still falls through to a fresh choice.
+  if (intent.forced) return !!occupant;
   return !!occupant && canTarget(intent.ability, unit, intent.target, s.units);
 }
 

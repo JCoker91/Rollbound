@@ -1212,6 +1212,27 @@ later copy free for everybody. **`paysAsWildcard(ability, freeCast)` in `dice.ts
 that knows what "costs one die" means**; every cost check, the planner and the UI call it, because
 two implementations of that question would drift the first time the rule moved.
 
+### 5.2e Taunt
+
+Kael's, and the second of the three tanking shapes (README §10 lists the third, cover, as unbuilt).
+
+- **Cast at an enemy**, not an ally. Everything that creature does comes to the taunter. Cover is
+  the mirror — cast at an ally, taking what is aimed at *them* — and is the only one of the two that
+  could catch a whole-side attack.
+- **It rewrites the declared intent**, which is on screen before the player plans, so the redirect
+  is visible before anything is committed. No roll.
+- **It cannot move a whole-side attack**, a heal, or a self-buff. Each refusal is logged with a
+  reason rather than silently doing nothing.
+- **It overrides reach.** `range` is what a creature *chooses* to reach; a taunt is it being forced,
+  and `Intent.forced` carries that past the depth check at execution. Without this a taunt only
+  works on creatures that could already hit the taunter, which makes it little more than a way to
+  pick which front-row body eats the attack — and it would force both tanks to queue for the same
+  front-rank slot. It overrides depth, **not existence**: a taunt onto someone who has since died
+  falls through to a fresh choice.
+- **It is also a state** (`Unit.taunt`), so it can outlive the intent it rewrote. At the base one
+  turn that record does nothing; Kael's `lastingTaunt` upgrade carries it into the next declaration,
+  where `chooseIntents` picks the taunter instead of rolling.
+
 ### 5.3 Enemies are NOT built like player characters
 
 This is the single most important content distinction.
@@ -1441,7 +1462,11 @@ Benjamin's rebuild moved him off 3/5/9:
 10: Benjamin, Maxine, Brax   12: Rebar
 ```
 
-**Costs 8 and 10 now have three claimants each**, which is the most crowded the roster has been.
+**Among the four finished kits, only cost 2 collides** (Rebar's Hibernate, Kael's Disarm) — the rest
+of the table is one claimant apiece. Placeholder kits still sit where an older system put them and
+will move as they are authored.
+
+> Superseded, kept for the shape of the argument: **costs 8 and 10 once had three claimants each**, which is the most crowded the roster has been.
 That is a consequence of authoring two kits deliberately and leaving four placeholders in place:
 Benjamin and Rebar took the seats their designs wanted (6 and 12 respectively are uncontested by
 anyone authored), and the four disposable kits are still sitting where a different system put them.
@@ -1747,7 +1772,8 @@ healed through at all.
 
 **Cast — seven.** Five 3★ as tutorial unlocks: Benjamin (elementless blade, **fully rebuilt**,
 utility / debuff / damage), Rebar (ice tank, **fully rebuilt**, frost application), Maxine (water
-staff, **in redesign** — see below), Kael (wind blade), Aethis (earth staff, healer). Two 5★:
+staff, **fully rebuilt**, frost damage — see below), Kael (wind bruiser, **fully rebuilt**, taunt
+tank), Aethis (earth staff, healer). Two 5★:
 **Brax**, an earth/fire tank, and **Veyra**, a magic dealer — both with **placeholder kits**,
 fieldable so compositions can be tested rather than balanced.
 
@@ -1819,12 +1845,13 @@ placeholder, not a design.
 > harmless **as long as nothing references them**, which is why `CharacterDef.sprite` is omitted
 > rather than pointed at a broken entry.
 
-**Two kits are authored against `BATTLE_DESIGN.md`; four are not.**
+**Four kits are authored against `BATTLE_DESIGN.md`; three are not.**
 
 | | drove into the engine |
 | --- | --- |
 | **Benjamin** — Utility Vanguard (§8) | turn phases, timed modifiers, ordered effect lists, player cooldowns, elementless attacks, the mutable dice pool |
 | **Rebar** — Ice Wall (§8) | statuses (frost, freeze, sleep), three-rank positioning, timed elemental resistance, reactive `riposte`, the `move` effect |
+| **Kael** — Provoker (§8) | **taunt** — redirecting a declared intent, and holding it for a second round; `Unit.grudge`, a hits-taken counter any passive can read |
 
 That pattern is worth continuing deliberately: each authored kit has paid for a mechanic, and
 authoring the next one is how the next mechanic gets specified by something that needs it rather
@@ -1919,6 +1946,35 @@ because Rally's worth and Drillmaster's die both end the turn he does.
 placeholders authored against a system that is going away, and do not read balance into them.
 Benjamin's, Rebar's and Maxine's kits are in `BATTLE_DESIGN.md` §8; **every star tree** is
 placeholder content regardless of whose it is (§5.5).
+
+**Kael is fully built** — the 3★ damage-dealing tank, and the roster's second tanking shape.
+Everything but his star tree is done.
+
+```
+passive  Grudge   +5% attack for his next turn, per hit taken (counts hits, not damage)
+ 0  Cleave      50% ATK to the whole enemy line             [anvil]
+ 2  Disarm      70% ATK, then -25% of the target's ATK, 3t  [anvil]    chained: -40% instead
+ 5  Challenge   taunt one enemy. no damage, no self-buff    [crescent] chained: +30% to both defences
+ 9  Reckoning   200% ATK, single target                     [crescent] chained: +30% of ATK on top
+ 6  Ironhide           resilient 20, flat and unconditional
+ 8  Dig In             10% less damage per hit already taken this turn, cap 5
+12  Standing Challenge his taunts hold for a second round
+```
+
+**He tanks by choosing to be the target**, where Rebar tanks by standing in the front rank. They
+answer different threats: Rebar answers "they attack the front row", Kael answers "they are going
+for the healer", which positioning cannot solve. **Taunt overrides reach**, so he does not compete
+with Rebar for a front-rank slot.
+
+**No lifesteal or self-heal anywhere on him, deliberately** — a tank who tops himself up does not
+need anybody, and the reason to field Kael is that he turns an unanswerable threat into one a healer
+can answer.
+
+**Dig In is the only defensive number in the game that currently moves.** Across a five-hit volley
+the same attack lands for 4, 3, 3, 2, 2. Challenge's brace at +30% saves the same 5 damage it would
+at +60% — a 5-damage hit rounds to 4 either way. **Roughly 50% is the size a defensive effect has to
+reach to be felt at all right now.** Worth knowing before the last three kits are authored, and it
+moves when enemy kits do.
 
 **Art migration to style guide v3 (256px) is in progress.** Body heights below are the figure, not
 the bounding box — see `PROP_HEADROOM` in §9 for why those differ on the hat-wearers.
@@ -2039,6 +2095,15 @@ sheet from the base roster, so any stage can be tried at any level without grind
   kits land, a tank standing in front is theory.
 - **A group `move` does nothing in a full party**, correctly — six units in six slots is rigid. See
   §5.2; the useful group shape is a rank exchange, not a shift.
+- **Formation columns must not overlap between sides, and now do not.** Party holds 0–2, enemies
+  3–5. Giving the party a third rank at column 2 — the enemy's front — put two units at the same
+  formation coordinates, and `unitAt` finds a unit by position alone. An intent naming a front-rank
+  Performer found the *enemy* standing there, `targetStillLegal` saw a living occupant and said yes,
+  and the attack resolved into a slot with no living player in it. **Five enemies whiffed an entire
+  round**, silently, with `act` in the log and no damage anywhere.
+  It was reasoned to be safe on the grounds that reach is always asked about one side at a time.
+  That is true of reach and false of `unitAt`. `targetStillLegal` now also checks the occupant's
+  side, so the invariant is enforced where it matters rather than only maintained by convention.
 - **Rules text drifts whenever behaviour lives outside the effect list.** This has now happened
   twice: `describeAbility` described Benjamin's Sunder as a plain hit while the engine shredded
   defence, and later described Rebar's Frost Armor as a plain guard buff while the engine also
@@ -2327,14 +2392,16 @@ cannot be judged, a formation cannot be punished, and nothing is worth freezing.
 2. **Party / lineup management.** In-battle repositioning covers the positional half now (§5.2), so
    what is left is the *pre-battle* screen: which five perform, and their starting arrangement.
    Roster order is still the formation, and there is still no screen to change it.
-3. **The remaining three kits** — Kael, Aethis, Brax — against `BATTLE_DESIGN.md`. Author them one
+3. **The remaining three kits** — Aethis, Brax, Veyra — against `BATTLE_DESIGN.md`. Author them one
    at a time and let each specify the next mechanic, which is how the last three went. Benjamin,
    Rebar and **Maxine** are done. Shapes now available that were not when the remaining kits were
    written: a passive can change the **pool** rather than a stat (Benjamin), can be a **reactive
    rider** (Rebar's riposte), can **read the target's state** (`exploitCold`) or **the act of
    applying a status** (`frostFervor`), and an upgrade tier can grant a **charge that changes what
-   an ability costs** (`freeCastOnFreeze`). An ability's power can be conditional on a target state
-   or scale off a status counter (§5.2d). Note the tiers' +10% stat bonus is genuine filler for all
+   an ability costs** (`freeCastOnFreeze`), **rewrite an enemy's declared intent and hold it for
+   a second round** (Kael's taunt and `lastingTaunt`), or **scale off hits taken this turn**
+   (`Unit.grudge`, which every unit counts and any passive may read). An ability's power can be conditional on a target state or scale off a status counter
+   (§5.2d). Note the tiers' +10% stat bonus is genuine filler for all
    three, since only Benjamin converts personal stats into team stats — so their passives have to
    carry their tiers.
    > **Frost now has two readers and wants no more for a while.** Rebar builds it, Maxine converts
@@ -2354,11 +2421,12 @@ cannot be judged, a formation cannot be punished, and nothing is worth freezing.
 
 **Design directions agreed but not built:**
 
-- **Tanking has several shapes and only one is implemented.** Standing in the front rank is the
-  baseline. Still open, and wanted: **cover** (absorb a hit aimed at an ally, typed by damage kind),
-  **taunt** (change who the enemy picks, as opposed to who receives), and self-sustain tanks. Cover
-  as an always-on passive was explicitly rejected — if it happens it should be something a Performer
-  *does*, not something they are.
+- **Tanking has three shapes and two are implemented.** Standing in the front rank is the baseline
+  (Rebar); **taunt** — cast at an enemy, pulling everything that creature does onto the taunter — is
+  Kael's. Still open: **cover**, cast at an *ally* and taking what is aimed at them, which is the
+  only one of the three that can catch a whole-side attack. Cover as an always-on passive was
+  explicitly rejected — if it happens it should be something a Performer *does*, not something they
+  are.
 - **A second tank matters.** Rebar's soft magical defence is deliberate so that a magical-damage
   fight wants somebody else. Brax is the obvious carrier when his placeholder kit is replaced.
 - **Line / row / column attacks.** Discussed, not decided. `unitsHit` is four lines and the single

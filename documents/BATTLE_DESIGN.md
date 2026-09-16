@@ -23,6 +23,8 @@ drove the phase model, modifiers, ordered effects and cooldowns in.
 | 2 | Movement as an ability (`move` effect) | **built**; no kit uses it yet |
 | 8 | Player-side cooldowns | **built** |
 | 4 | Symbols and chains — arming, forward reads, the three trigger shapes | **built** |
+| 8 | Taunt — redirect a declared intent onto the taunter | **built** |
+| 8 | Cover — absorb what is aimed at an ally | not built; see below |
 | 1 | No auto-battle, ever | **decided** — see §1 |
 
 Read this before touching battle code. Read **§1** before touching anything at all, because every
@@ -637,6 +639,47 @@ line the player could have taken. It also would not have solved the problem — 
 stun-locks, it just occasionally reads as the game cheating. The limiter is cost and consumption,
 which the player can see and plan against.
 
+### Taunt and cover are two different things — TAUNT BUILT
+
+They both protect somebody and they point opposite ways, which is why the roster wants both
+eventually and why one character should not have both.
+
+| | cast at | what it moves |
+| --- | --- | --- |
+| **Taunt** | an **enemy** | everything that creature does comes to the taunter |
+| **Cover** | an **ally** | everything aimed at that ally is taken by the coverer |
+
+So taunt answers "this creature is dangerous", and cover answers "this Performer is fragile". Cover
+is also the one that can catch whole-side attacks, since it is defined by who is being aimed at
+rather than by who is aiming.
+
+**Taunt rewrites the declared intent.** Intents are chosen and shown before the player plans, so the
+redirect happens on something already on screen and is visible before anything is committed — the
+reveal stays honest and the turn stays plannable. No roll, no chance.
+
+Three things it cannot do, all of them logged rather than swallowed:
+
+- **Move a whole-side attack.** There is no named victim to move. This is the limit that stops one
+  tank being the answer to everything, and it is why enemy kits want a mix of shapes.
+- **Move a heal or a self-buff.** Pulling those onto the taunter is nonsense, not a benefit.
+**A taunt is both a rewrite and a state.** It rewrites the intent on the board immediately, and it
+records itself on the taunted creature (`Unit.taunt`) so it can outlive that intent. At the base one
+turn the record does nothing — the rewrite is the whole effect — but `lastingTaunt` carries it into
+the *next* declaration, where `chooseIntents` picks the taunter instead of rolling for a victim.
+Same single-target restriction there as on the immediate redirect.
+
+It **does** override reach, and that is the ability rather than a hole in the formation rules.
+`range` is what a creature *chooses* to reach; a taunt is it being forced, so `Intent.forced` carries
+the redirect past the depth check when the intent is re-validated at execution. A taunt that only
+worked on creatures who could already hit the taunter would be little more than a way to pick which
+front-row body eats the attack — pulling an attack off somebody the formation *cannot* protect is
+the whole point, and it is what lets a party field two tanks without both of them queueing for the
+same front-rank slot. A taunt onto someone who has since **died** still falls through to a fresh
+choice: it overrides depth, not existence.
+
+**Cover is still unbuilt**, and if it arrives it should be something a Performer *does* — an always-on
+passive version was considered and rejected.
+
 ### Sleep — BUILT
 
 Asleep until damaged. A unit that is asleep cannot be planned and loses its action; **any** damage
@@ -1068,6 +1111,134 @@ ACT of applying a status (`frostFervor`), and a charge that changes what an abil
 
 **What she still needs:** a star tree — hers, like every revamped character's, is placeholder
 content being redone as a batch.
+
+### Kael — the Provoker
+
+**Goal:** choose to be the target, and get paid for it.
+
+The roster's second tank, and deliberately nothing like the first. Rebar tanks by standing in the
+front rank and denying actions; Kael tanks by *pulling* one creature's attacks onto himself. They
+answer different threats — Rebar answers "they attack the front row", Kael answers "they are going
+for the healer", which is the case positioning cannot solve.
+
+A 3★, so none of it is extravagant: middling bulk, middling damage, and a loop that pays nothing
+unless he is actually being attacked.
+
+```
+HP 52   ATK 96   P.DEF 68   M.DEF 44
+```
+
+| | cost | payable | effect |
+| --- | --- | --- | --- |
+| **Cleave** | wildcard | — | 50% physical to the **whole enemy line**. |
+| **Disarm** | 2 | 70.4% | 70% physical, **then** −25% of the target's ATK for 3 turns. |
+| **Challenge** | 5 | 92.2% | Taunt one enemy. No damage, no self-buff. |
+| **Reckoning** | 9 | 90.7% | 200% physical, single target. |
+
+**Cleave is an AoE basic, and the numbers say that is fine.** One die buys 15 damage across five
+creatures — comparable to Maxine's Frostbolt at 14 — but hers lands on one target and takes half a
+28 HP bar, while his is 3 apiece and kills nothing. Comparable output, opposite use, which is the
+shape §4 asks conversions to take. Against the stage-10 boss line of three it drops to **6 total**,
+worse than Benjamin's basic: strong in the corridor, weak at the gate.
+
+**Reckoning is priced at 9 rather than 11.** At 11 it was dominated outright — 2.80 dice for 14
+damage after a full round of tanking, against Benjamin's Perfect Form at 2.58 dice for 15 *plus* a
+self-buff on the way in. A conditional payoff that never catches up with an unconditional one is not
+a trade. Nine is 2.41 dice and uncontested, which fixes it without inflating the number.
+
+**Passive — Grudge: +5% attack for his next turn, per hit taken.** This is the engine of the kit and
+the reason Challenge carries no buff of its own. A Performer acts once a round, so the two halves of
+him compete: **taunt and be hit, or spend what the last taunt earned.** That is the decision every
+turn.
+
+It counts **hits, not damage**, which matters twice. It means pulling a five-creature volley pays
+five times, and it means Disarm and Grudge do not fight — weakening an attacker lowers what the hit
+costs him without lowering what it earns.
+
+It replaced `frenzy 20`. Frenzy had the right instinct and the wrong trigger: it only pays below
+half health, so for a tank it pays when he is about to die rather than when he is doing his job.
+
+**Challenge sits on 5** (92.2% payable, ~1.39 dice) because it is his job. An answer to a threat you
+can already see has to be affordable on the turn you see it; the fragile low costs are right for a
+gamble and wrong for this. **Disarm sits on 2** (70.4%) for the opposite reason — it is the turn he
+can still do something useful when he cannot afford anything else.
+
+**No self-buff on Challenge**, deliberately. Protecting somebody has to cost something, and here the
+cost is that he spends his turn doing it and then stands in the way of everything that creature
+does. The growth went into the chain trigger, which braces him for the round.
+
+**In-battle upgrades — survive it, make it cost less, make it hurt more.**
+
+| | cost | passive | |
+| --- | --- | --- | --- |
+| **Ironhide** | 6 | `resilient 20` | Flat and unconditional, so it works on the turn he is caught without a taunt up — the turn he is most likely to die on. |
+| **Dig In** | 8 | `grudgeArmor 10`, cap 5 | 10% less damage per hit already taken this turn. |
+| **Standing Challenge** | 12 | `lastingTaunt 1` | His taunts hold for a **second** round. |
+
+**Dig In is the answer to what taunting invites** — a creature's whole volley arriving at one body.
+Each hit makes the next cheaper, so focusing him has **diminishing** returns rather than linear
+ones: measured across a five-hit volley the same attack lands for **4, 3, 3, 2, 2**. Five attacks on
+one body are worth visibly less than five spread around, and the better he does his job the less the
+job costs. Capped at 5 stacks, which a standard encounter's full volley reaches exactly.
+
+It is also, notably, a defensive number that **does** move at current scales, where Challenge's
+brace does not — because it reaches 50% rather than 30%, which is enough to shift a rounded
+integer. That is the size a defensive effect has to be right now to be felt at all.
+
+**Standing Challenge is the capstone because it changes what he can do, not how long he survives.**
+A base taunt is spent the moment it lands — it rewrites the intent already on the board and nothing
+more — so holding a creature costs his action *every* round, and he never gets to spend the attack
+the last round earned him. A second turn is the breathing room: taunt, absorb, then swing while the
+taunt is still holding. Verified: without it a provoked creature declares against Kael on round one
+and against Rebar on round two; with it, Kael on both, and Rebar on round three.
+
+**No lifesteal anywhere on him, deliberately.** A tank who tops himself up does not need anybody,
+and the whole reason to field Kael is that he turns an unanswerable threat into one a healer can
+answer. Removing his self-sustain is what makes the rest of the team matter.
+
+**`Unit.grudge` counts hits taken for every unit**, not only for those carrying a passive that reads
+it — the same shared-number shape frost has. `grudge` pays it out as attack next turn,
+`grudgeArmor` as damage reduction within this one, and it resets at the owner's End Turn alongside
+the buff it feeds.
+
+**Chains.** He carries `anvil` with Benjamin (and Brax) and `crescent` with Maxine (and Veyra), so
+both of his marks have a live partner.
+
+| | symbol | trigger |
+| --- | --- | --- |
+| Cleave | anvil | — arms only |
+| **Disarm** | anvil | the shred bites deeper, −25% → −40% |
+| **Challenge** | crescent | he braces, +30% to both defences for the round |
+| **Reckoning** | crescent | +30% of ATK as extra damage |
+
+**He can never chain with himself.** A Performer acts once a round, so every one of his triggers
+fires off a *teammate* arming the mark earlier in the turn. That is the mechanic working as designed
+— chaining costs breadth, because two Performers commit dice to the same symbol — and it is worth
+stating because a kit reads as though its own two carriers combine.
+
+**Both crescent abilities carry a trigger**, and that is the interesting part of his chains: a
+teammate arming crescent hands Kael a *choice* rather than an instruction. Brace behind Challenge,
+or hit harder with Reckoning — same arming, opposite answers. §4's "whose trigger do I want to fire"
+expressed as "which of mine".
+
+Reckoning's is §4's own worked example to the decimal: a 2.0 ability taken to 2.3. It exists so his
+ultimate can join a chain at all — it was the only finished kit's ultimate that could not.
+
+> **Measured, and one of them cannot currently be tuned.** Challenge's brace saves 5 damage over a
+> five-hit volley. Raising it does nothing: at +30%, +40%, +50% and +60% the saving is *identical*,
+> because a 5-damage hit rounds to 4 at every one of them. Defensive percentages quantise hard at
+> current enemy damage, so the number is left where it is proportionally correct rather than
+> inflated to chase an effect the scale cannot express. This is the same wall as README §9's
+> "defence is not yet distinguishing anyone", and it moves when enemy kits do.
+
+**Verified:** a declared intent on another Performer redirects to Kael and executes there; five
+attacks pulled onto him produce exactly five Grudge stacks (+25 on a base 96); the buff survives the
+enemy phase, is spendable on his next turn, and expires at the end of it; and taunt refuses — with a
+reason in the log — against a whole-side ability, a non-attack, a creature with nothing declared,
+and one that could not reach him; and both crescent chains fire off Maxine's Frostbolt, with
+Reckoning landing 10 + 2 chained against 10 alone.
+
+**What he still needs:** nothing mechanical. His star tree is placeholder like everyone else's.
 
 ---
 

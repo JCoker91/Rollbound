@@ -189,6 +189,21 @@ export type Effect =
   /** Put the target to sleep until something damages them. */
   | { do: 'sleep'; on?: EffectTarget }
   /**
+   * Force the targeted ENEMY to aim its declared intent at the caster.
+   *
+   * Taunt and cover are the two halves of protecting somebody, and they point
+   * opposite ways: a taunt is cast at an ENEMY and pulls everything that
+   * creature does onto the caster, while cover is cast at an ALLY and takes
+   * what is aimed at them. Kael taunts. Nothing covers yet.
+   *
+   * Works on the intent that is already declared and shown, so the redirect is
+   * visible before the player commits -- the reveal stays honest and the turn
+   * stays plannable. It CANNOT move a whole-side ability, which is what stops
+   * one tank being the answer to everything and is the reason enemy kits want
+   * a mix of single-target and AoE.
+   */
+  | { do: 'taunt'; on?: EffectTarget }
+  /**
    * Grant `turns` regen CHARGES -- one heal each, spent at Start Turn.
    *
    * Named `turns` because that is what it reads as on a sheet, and charges are
@@ -605,6 +620,44 @@ export type Passive = {
    * this one is to make a specific expensive nuke reachable on the exact turn
    * the board is set up for it.
    */
+  /**
+   * Gains `percent` attack for the holder's NEXT turn per hit taken.
+   *
+   * Counts hits, not damage, so a volley of small attacks pays as well as one
+   * large one -- which is the point, because the ability it is built to reward
+   * pulls a whole creature's attacks onto him at once. It also means an attack
+   * debuff and this passive do not fight: weakening an attacker reduces what
+   * the hit costs him without reducing what it earns.
+   *
+   * Accumulates across the enemy phase and is spent on the turn after, which is
+   * the decision the kit is built on -- taunt and be hit, or cash in what the
+   * last taunt bought. A Performer acts once a round, so he cannot do both.
+   */
+  | { kind: 'grudge'; percent: number }
+  /**
+   * Takes `percent` less damage per grudge stack, up to `max` stacks, for the
+   * rest of the turn.
+   *
+   * The answer to the thing taunting invites: a creature's whole volley coming
+   * at one body. Each hit makes the next one cheaper, so focusing him has
+   * DIMINISHING returns rather than linear ones -- and the more successfully he
+   * does his job, the less the job costs.
+   *
+   * Capped in stacks like `chill` is, rather than left to the 95% mitigation
+   * floor to catch. A cap the author chose is a number that can be read off the
+   * sheet; a cap that emerges from a clamp somewhere else is a surprise.
+   */
+  | { kind: 'grudgeArmor'; percent: number; max: number }
+  /**
+   * This unit's taunts keep working for `turns` extra declarations.
+   *
+   * A base taunt is spent the moment it lands: it rewrites the intent already
+   * on the board and nothing more, so holding a creature costs an action every
+   * round. Extending it means the creature declares against the taunter again
+   * next round with nobody spending anything -- which is the difference between
+   * a tank who only ever taunts and one who gets to use what the taunt bought.
+   */
+  | { kind: 'lastingTaunt'; turns: number }
   | { kind: 'freeCastOnFreeze'; ability: string }
   /**
    * Takes `percent` less damage WHILE ASLEEP.
@@ -1023,6 +1076,30 @@ export interface Unit {
   /** Frost, freeze and sleep. See `Statuses`. */
   statuses: Statuses;
   /**
+   * Hits taken since the owner's last End Turn.
+   *
+   * Counted for EVERY unit, not just the ones with a passive that reads it, so
+   * it is a shared number the roster can build on -- the same shape frost has.
+   * `grudge` pays it out as attack next turn and `grudgeArmor` as damage
+   * reduction within this one.
+   *
+   * Hits, not damage: a volley of five small attacks and one large one are
+   * different problems, and this is the stat that can tell them apart.
+   */
+  grudge: number;
+  /**
+   * Who has provoked this unit, and for how much longer.
+   *
+   * Held on the TAUNTED creature rather than on the taunter, because it is a
+   * thing being done to it -- and because the creature is the one whose target
+   * selection has to consult it when intents are declared.
+   *
+   * `by` is a character id rather than a position: positions move, and a taunt
+   * should follow the Performer who shouted rather than the square they were
+   * standing on.
+   */
+  taunt: { by: string; turns: number } | null;
+  /**
    * Live stat modifiers, buffs and shreds alike.
    *
    * Replaced a pair of flat `atkBuff` / `defBuff` numbers that decayed 10 a
@@ -1092,6 +1169,17 @@ export interface Intent {
   target: Pos;
   /** The d20 that chose it. Displayed; the table it indexes is on the sheet. */
   roll: number;
+  /**
+   * Redirected by a taunt, and therefore exempt from the reach check when the
+   * intent is re-validated at execution.
+   *
+   * `range` is what a creature CHOOSES to reach. A taunt is it being forced,
+   * and the exception is exactly what the ability buys -- without it, taunt
+   * only works on creatures that could already hit the taunter, which makes it
+   * little more than a way to pick which front-row body eats the attack.
+   * Pulling an attack off somebody the formation cannot protect is the point.
+   */
+  forced?: boolean;
 }
 
 export interface PendingCast {

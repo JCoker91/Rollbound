@@ -59,8 +59,13 @@ Read these before designing anything; they carry the reasoning, not just the rul
 
 ## Where things stand
 
-Kits finished: **Benjamin, Rebar, Maxine.** Unbuilt: Kael, Aethis, Brax (placeholders — do not tune
-against them). **Every star tree is placeholder content**, being redone as a batch after the kits.
+Kits finished: **Benjamin, Rebar, Maxine, Kael.** Unbuilt: Aethis, Brax, Veyra (placeholders — do
+not tune against them). **Every star tree is placeholder content**, being redone as a batch after
+the kits.
+
+Each finished kit paid for a mechanic on its way in — modifiers and turn phases (Benjamin),
+statuses and positioning (Rebar), conditional power (Maxine), taunt (Kael). Keep that going: let the
+next character specify the next mechanic rather than authoring it against what already exists.
 
 The bottleneck is **enemy kits**: most defensive mechanics are currently unevaluable because mobs
 have one weak attack each. See README §10.

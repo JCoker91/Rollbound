@@ -344,6 +344,15 @@ function reductionPercent(source: Unit, target: Unit, defenders: Unit[]): number
     pct += best;
   }
 
+  // Every hit already taken this turn makes the next one cheaper. Read off the
+  // TARGET, because this is armour rather than an aura -- nobody else's stacks
+  // matter, only the ones the victim has been collecting.
+  if (target.grudge > 0) {
+    for (const p of activePassives(target)) {
+      if (p.kind === 'grudgeArmor') pct += Math.min(target.grudge, p.max) * p.percent;
+    }
+  }
+
   // Asleep, and something is about to wake him. See `dormant`.
   if (target.statuses.asleep) {
     for (const p of activePassives(target)) if (p.kind === 'dormant') pct += p.percent;

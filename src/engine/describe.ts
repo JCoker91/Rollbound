@@ -127,6 +127,11 @@ function describeEffect(a: Ability, fx: Effect, sameTargetAsPrevious: boolean): 
       // restating the rule under every ability that applies it is the same
       // waste the chain symbols were: the game has a word for it, so use it.
       return `applies sleep to ${name}`;
+    case 'taunt':
+      // Says what it cannot move as well as what it can. The AoE exemption is
+      // the whole shape of the ability -- a player who learns it the hard way,
+      // by taunting into a whole-side attack, has been misled by the text.
+      return `taunts ${name}, pulling its declared attack onto the caster (a whole-side attack cannot be pulled)`;
     case 'move':
       return `moves ${name} ${Math.abs(fx.ranks)} rank${Math.abs(fx.ranks) === 1 ? '' : 's'} ${fx.ranks > 0 ? 'forward' : 'back'}`;
     case 'reposition':
@@ -253,6 +258,21 @@ export function describeCost(a: Ability): string {
 /** Rules text for an always-on effect. */
 export function describePassive(p: Passive): string {
   switch (p.kind) {
+    case 'lastingTaunt':
+      return (
+        `Its taunts keep working for ${p.turns} more turn${p.turns === 1 ? '' : 's'}: ` +
+        `the provoked creature keeps choosing it without being taunted again.`
+      );
+    case 'grudgeArmor':
+      return (
+        `Takes ${p.percent}% less damage for the rest of the turn per hit already ` +
+        `taken this turn, up to ${p.max}.`
+      );
+    case 'grudge':
+      return (
+        `Gains ${p.percent}% attack for its next turn each time it is hit. ` +
+        `Counts hits rather than damage, and is spent the turn after.`
+      );
     case 'regen':
       return `Recovers ${p.percent}% of max HP at the start of each of its turns.`;
     case 'thorns':

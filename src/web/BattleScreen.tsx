@@ -37,6 +37,7 @@ import { matchupLabel, RESIST_CAP } from '../engine/elements.ts';
 import {
   canTarget,
   computeDamage,
+  activePassives,
   effectiveDefense,
   modifierTotal,
   damageTypeOf,
@@ -115,6 +116,17 @@ const elementsOf = (def: CharacterDef): string[] => {
   // where every other Performer has a word.
   return found.size > 0 ? ([...found] as string[]) : ['physical'];
 };
+
+/**
+ * Whether this ability actually deals damage.
+ *
+ * `kind` says who an ability is AIMED at, not what it does -- Kael's Challenge
+ * is `kind: 'attack'` because it has to target an enemy, and it deals nothing.
+ * Printing "attack · physical" beside it claims a damage type it does not have,
+ * which is the same drift the generated rules text exists to prevent.
+ */
+const dealsDamage = (a: Ability): boolean =>
+  a.effects ? a.effects.some((fx) => fx.do === 'damage') : a.kind === 'attack';
 
 const DIE_PIPS = ['', '⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
 
@@ -1359,7 +1371,7 @@ export function BattleScreen({
                           </strong>
                           <em>
                             {a.kind}
-                            {a.kind === 'attack' ? ` · ${damageTypeOf(a)}` : ''} · {rangeLabel(a)}
+                            {dealsDamage(a) ? ` · ${damageTypeOf(a)}` : ''} · {rangeLabel(a)}
                             {a.element && (
                               <>
                                 {' · '}
@@ -1978,6 +1990,10 @@ function DiceTray({
  * it shows the count AND the bar it is counting toward. `3/6` is a decision;
  * a snowflake is decoration.
  */
+/** Whether anything this unit carries actually pays out on hits taken. */
+const readsGrudge = (u: Unit): boolean =>
+  activePassives(u).some((p) => p.kind === 'grudge' || p.kind === 'grudgeArmor');
+
 function StatusChips({ u }: { u: Unit }) {
   if (!alive(u)) return null;
   return (
@@ -1998,6 +2014,14 @@ function StatusChips({ u }: { u: Unit }) {
           title={`Frost ${u.statuses.frost} of ${freezeThreshold(u)} — freezes at the threshold, which then rises`}
         >
           {u.statuses.frost}/{freezeThreshold(u)}
+        </span>
+      )}
+      {/* Shown only where something reads it. Every unit counts hits taken, so
+          printing it on all of them would put a number next to five names that
+          means nothing for four of them. */}
+      {u.grudge > 0 && readsGrudge(u) && (
+        <span className="chip grudge" title={`Hit ${u.grudge} time${u.grudge === 1 ? '' : 's'} this turn`}>
+          ✖{u.grudge}
         </span>
       )}
     </>
