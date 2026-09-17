@@ -506,7 +506,19 @@ export const ROSTER: CharacterDef[] = [
   },
   {
     id: 'kael', name: 'Kael', rarity: 3, role: 'blade',
-    resistances: aligned('wind'),
+    /*
+     * NO ELEMENT, offensively or defensively -- the same position Benjamin
+     * holds. Absent is not a neutral element with a blank matchup table: it
+     * means the elemental system does not apply, so no resistance is read, no
+     * weakness fires, and no matchup label is shown (see `Ability.element`).
+     *
+     * He was authored Wind and it never did anything for him. A Provoker's
+     * whole proposition is that he chooses WHO attacks him, which is a question
+     * about targeting rather than about damage type -- and a taunt tank whose
+     * defence swings 50% on the attacker's element is a taunt tank you cannot
+     * decide to use. Being off the wheel is what lets Challenge read the same
+     * against every creature in the encounter.
+     */
     /*
      * The Provoker. A damage dealer who tanks by CHOOSING to be the target.
      *
@@ -552,7 +564,7 @@ export const ROSTER: CharacterDef[] = [
         // targeting -- `thornsDamage` reads `range > 1` as its melee test, and
         // a man wading in with an axe should take the reflect.
         symbol: 'anvil', name: 'Cleave', cost: 0, wildcard: true, kind: 'attack',
-        damageType: 'physical', element: 'wind', range: 1, scope: 'all', power: 0.5,
+        damageType: 'physical', range: 1, scope: 'all', power: 0.5,
         effects: [{ do: 'damage', power: 0.5 }],
       },
       {
@@ -565,7 +577,7 @@ export const ROSTER: CharacterDef[] = [
         // attack lands on, which for a taunter is usually himself, and it does
         // NOT reduce what Grudge earns him, because Grudge counts hits.
         symbol: 'anvil', name: 'Disarm', cost: 2, kind: 'attack',
-        damageType: 'physical', element: 'wind', range: 1, power: 0.7,
+        damageType: 'physical', range: 1, power: 0.7,
         effects: [
           { do: 'damage', power: 0.7 },
           { do: 'modify', stats: ['attack'], percent: -25, of: 'targetBase', turns: 3 },
@@ -586,7 +598,7 @@ export const ROSTER: CharacterDef[] = [
         // in the way of everything that creature does. The chain trigger is
         // where the growth went.
         symbol: 'crescent', name: 'Challenge', cost: 5, kind: 'attack',
-        damageType: 'physical', element: 'wind', range: 2, power: 0,
+        damageType: 'physical', range: 2, power: 0,
         effects: [{ do: 'taunt' }],
         trigger: {
           text: 'he braces for it, taking less damage this round',
@@ -610,7 +622,7 @@ export const ROSTER: CharacterDef[] = [
         // payoff never caught up with the unconditional one. Nine is 2.41 dice,
         // uncontested by any finished kit, and leaves the number itself simple.
         symbol: 'crescent', name: 'Reckoning', cost: 9, kind: 'attack',
-        damageType: 'physical', element: 'wind', range: 2, power: 2.0,
+        damageType: 'physical', range: 2, power: 2.0,
         effects: [{ do: 'damage', power: 2.0 }],
         // Section 4's own worked example, to the decimal: a 2.0 ability taken to
         // 2.3. Appended rather than amplified because `amplify` only reaches
@@ -1137,30 +1149,147 @@ export const ROSTER: CharacterDef[] = [
     // out-damages the blades is a design mistake, not a nice surprise.
     maxHp: 36, attack: 72, physicalDefense: 30, magicalDefense: 40,
     sprite: sprite('aethis'),
-    // The healer mends without being asked, which is what lets her spend a
-    // turn on somebody else.
-    passives: [{ name: 'Quiet Bloom', kind: 'regen', percent: 4 }],
+    /*
+     * The floor under the whole kit: something is always healing, and she never
+     * has to spend a turn to make it happen.
+     *
+     * It replaced a `regen 4` that only ever healed HER, which is the least
+     * useful shape a healer's passive can take -- the one character whose
+     * survival the party can already do something about. Pointing it at the
+     * most wounded ally instead makes the passive do her job rather than
+     * protect her from having to.
+     *
+     * 50% of ATK is ~32 a turn at level 100 against enemy hits of 24-43, so it
+     * is roughly one attack a round undone, free, forever. Small per tick and
+     * large per fight, which is the heal-over-time identity stated in the one
+     * place that never costs a die.
+     */
+    passives: [{ name: 'Quiet Bloom', kind: 'mend', percent: 50 }],
     abilities: [
-      // Her wildcard is the ATTACK, not a heal -- deliberately the other way round
-      // from how a healer reads. A wildcard heal is worth nothing on a turn the
-      // party is at full HP, which would leave her with no way to spend a spare
-      // die; chip damage means she always has something to do.
-      { symbol: 'thorn', name: 'Thornlash', cost: 0, wildcard: true, kind: 'attack', damageType: 'magical', power: 0.65, element: 'earth', range: 2 },
-      // Cost 1 is the least reliable in the game (59.8%), and that unreliability
-      // is the price of a heal this cheap. You cannot build a turn around it.
-      { symbol: 'thorn', name: 'Poultice', cost: 1, kind: 'heal', power: 0.63, element: 'earth', range: 2 },
-      // The one she is meant to cast: parked at 5, inside the reliable band, so
-      // the heal you actually plan around is the one that turns up when needed.
-      { symbol: 'tide', name: 'Verdant Grace', cost: 5, kind: 'heal', power: 0.98, element: 'earth', range: 3 },
-      // Radius 1, not 2 -- the same lesson Sanctuary taught. A radius-2 team heal
-      // catches the whole party regardless of formation and swamps every other
-      // option in the AI's scoring. She gets reach instead: range 3 to Rebar's 2.
-      { symbol: 'tide', name: 'Hallowed Grove', cost: 8, kind: 'heal', power: 0.66, element: 'earth', range: 3, scope: 'all' },
+      /*
+       * A wildcard heal that is also her BURST, and the only place in the kit
+       * the two meet.
+       *
+       * The base heal keeps it from ever being a dead card, and the cash-in is
+       * what makes it the biggest single heal she owns: at level 100 the base
+       * is 39 and three charges on Rebar are 237 on top. Both halves always
+       * fire -- there is no "instead" -- so the decision is not which mode to
+       * use but whether the regen is better spent now or left to tick.
+       *
+       * That decision is the whole play pattern. She wants regen up on as much
+       * of the party as she can keep it, not because the ticks are efficient
+       * but because a full party carrying charges is a bank she can draw on the
+       * round something goes wrong.
+       *
+       * The old objection to a wildcard heal still stands and is still priced
+       * in: at full HP with nobody carrying regen, this does nothing and her
+       * die pays for somebody else's ability instead. She has no attack.
+       */
+      {
+        symbol: 'thorn', name: 'Poultice', cost: 0, wildcard: true, kind: 'heal',
+        power: 0.6, element: 'earth', range: 3,
+        effects: [
+          { do: 'heal', power: 0.6 },
+          { do: 'spendRegen' },
+        ],
+      },
+      /*
+       * Her focused setup, and the counterweight to Hallowed Grove's spread.
+       *
+       * The ultimate puts regen on everyone; this puts MORE of it on one
+       * Performer, which is what makes her able to prepare a specific ally for
+       * a specific threat rather than only thinning damage across the party.
+       * Chained it grants four charges to a single target -- more than the
+       * ultimate gives anybody -- so a symbol turns it into the real
+       * investment tool.
+       *
+       * It was briefly a front-rank heal (`scope: 'column'`). Pointing it at
+       * one ally instead lets Quiet Bloom do the untargeted work, and leaves
+       * this as the ability that makes a deliberate choice about WHO.
+       */
+      {
+        symbol: 'thorn', name: 'Verdant Grace', cost: 4, kind: 'heal',
+        power: 0.7, element: 'earth', range: 3,
+        trigger: { text: 'the roots run deeper, for two more turns', prolong: 2 },
+        effects: [
+          { do: 'heal', power: 0.7 },
+          { do: 'regen', turns: 2 },
+        ],
+      },
+      /*
+       * The "this is why I bring you" card, and the sharpest situational
+       * ability on the roster: +50 resistance is exactly half damage, party
+       * wide -- and against five of the seven elements it is worth nothing at
+       * all. Measured at level 100 against an earth attacker, the party takes
+       * 168 instead of 82.
+       *
+       * FIXED to earth rather than chosen at cast time. A chooseable element is
+       * always useful, which is precisely what would kill the niche: the
+       * decision belongs at the moment you pick your five, not after you have
+       * already brought her. Fixed also makes her legible -- "Aethis answers
+       * earth" is learned once.
+       *
+       * The chain widens it to wind, which is the element that BEATS earth on
+       * the wheel and the one `aligned('earth')` leaves her own party's earth
+       * unit weakest to. Widening coverage rather than deepening it, the same
+       * shape as Rebar's `guardAlso`.
+       */
+      {
+        symbol: 'tide', name: 'Bedrock', cost: 7, kind: 'heal',
+        power: 0, element: 'earth', range: 3, scope: 'self',
+        trigger: { text: 'the wind is answered as well as the stone',
+                   effects: [{ do: 'resist', element: 'wind', percent: 50, turns: 2, on: 'allies' }] },
+        effects: [{ do: 'resist', element: 'earth', percent: 50, turns: 2, on: 'allies' }],
+      },
+      /*
+       * Her ultimate, and the one that states what kind of healer she is.
+       *
+       * Regen AND mitigation rather than a big heal, because the two multiply:
+       * every point of damage the ward prevents is a point the regen does not
+       * have to out-heal, so the pair is worth more than either number suggests
+       * and neither number has to be large. A burst-healing ultimate would also
+       * have made her the answer to being caught out, which is the job left
+       * open for a different healer later.
+       *
+       * The chain buys DURATION, not size -- the one magnitude a support
+       * ability can be given more of without any number on it growing. Three
+       * turns becomes five, so a kept-up ultimate costs eleven dice every fifth
+       * round instead of every third, and the decision it creates is whether to
+       * spend a symbol arming it.
+       */
+      {
+        symbol: 'tide', name: 'Hallowed Grove', cost: 11, kind: 'heal',
+        power: 0, element: 'earth', range: 3, scope: 'self',
+        trigger: { text: 'the grove stands two turns longer', prolong: 2 },
+        effects: [
+          { do: 'regen', turns: 3, on: 'allies' },
+          { do: 'ward', percent: 20, turns: 3, on: 'allies' },
+        ],
+      },
     ],
+    /*
+     * All three lean the same way -- heal over time, and mitigation earned by
+     * having invested in it -- rather than offering her three unrelated stats.
+     *
+     * The old set was `regen 6` / `thorns 22` / `resilient 18`: a self-heal
+     * that duplicated the passive it sat next to, a retaliation mechanic on a
+     * character with no attack, and a flat reduction that is the same shape as
+     * her own ward. None of them asked a question.
+     */
     upgrades: [
-      { name: 'Herbalist', cost: 6, passive: { kind: 'regen', percent: 6 } },
-      { name: 'Bramble Guard', cost: 8, passive: { kind: 'thorns', percent: 22 } },
-      { name: 'Evergreen', cost: 12, passive: { kind: 'resilient', percent: 18 } },
+      // Widens the floor without changing what she does. Carries no percentage
+      // of its own -- `mend` sums percentages and takes the max reach, so this
+      // is purely "one more wounded ally per tick".
+      { name: 'Herbalist', cost: 6, passive: { kind: 'mend', percent: 0, targets: 2 } },
+      // Marries her two halves: regen becomes a marker for who she has spent
+      // on, and those allies are mitigated as well as healed. Worth nothing on
+      // a turn she has invested nothing.
+      { name: 'Bramble Guard', cost: 8, passive: { kind: 'regenGuard', percent: 15 } },
+      // The deepest, because it is the only one that reaches every part of the
+      // kit at once -- Start Turn ticks, Poultice's cash-in, Verdant Grace's
+      // focus and the ultimate's spread all read the same per-charge number.
+      // 10% becomes 15%, which is half again on all of it.
+      { name: 'Evergreen', cost: 12, passive: { kind: 'deeproot', percent: 5 } },
     ],
     starTree: starTree(
       [

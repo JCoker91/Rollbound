@@ -21,7 +21,6 @@ import {
   canAct,
   freezeThreshold,
   noStatuses,
-  REGEN_PER_CHARGE,
   SHATTER_PER_STACK,
 } from './types.ts';
 import { Rng } from './rng.ts';
@@ -34,6 +33,7 @@ import {
   canTarget,
   computeDamage,
   computeHeal,
+  regenTick,
   damageTypeOf,
   spendResilience,
   bank,
@@ -279,14 +279,21 @@ function beginPhase(s: BattleState): void {
     if (alive(u) && u.statuses.regen > 0) {
       const cap = unitMaxHp(u);
       u.statuses.regen -= 1;
-      const healed = Math.min(Math.max(1, Math.round(cap * REGEN_PER_CHARGE)), cap - u.hp);
+      // Through `regenTick` rather than inlined, so a `deeproot` aura reaches
+      // the Start Turn tick and the early cash-in identically.
+      const healed = Math.min(regenTick(u, teamOf(s, s.phase)), cap - u.hp);
       if (healed > 0) {
         u.hp += healed;
         s.log.push({ t: 'heal', target: u.def.name, amount: healed, hpAfter: u.hp });
       }
     }
 
-    for (const p of u.def.passives ?? []) {
+    // `activePassives`, NOT `def.passives`: a regen granted by an upgrade tier
+    // was never ticking. Benjamin's cost-8 Trouper did nothing whatsoever, and
+    // Aethis's cost-6 Herbalist added nothing to her innate 4%. Bought passives
+    // are active passives everywhere else in the engine; this was the one place
+    // that asked the sheet instead.
+    for (const p of activePassives(u)) {
       if (p.kind !== 'regen' || !alive(u)) continue;
       const cap = unitMaxHp(u);
       // Nothing to bank at full health: a topped-up unit should not be storing
@@ -304,6 +311,39 @@ function beginPhase(s: BattleState): void {
       }
     }
   }
+  /*
+   * `mend` runs as its own pass, AFTER every regen above has ticked.
+   *
+   * It picks the most wounded ally, so it has to read the state regen leaves
+   * behind -- resolving it inside the loop would let it heal someone a later
+   * iteration was about to top up anyway, and which ally that was would depend
+   * on roster order.
+   */
+  for (const u of teamOf(s, s.phase)) {
+    if (!alive(u)) continue;
+    // Percentages SUM, reach takes the MAX. See `Passive`'s `mend` entry: the
+    // two answer different questions, and summing reach would heal one ally
+    // twice while a second wounded Performer went untouched.
+    let percent = 0;
+    let reach = 0;
+    for (const p of activePassives(u)) {
+      if (p.kind !== 'mend') continue;
+      percent += p.percent;
+      reach = Math.max(reach, p.targets ?? 1);
+    }
+    if (percent <= 0 || reach <= 0) continue;
+    const wounded = teamOf(s, s.phase)
+      .filter((a) => alive(a) && a.hp < unitMaxHp(a))
+      .sort((a, b) => a.hp / unitMaxHp(a) - b.hp / unitMaxHp(b))
+      .slice(0, reach);
+    for (const hurt of wounded) {
+      const healed = Math.min(computeHeal(u, percent / 100), unitMaxHp(hurt) - hurt.hp);
+      if (healed <= 0) continue;
+      hurt.hp += healed;
+      s.log.push({ t: 'heal', target: hurt.def.name, amount: healed, hpAfter: hurt.hp });
+    }
+  }
+
   s.ai = null;
   s.plan = [];
   // Armed symbols last "the rest of the round" and no longer, so a chain must
@@ -966,6 +1006,33 @@ function applyEffects(
         for (const target of targets) stepInto(s, target, centre);
         break;
 
+      case 'spendRegen':
+        for (const target of targets) {
+          const charges = target.statuses.regen;
+          if (charges <= 0 || !alive(target)) continue;
+          target.statuses.regen = 0;
+          const room = unitMaxHp(target) - target.hp;
+          const healed = Math.min(regenTick(target, livingOf(s, target.side)) * charges, room);
+          if (healed <= 0) continue;
+          target.hp += healed;
+          s.log.push({ t: 'heal', target: target.def.name, amount: healed, hpAfter: target.hp });
+        }
+        break;
+
+      case 'ward':
+        for (const target of targets) {
+          applyModifier(s, target, {
+            ability: ability.name,
+            stat: 'ward',
+            // Absolute percentage points, like an element key and unlike a
+            // stat one -- never resolved against a source stat.
+            amount: fx.percent,
+            turns: fx.turns,
+            by: source.side,
+          });
+        }
+        break;
+
       case 'resist':
         for (const target of targets) {
           applyModifier(s, target, {
@@ -1193,6 +1260,10 @@ function triggeredEffects(ability: Ability, trigger: ChainTrigger): Effect[] {
   if (trigger.deepen !== undefined) {
     const by = trigger.deepen;
     fx = fx.map((e) => (e.do === 'frost' ? { ...e, stacks: e.stacks + by } : e));
+  }
+  if (trigger.prolong !== undefined) {
+    const by = trigger.prolong;
+    fx = fx.map((e) => ('turns' in e ? { ...e, turns: e.turns + by } : e));
   }
   if (trigger.sharpen !== undefined) {
     const by = trigger.sharpen;

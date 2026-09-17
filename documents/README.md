@@ -1772,7 +1772,7 @@ healed through at all.
 
 **Cast — seven.** Five 3★ as tutorial unlocks: Benjamin (elementless blade, **fully rebuilt**,
 utility / debuff / damage), Rebar (ice tank, **fully rebuilt**, frost application), Maxine (water
-staff, **fully rebuilt**, frost damage — see below), Kael (wind bruiser, **fully rebuilt**, taunt
+staff, **fully rebuilt**, frost damage — see below), Kael (elementless bruiser, **fully rebuilt**, taunt
 tank), Aethis (earth staff, healer). Two 5★:
 **Brax**, an earth/fire tank, and **Veyra**, a magic dealer — both with **placeholder kits**,
 fieldable so compositions can be tested rather than balanced.
@@ -1863,24 +1863,24 @@ Five are numbers applied to their owner; Benjamin's is not (see below).
 | | passive | |
 | --- | --- | --- |
 | Benjamin | **Drillmaster** | the party rolls an extra die while he stands |
-| Kael | Second Wind | `frenzy 20` |
+| Kael | **Grudge** | +5% ATK next turn per hit taken — counts hits, not damage |
 | Rebar | **Winterhide** | frosted enemies hit 4% softer per stack, cap 5 |
 | Maxine | **Killing Frost** | `exploitCold` +10% frosted / +20% frozen |
 | Aethis | Quiet Bloom | `regen 4` |
 | Brax | Slagskin | `resilient 10` |
 
-**The stat scale is HP 36–88 at level 1**, the five 3★ starters averaging exactly **50**, with ATK
-60–108 and DEF 20–100 in **tenths of a damage point**. The mechanics are in §5.2. The level-1 roster,
+**The stat scale is HP 36–88 at level 1**, the five 3★ starters averaging **51**, with ATK 60–108
+and DEF 20–100 in **tenths of a damage point**. The mechanics are in §5.2. The level-1 roster,
 against a Red Understudy (28 HP, P.DEF 40, M.DEF 20):
 
 | | HP | ATK | P.DEF | M.DEF | basic | signature | ultimate |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Benjamin | 44 | 104 | 50 | 30 | −6 | −8 | −15 |
-| Kael | 48 | 108 | 60 | 40 | −5 | −6 | −10 |
-| Rebar | 88 | 60 | 95 | 35 | −6 | +5 hp | −5 |
-| Maxine | 36 | 108 | 20 | 40 | −9 | −16 | −20 |
-| Aethis | 36 | 72 | 30 | 40 | −4 | +5 hp | +5 hp |
-| Brax | 80 | 84 | 100 | 70 | −5 | −8 | −10 |
+| Kael | 52 | 96 | 68 | 44 | −3 | −5 | −14 |
+| Rebar | 88 | 60 | 95 | 35 | −5 | +2 hp | −4 |
+| Maxine | 36 | 108 | 20 | 40 | −14 | −21 | −14 |
+| Aethis | 36 | 72 | 30 | 40 | −4 | +5 hp | +7 hp |
+| Brax | 80 | 84 | 100 | 70 | −4 | −8 | −9 |
 
 **Chains are live.** Every ability may carry a symbol; playing one arms it for the rest of the
 round, and a later ability sharing it fires that ability's own trigger. Benjamin carries `anvil`
@@ -1942,9 +1942,9 @@ The thing that makes them his was a synergy that already existed and was never w
 different question — what keeps him able to keep doing it — and both answers point the same way,
 because Rally's worth and Drillmaster's die both end the turn he does.
 
-**The three unbuilt kits are still disposable** — Kael, Aethis and Brax. Treat their abilities as
+**The three unbuilt kits are still disposable** — Aethis, Brax and Veyra. Treat their abilities as
 placeholders authored against a system that is going away, and do not read balance into them.
-Benjamin's, Rebar's and Maxine's kits are in `BATTLE_DESIGN.md` §8; **every star tree** is
+Benjamin's, Rebar's, Maxine's and Kael's kits are in `BATTLE_DESIGN.md` §8; **every star tree** is
 placeholder content regardless of whose it is (§5.5).
 
 **Kael is fully built** — the 3★ damage-dealing tank, and the roster's second tanking shape.

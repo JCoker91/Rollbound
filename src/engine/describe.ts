@@ -136,6 +136,18 @@ function describeEffect(a: Ability, fx: Effect, sameTargetAsPrevious: boolean): 
       return `moves ${name} ${Math.abs(fx.ranks)} rank${Math.abs(fx.ranks) === 1 ? '' : 's'} ${fx.ranks > 0 ? 'forward' : 'back'}`;
     case 'reposition':
       return 'steps into the chosen slot, trading places with whoever is there';
+    case 'spendRegen':
+      return `spends all of ${name === 'the caster' ? 'their' : sameTargetAsPrevious ? who.it : `${who.full}'s`} regen at once, healing it all immediately`;
+    case 'ward': {
+      // Possessive, not the object form -- `name` becomes "them" on a repeated
+      // target and "the damage them take" is what that produces. Same reason
+      // `modify` and `resist` reach for `who.it` here.
+      const whose = sameTargetAsPrevious ? who.it : `${who.full}'s`;
+      return (
+        `reduces ${whose} incoming damage by ${fx.percent}% ` +
+        `for ${fx.turns} turn${fx.turns === 1 ? '' : 's'}`
+      );
+    }
     case 'resist': {
       // A pronoun needs the possessive here, not the object form -- "raises
       // them Fire resistance" is what you get from reusing `name` directly.
@@ -275,6 +287,18 @@ export function describePassive(p: Passive): string {
       );
     case 'regen':
       return `Recovers ${p.percent}% of max HP at the start of each of its turns.`;
+    case 'mend': {
+      const reach = p.targets ?? 1;
+      const who = reach === 1 ? 'the most wounded ally' : `the ${reach} most wounded allies`;
+      // A tier that only widens the reach carries no percentage of its own, and
+      // "heals for 0% of ATK" is a worse lie than saying what it actually adds.
+      if (p.percent === 0) return `Tends ${who} instead of one.`;
+      return `Heals ${who} for ${p.percent}% of ATK at the start of each of its turns.`;
+    }
+    case 'regenGuard':
+      return `While this Performer is standing, allies carrying regen take ${p.percent}% less damage.`;
+    case 'deeproot':
+      return `While this Performer is standing, every regen charge restores ${p.percent}% more of its holder's max HP.`;
     case 'thorns':
       return `Reflects ${p.percent}% of damage taken back at melee attackers.`;
     case 'resilient':

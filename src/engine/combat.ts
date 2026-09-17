@@ -8,7 +8,7 @@ import type {
   Pos,
   Unit,
 } from './types.ts';
-import { alive, UPGRADE_STAT_BONUS } from './types.ts';
+import { alive, REGEN_PER_CHARGE, UPGRADE_STAT_BONUS } from './types.ts';
 import { resistanceOf, resistMultiplier } from './elements.ts';
 import { samePos, slotsOf, withinReach } from './formation.ts';
 
@@ -133,6 +133,25 @@ export function computeHeal(
  * Everything currently affecting this unit: its innate passives plus whichever
  * upgrade tiers it has bought this battle.
  */
+/**
+ * What one regen charge restores to this unit.
+ *
+ * Exported so the Start Turn tick and anything that CASHES charges early
+ * cannot drift apart -- if the two ever disagreed, spending a charge would be
+ * worth a different amount than letting it tick, and which one the player got
+ * would depend on a number nobody wrote down.
+ */
+export function regenTick(u: Unit, line: Unit[] = []): number {
+  // `deeproot` is an aura owned by a living ally, so the holder's own sheet is
+  // not enough to answer what a charge is worth -- same shape as `chill`.
+  let bonus = 0;
+  for (const a of line) {
+    if (!alive(a)) continue;
+    for (const p of activePassives(a)) if (p.kind === 'deeproot') bonus += p.percent;
+  }
+  return Math.max(1, Math.round(unitMaxHp(u) * (REGEN_PER_CHARGE + bonus / 100)));
+}
+
 export function activePassives(u: Unit): Passive[] {
   const bought = (u.def.upgrades ?? []).slice(0, u.upgrades).map((t) => t.passive);
   return [...(u.def.passives ?? []), ...bought];
@@ -324,7 +343,22 @@ function elementalDamage(source: Unit, ability: Ability, target: Unit): number {
  * the carrier and every frosted enemy hits full again.
  */
 function reductionPercent(source: Unit, target: Unit, defenders: Unit[]): number {
-  let pct = passive(target, 'resilient');
+  // Wards and `resilient` add rather than multiply, for the reason stated
+  // below about chill: additive is the thing a player can do in their head.
+  // Both land in the same `carry` bucket downstream, which is correct -- they
+  // are one combined reduction and banking them twice would round twice.
+  let pct = passive(target, 'resilient') + modifierTotal(target, 'ward');
+
+  // `regenGuard`: an ally standing behind you makes the regen you are carrying
+  // into armour as well as healing. Aura, so it is read off the defending side
+  // exactly like `chill` below -- and gated on the TARGET actually holding a
+  // charge, which is what keeps it a reward for setup rather than a flat buff.
+  if (target.statuses.regen > 0) {
+    for (const d of defenders) {
+      if (!alive(d)) continue;
+      for (const p of activePassives(d)) if (p.kind === 'regenGuard') pct += p.percent;
+    }
+  }
 
   // Chill auras do NOT stack: the deepest one on the field applies.
   //

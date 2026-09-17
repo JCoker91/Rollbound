@@ -253,6 +253,31 @@ export type Effect =
     frost: number;
   };
     }
+  /**
+   * Flat damage reduction for a number of turns, in percentage points.
+   *
+   * The counterpart to `resist`, which is typed by element; this answers
+   * everything. A percentage rather than a defence buff on purpose: mitigation
+   * is `ATK / (ATK + DEF)`, so a +40% P.DEF buff removes about 17% of a hit and
+   * nobody can work that out at the table, while "20% less damage" removes 20%.
+   * Both are viable -- the difference is whether the number on the card is the
+   * number that happens.
+   */
+  /**
+   * Spend every regen charge on the target AT ONCE, healing what they would
+   * each have healed.
+   *
+   * A faithful conversion and deliberately not a premium one: the same HP,
+   * delivered now instead of over the next few Start Turns. The tempo IS the
+   * product -- an ally who dies this turn never collects the rest -- and paying
+   * a bonus on top would quietly make build-then-cash the optimal line every
+   * round rather than the urgent one.
+   *
+   * Reads `regenTick` rather than recomputing the per-charge amount, so cashing
+   * a charge and letting it tick can never be worth different numbers.
+   */
+  | { do: 'spendRegen'; on?: EffectTarget }
+  | { do: 'ward'; percent: number; turns: number; on?: EffectTarget }
   | {
       /** Timed elemental resistance, in percentage points. Writes `resistMods`. */
       do: 'resist';
@@ -342,6 +367,18 @@ export interface ChainTrigger {
    * one, so the chain rewards the same preparation the ability already wants.
    */
   sharpen?: number;
+  /**
+   * Added to the `turns` of every effect that runs on a clock -- wards,
+   * modifiers, resistances, and regen's charge count.
+   *
+   * Duration is the one magnitude a support ability can be given more of
+   * without making any single number bigger, which is what a chain on a
+   * long-running effect wants: the same board state held longer, so the cost is
+   * amortised over more rounds rather than the effect being stronger while it
+   * lasts. On `regen` it adds CHARGES, which is the same promise -- see
+   * `Statuses.regen` for why that field is called `turns`.
+   */
+  prolong?: number;
   /**
    * Widen a riposte to answer this damage type as well as its own.
    *
@@ -590,6 +627,63 @@ export type Passive = {
    * means the passive answers "is it cold at all" and the ability answers "how
    * cold", which keeps the two readable side by side.
    */
+  /**
+   * At the start of each of this character's turns, heal the MOST WOUNDED ally
+   * for `percent` of this character's ATK.
+   *
+   * Regen's opposite number in three ways, and deliberately so: it scales off
+   * the HEALER's attack rather than the recipient's max HP, it picks its own
+   * target rather than being granted to one, and it never expires. That makes
+   * it the floor under a heal-over-time kit -- something always ticking, worth
+   * more the more you invest in her, and never a turn she has to spend.
+   *
+   * "Most wounded" is the lowest fraction of max HP, not the lowest number.
+   * With bars running 785 to 321 the two are different almost every round: by
+   * raw HP a healthy mage reads as worse off than a tank at half, so absolute
+   * targeting would spend every tick on whoever has the smallest bar rather
+   * than on whoever is actually in trouble.
+   */
+  | {
+      kind: 'mend';
+      percent: number;
+      /**
+       * How many wounded allies one tick reaches. Defaults to 1.
+       *
+       * Across several `mend` sources the percentages SUM and the counts take
+       * the MAX, because they answer different questions -- "how much does a
+       * tick heal" and "how far does it reach". Summing counts would let two
+       * sources heal the same ally twice over while a second wounded Performer
+       * went untouched, which is the opposite of what widening it means.
+       */
+      targets?: number;
+    }
+  /**
+   * While this character stands, allies CARRYING REGEN take `percent` less
+   * damage.
+   *
+   * An aura like `chill`, and read from the defending side for the same reason
+   * -- it is owned by a third unit, not by either party to the hit.
+   *
+   * Regen stops being only healing and becomes a MARKER for who the healer has
+   * invested in, so keeping charges up does two jobs at once. Conditional on
+   * her own setup rather than a flat party aura: worth nothing the turn she has
+   * not spent anything, and meaningful once she has.
+   */
+  | { kind: 'regenGuard'; percent: number }
+  /**
+   * While this character stands, every regen charge restores `percent` MORE of
+   * its holder's max HP -- added to the baseline `REGEN_PER_CHARGE`.
+   *
+   * An aura rather than a property of the charges she granted, because
+   * `Statuses.regen` is a plain count with no record of who put it there, and
+   * giving it one would mean tracking provenance per charge for a single
+   * upgrade tier.
+   *
+   * It is the deepest tier she has because it reaches everything at once: the
+   * Start Turn ticks, the burst that cashes them early, the single-target
+   * investment and the party-wide ultimate all read the same number.
+   */
+  | { kind: 'deeproot'; percent: number }
   | { kind: 'exploitCold'; frosted: number; frozen: number }
   /**
    * WHENEVER FROST LANDS ON THE OTHER SIDE, this character's attack rises by
@@ -932,7 +1026,20 @@ export type ModSource = 'targetBase' | 'casterCurrent';
  * unions, so one keyed lookup serves both and none of the duration machinery
  * had to be written twice.
  */
-export type ModKey = ModStat | Element;
+/**
+ * What a `Modifier` keys on: a stat, an element's resistance, or a WARD.
+ *
+ * `ward` is a pseudo-key -- no stat of that name exists. It holds percentage
+ * points of flat damage reduction, and lives here rather than as its own field
+ * on `Modifier` so that duration, stacking, refresh-by-ability and expiry all
+ * come from machinery that already exists. `modifierTotal` filters by key, so
+ * nothing asking for a stat ever sees one.
+ *
+ * Like an element key and unlike a stat key, its `amount` is ABSOLUTE and never
+ * routed through `resolveModifierAmount`: "20% less damage" is already the
+ * number, not a percentage of something else.
+ */
+export type ModKey = ModStat | Element | 'ward';
 
 export interface Modifier {
   /**
