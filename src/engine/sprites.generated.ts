@@ -21,6 +21,13 @@ export interface SpriteMetrics extends Omit<SpriteSheet, 'scale' | 'nativePx'> {
   nativeCanvas: number;
   /** A held single-frame hit reaction, when the actor ships one. */
   pain?: string;
+  /**
+   * Lying down, held for the rest of the battle once this unit is at 0 HP.
+   *
+   * Optional like `pain`: an actor without one simply leaves the stage when
+   * they fall, which is what everyone did before any of these existed.
+   */
+  death?: string;
   /** True when the shipped sheet is native-grid art needing nearest-neighbour. */
   pixelArt: boolean;
   /**
@@ -33,7 +40,7 @@ export interface SpriteMetrics extends Omit<SpriteSheet, 'scale' | 'nativePx'> {
 export const SPRITE_METRICS: Record<SpriteId, SpriteMetrics> = {
   aethis: { src: '/sprites/aethis/aethis.png', icon: '/sprites/aethis/aethis_icon.png', aspect: 239 / 320, pxH: 320, anchorX: 0.444, nativePx: 84, nativeCanvas: 128, pixelArt: false },
   backdrop_bat: { src: '/sprites/backdrop_bat/backdrop_bat.png', icon: '/sprites/backdrop_bat/backdrop_bat_icon.png', aspect: 114 / 92, pxH: 92, anchorX: 0.346, nativePx: 92, nativeCanvas: 128, pixelArt: true },
-  benjamin: { src: '/sprites/benjamin/benjamin.png', icon: '/sprites/benjamin/benjamin_icon.png', pain: '/sprites/benjamin/benjamin_pain.png', aspect: 333 / 320, pxH: 320, anchorX: 0.584, nativePx: 84, nativeCanvas: 128, pixelArt: false, idle: { src: '/sprites/benjamin/benjamin_idle.png', frames: 2, aspect: 0.928571, pxH: 224, anchorX: 0.573, restFill: 0.810268, footPad: 0.0 } },
+  benjamin: { src: '/sprites/benjamin/benjamin.png', icon: '/sprites/benjamin/benjamin_icon.png', pain: '/sprites/benjamin/benjamin_pain.png', death: '/sprites/benjamin/benjamin_death.png', aspect: 333 / 320, pxH: 320, anchorX: 0.584, nativePx: 84, nativeCanvas: 128, pixelArt: false, idle: { src: '/sprites/benjamin/benjamin_idle.png', frames: 2, aspect: 0.839286, pxH: 224, anchorX: 0.513, restFill: 0.691964, footPad: 0.0 } },
   brax: { src: '/sprites/brax/brax.png', icon: '/sprites/brax/brax_icon.png', aspect: 224 / 211, pxH: 211, anchorX: 0.493, nativePx: 211, nativeCanvas: 256, pixelArt: true, idle: { src: '/sprites/brax/brax_idle.png', frames: 8, aspect: 1.07109, pxH: 211, anchorX: 0.496, restFill: 0.976303, footPad: 0.0 } },
   caspian: { src: '/sprites/caspian/caspian.png', icon: '/sprites/caspian/caspian_icon.png', aspect: 356 / 320, pxH: 320, anchorX: 0.406, nativePx: 84, nativeCanvas: 128, pixelArt: false, idle: { src: '/sprites/caspian/caspian_idle.png', frames: 6, aspect: 1.086957, pxH: 92, anchorX: 0.41, restFill: 0.972826, footPad: 0.0 } },
   false_lead: { src: '/sprites/false_lead/false_lead.png', icon: '/sprites/false_lead/false_lead_icon.png', aspect: 228 / 205, pxH: 205, anchorX: 0.533, nativePx: 205, nativeCanvas: 256, pixelArt: true },
@@ -53,88 +60,178 @@ export const SPRITE_METRICS: Record<SpriteId, SpriteMetrics> = {
 /** Every packed clip, for the dev animation lab. Battle uses `idle` above. */
 export const ANIMATION_CLIPS: Record<string, Record<string, AnimationClip>> = {
   "benjamin": {
-    "attack": {
-      "anchorX": 0.573,
-      "aspect": 0.928571,
+    "ability_1": {
+      "anchorX": 0.513,
+      "aspect": 0.839286,
       "footPad": 0.0,
       "frames": 4,
       "loops": false,
       "normalised": 1.8959,
       "pxH": 224,
-      "restFill": 0.810268,
+      "restFill": 0.691964,
       "settlesInto": "idle",
-      "src": "/sprites/benjamin/benjamin_attack.png"
+      "src": "/sprites/benjamin/benjamin_ability_1.png"
     },
-    "idle": {
-      "anchorX": 0.573,
-      "aspect": 0.928571,
-      "footPad": 0.0,
-      "frames": 2,
-      "loops": true,
-      "normalised": 1.0,
-      "pxH": 224,
-      "restFill": 0.810268,
-      "src": "/sprites/benjamin/benjamin_idle.png"
-    },
-    "perfect_form": {
-      "anchorX": 0.573,
-      "aspect": 0.928571,
+    "ability_2": {
+      "anchorX": 0.513,
+      "aspect": 0.839286,
       "footPad": 0.0,
       "frames": 4,
       "loops": false,
-      "normalised": 2.0805,
+      "normalised": 1.4485,
       "pxH": 224,
-      "restFill": 0.810268,
+      "restFill": 0.691964,
       "settlesInto": "idle",
-      "src": "/sprites/benjamin/benjamin_perfect_form.png"
+      "src": "/sprites/benjamin/benjamin_ability_2.png"
     },
-    "quick_cut": {
-      "anchorX": 0.573,
-      "aspect": 0.928571,
-      "footPad": 0.0,
-      "frames": 4,
-      "loops": false,
-      "normalised": 1.8959,
-      "pxH": 224,
-      "restFill": 0.810268,
-      "settlesInto": "idle",
-      "src": "/sprites/benjamin/benjamin_quick_cut.png"
-    },
-    "rally": {
-      "anchorX": 0.573,
-      "aspect": 0.928571,
+    "ability_3": {
+      "anchorX": 0.513,
+      "aspect": 0.839286,
       "footPad": 0.0,
       "frames": 4,
       "loops": false,
       "normalised": 1.628,
       "pxH": 224,
-      "restFill": 0.810268,
+      "restFill": 0.691964,
       "settlesInto": "idle",
-      "src": "/sprites/benjamin/benjamin_rally.png"
+      "src": "/sprites/benjamin/benjamin_ability_3.png"
+    },
+    "ability_4": {
+      "anchorX": 0.513,
+      "aspect": 0.839286,
+      "footPad": 0.0,
+      "frames": 4,
+      "loops": false,
+      "normalised": 2.0805,
+      "pxH": 224,
+      "restFill": 0.691964,
+      "settlesInto": "idle",
+      "src": "/sprites/benjamin/benjamin_ability_4.png"
+    },
+    "celebration": {
+      "anchorX": 0.513,
+      "aspect": 0.839286,
+      "footPad": 0.0,
+      "frames": 8,
+      "loops": false,
+      "normalised": 1.9442,
+      "pxH": 224,
+      "restFill": 0.691964,
+      "settlesInto": "celebration_ending",
+      "src": "/sprites/benjamin/benjamin_celebration.png"
+    },
+    "celebration_ending": {
+      "anchorX": 0.513,
+      "aspect": 0.839286,
+      "footPad": 0.0,
+      "frames": 4,
+      "loops": true,
+      "normalised": 1.0832,
+      "pxH": 224,
+      "restFill": 0.691964,
+      "src": "/sprites/benjamin/benjamin_celebration_ending.png"
+    },
+    "death": {
+      "anchorX": 0.481,
+      "aspect": 2.25,
+      "footPad": 0.0,
+      "frames": 1,
+      "loops": false,
+      "normalised": 1.0,
+      "pxH": 320,
+      "restFill": 1.0,
+      "src": "/sprites/benjamin/benjamin_death.png"
+    },
+    "idle": {
+      "anchorX": 0.513,
+      "aspect": 0.839286,
+      "footPad": 0.0,
+      "frames": 2,
+      "loops": true,
+      "normalised": 1.0,
+      "pxH": 224,
+      "restFill": 0.691964,
+      "src": "/sprites/benjamin/benjamin_idle.png"
+    },
+    "idle_2": {
+      "anchorX": 0.513,
+      "aspect": 0.839286,
+      "footPad": 0.0,
+      "frames": 3,
+      "loops": true,
+      "normalised": 1.1659,
+      "pxH": 224,
+      "restFill": 0.691964,
+      "src": "/sprites/benjamin/benjamin_idle_2.png"
+    },
+    "idle_3": {
+      "anchorX": 0.513,
+      "aspect": 0.839286,
+      "footPad": 0.0,
+      "frames": 2,
+      "loops": true,
+      "normalised": 0.9645,
+      "pxH": 224,
+      "restFill": 0.691964,
+      "src": "/sprites/benjamin/benjamin_idle_3.png"
+    },
+    "idle_4": {
+      "anchorX": 0.513,
+      "aspect": 0.839286,
+      "footPad": 0.0,
+      "frames": 2,
+      "loops": true,
+      "normalised": 1.0063,
+      "pxH": 224,
+      "restFill": 0.691964,
+      "src": "/sprites/benjamin/benjamin_idle_4.png"
+    },
+    "move": {
+      "anchorX": 0.513,
+      "aspect": 0.839286,
+      "footPad": 0.0,
+      "frames": 1,
+      "loops": false,
+      "normalised": 0.7308,
+      "pxH": 224,
+      "restFill": 0.691964,
+      "settlesInto": "idle",
+      "src": "/sprites/benjamin/benjamin_move.png"
+    },
+    "pain": {
+      "anchorX": 0.693,
+      "aspect": 0.875,
+      "footPad": 0.0,
+      "frames": 1,
+      "loops": false,
+      "normalised": 1.0,
+      "pxH": 320,
+      "restFill": 1.0,
+      "src": "/sprites/benjamin/benjamin_pain.png"
     },
     "ready": {
-      "anchorX": 0.573,
-      "aspect": 0.928571,
+      "anchorX": 0.513,
+      "aspect": 0.839286,
       "footPad": 0.0,
       "frames": 2,
       "loops": false,
       "normalised": 1.1094,
       "pxH": 224,
-      "restFill": 0.810268,
+      "restFill": 0.691964,
       "settlesInto": "idle",
       "src": "/sprites/benjamin/benjamin_ready.png"
     },
-    "sunder": {
-      "anchorX": 0.573,
-      "aspect": 0.928571,
+    "upgrade": {
+      "anchorX": 0.513,
+      "aspect": 0.839286,
       "footPad": 0.0,
       "frames": 4,
       "loops": false,
-      "normalised": 2.0434,
+      "normalised": 1.3906,
       "pxH": 224,
-      "restFill": 0.810268,
+      "restFill": 0.691964,
       "settlesInto": "idle",
-      "src": "/sprites/benjamin/benjamin_sunder.png"
+      "src": "/sprites/benjamin/benjamin_upgrade.png"
     }
   },
   "brax": {
@@ -191,8 +288,20 @@ export interface EffectStrip {
 }
 
 export const EFFECTS: Record<string, EffectStrip> = {
+  "buff": {
+    "aspect": 0.865878,
+    "frames": 4,
+    "id": "buff",
+    "src": "/effects/buff.png"
+  },
+  "defense_down": {
+    "aspect": 1.052764,
+    "frames": 4,
+    "id": "defense_down",
+    "src": "/effects/defense_down.png"
+  },
   "impact": {
-    "aspect": 1.041758,
+    "aspect": 1.063736,
     "frames": 3,
     "id": "impact",
     "src": "/effects/impact.png"

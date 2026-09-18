@@ -128,13 +128,27 @@ export interface ClipSettings {
  *           hit, and on all five when the ability hits five.
  *   centre  ONE burst at the middle of everyone affected, for an area effect
  *           that reads as a single event rather than five simultaneous ones.
+ *   caster  ONE burst on the performer doing the thing, wherever their targets
+ *           are. What a swirl of light rising off somebody is FOR: the effect
+ *           belongs to the act, not to what the act lands on.
  *
  * The SIDE is not a choice: an effect lands on whoever the ability actually
  * affected, so an attack bursts on enemies and a heal on allies without either
  * having to say so. Making it selectable would let a sheet declare a spark on
  * the wrong team, which is a bug nobody would think to look for.
+ *
+ * `caster` is not an exception to that. It does not pick a side either -- it
+ * names the one unit that is never in question, the one whose clip is playing.
+ * It is the placement a buff wants, and buffs are exactly where `each` reads
+ * wrong: Rally's beneficiary is an ally, so `each` puts the flourish on them
+ * and nothing at all on the Performer whose ability it is. Some buffs want
+ * both, which is why this is a third value rather than a rule about `kind` --
+ * two impacts on the same frame, one `caster` and one `each`, say "he raises
+ * his sword and the light settles on her" and no single placement can.
+ *
+ * It is also the only placement that survives an ability affecting nobody.
  */
-export type ImpactPlacement = 'each' | 'centre';
+export type ImpactPlacement = 'each' | 'centre' | 'caster';
 
 /** One effect landing at a given step of a clip. */
 export interface Impact {
@@ -155,9 +169,15 @@ export interface Impact {
   effect: string;
   /** Default `each`. See `ImpactPlacement`. */
   at?: ImpactPlacement;
-  /** Size relative to the target's own height. 1 is the target's full height. */
+  /**
+   * Size relative to the height of whoever it lands on. 1 is their full height.
+   *
+   * "Whoever it lands on" is the performer for a `caster` impact and the target
+   * for the other two -- the same numbers read against a different body, which
+   * is what keeps a burst aimed at the chest aimed at a chest.
+   */
   scale?: number;
-  /** Nudge from the target's centre, in percent of the target's box. */
+  /** Nudge from that unit's centre, in percent of its box. */
   dx?: number;
   dy?: number;
   /**

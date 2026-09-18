@@ -54,6 +54,7 @@ Run:  python scripts/pack_sprites.py
 """
 
 import hashlib
+import io
 import json
 import os
 import time
@@ -298,7 +299,10 @@ PAPER_COLOURS = 4096
 # section; until then it lives here so the number is in one place.
 PAPER_STATURE = 0.66
 # Named single-frame poses an actor may ship beside their board sprite.
-EXTRA_POSES = ('pain',)
+EXTRA_POSES = ('pain', 'death')
+#: Most frames a square-cell guess may claim before it is treated as nonsense
+#: rather than as a very long animation. Benjamin's longest authored clip is 16.
+MAX_INFERRED_COLS = 16
 # The grid statures are expressed against, shared with content.ts's BASE_CANVAS.
 BASE_DENSITY = 128
 
@@ -331,6 +335,75 @@ OUT_ROOT = Path('public/sprites')
 OUT_SCENERY = Path('public/background')
 OUT_EFFECTS = Path('public/effects')
 METRICS_TS = Path('src/engine/sprites.generated.ts')
+
+
+# How many output files this run actually rewrote. The dev server reads the
+# final line below to decide whether a reload is worth sending -- a pack that
+# changed nothing should not throw an animator out of the lab, and a "reloading"
+# that visibly changes nothing is worse than silence: it reads as the pipeline
+# having run and the art having not taken.
+WRITES = 0
+
+
+def write_if_changed(path: Path, text: str, *, encoding: str = 'utf-8') -> bool:
+    """
+    Write only when the bytes would actually differ. Returns whether it wrote.
+
+    METRICS_TS lives under src/, so it is a MODULE -- the battle screen, the
+    animation lab and every hub screen import it. Rewriting it unconditionally
+    meant any pack, including one that found nothing to do, fired an HMR wave
+    across all of them: in the lab that remounts the editor and loses whatever
+    frame, clip and unsaved tuning was on screen. The dev server re-packs on
+    every save under art/, so "a pack that changed nothing" is the common case
+    rather than the rare one.
+
+    Compared as TEXT rather than by mtime or size, because the generator is
+    deterministic and a byte-identical render is exactly the case worth
+    skipping. Read with an explicit encoding for the same reason every other
+    read in this file has one -- on Windows the default is cp1252, and getting
+    that wrong here truncates the file mid-write.
+    """
+    if path.exists():
+        try:
+            if path.read_text(encoding=encoding) == text:
+                return False
+        except (UnicodeDecodeError, OSError):
+            pass  # unreadable is not the same as unchanged -- rewrite it
+    global WRITES
+    WRITES += 1
+    path.write_text(text, encoding=encoding)
+    return True
+
+
+def save_if_changed(image, path: Path, **kw) -> bool:
+    """
+    The same guard for a PNG. Returns whether it wrote.
+
+    Every output here was rewritten on every run, byte for byte identical, and
+    that had two costs. The dev server watches public/ and reloads the page when
+    anything in it changes, so a pack with nothing to do still threw the
+    animator out of whatever they were tuning. And `git status` after a build
+    listed a dozen sprites whose pixels had not moved -- the re-encode churn the
+    handbook tells you to check for and revert by hand.
+
+    Encoded to memory first and compared as bytes. Pillow's PNG output is
+    deterministic for the same image and options, so identical pixels really do
+    produce an identical file; comparing the ENCODED form rather than the pixels
+    also means a change of compression options still counts as a change.
+    """
+    buf = io.BytesIO()
+    image.save(buf, format='PNG', **kw)
+    data = buf.getvalue()
+    if path.exists():
+        try:
+            if path.read_bytes() == data:
+                return False
+        except OSError:
+            pass
+    global WRITES
+    WRITES += 1
+    path.write_bytes(data)
+    return True
 
 # Characters whose art predates the style guide and has no _LQ/native pair yet.
 # They keep whatever is already in public/sprites and an explicit scale in
@@ -608,7 +681,7 @@ def publish_effects() -> list[dict]:
         strip = Image.new('RGBA', (w * len(frames), h))
         for i, f in enumerate(frames):
             strip.alpha_composite(f.crop(box), (i * w, 0))
-        strip.save(OUT_EFFECTS / f'{name}.png', optimize=True)
+        save_if_changed(strip, OUT_EFFECTS / f'{name}.png', optimize=True)
         out.append({'id': name, 'src': f'/effects/{name}.png',
                     'frames': len(frames), 'aspect': round(w / h, 6)})
     return out
@@ -628,7 +701,8 @@ def expected_outputs() -> list[str]:
         # derived file was written and then immediately pruned as stale.
         out.append((folder / f'{name}_icon.png').as_posix())
         for pose in EXTRA_POSES:
-            if (ACTORS / name / f'{name}_{pose}.png').exists():
+            if ((ACTORS / name / 'animations' / f'{name}_{pose}.png').exists()
+                    or (ACTORS / name / f'{name}_{pose}.png').exists()):
                 out.append((folder / f'{name}_{pose}.png').as_posix())
         for clip in load_manifest(name).get('clips', {}):
             out.append((folder / f'{name}_{clip}.png').as_posix())
@@ -1309,7 +1383,26 @@ def gutter_cuts(
     W, H = sheet.size
 
     def bands(n: int, length: int, occupied) -> list[int] | None:
-        """Boundaries for `n` frames along one axis, or None if they are unclear."""
+        """
+        Boundaries for `n` frames along one axis, reading real gutters.
+
+        Every gutter it can find is used. The ones it cannot are filled in at
+        even spacing BETWEEN the gutters either side of them, which keeps a
+        readable boundary readable even when its neighbour is not.
+
+        That partial answer is the whole point of this rewrite. The first
+        version demanded exactly `n - 1` gaps and returned None otherwise, so a
+        single pair of touching drawings anywhere on the sheet threw away every
+        correct boundary on it and fell back to an even slice -- and an even
+        slice bleeds EVERY frame, not just the two that touched. Benjamin's
+        Sunder tripped this on a three-pixel overlap between a swing arc and the
+        next figure's silhouette: one bad seam, four spoiled frames.
+
+        Gutters are matched to boundaries by proximity, because a gutter is
+        evidence about the seam it is nearest and nothing else. A sheet whose
+        drawings all touch still yields None, and an even slice is then the only
+        answer available.
+        """
         if n <= 1:
             return [0, length]
         gaps, run = [], None
@@ -1320,10 +1413,37 @@ def gutter_cuts(
                 gaps.append((run, i))
                 run = None
         # Leading and trailing empty space is margin, not a gutter.
-        inner = [g for g in gaps if g[0] > 0 and g[1] < length]
-        if len(inner) != n - 1:
+        inner = [(a + b) // 2 for a, b in gaps if a > 0 and b < length]
+        if not inner:
             return None
-        return [0] + [(a + b) // 2 for a, b in inner] + [length]
+
+        # Each seam takes the nearest unclaimed gutter, if one is close enough
+        # to be about that seam rather than about a neighbour. Half a frame is
+        # the widest a gutter can be misplaced and still be the better guess.
+        step = length / n
+        cuts: list[int | None] = []
+        free = sorted(inner)
+        for k in range(1, n):
+            want = step * k
+            near = min(free, key=lambda g: abs(g - want), default=None)
+            if near is not None and abs(near - want) <= step / 2:
+                cuts.append(near)
+                free.remove(near)
+            else:
+                cuts.append(None)
+
+        # Fill each unread seam evenly between the read boundaries around it, so
+        # a missing gutter borrows the spacing its neighbours actually measured
+        # rather than the spacing the header claimed.
+        out = [0] + cuts + [length]
+        for i, v in enumerate(out):
+            if v is not None:
+                continue
+            lo = max(j for j in range(i) if out[j] is not None)
+            hi = min(j for j in range(i + 1, len(out)) if out[j] is not None)
+            span = (out[hi] - out[lo]) / (hi - lo)
+            out[i] = round(out[lo] + span * (i - lo))
+        return [int(v) for v in out]
 
     def even(n: int, length: int) -> list[int]:
         return [round(i * length / n) for i in range(n + 1)]
@@ -1537,7 +1657,26 @@ def normalise(clips: dict, reference: str) -> tuple[dict, dict]:
         at = (round(left - m['fx'] * k), round(up - m['gy'] * k))
         placed = []
         for f in frames:
-            scaled = f if abs(k - 1) < 1e-6 else f.resize(size, Image.LANCZOS)
+            # Scaled by the FACTOR, against each frame's own size -- not resized
+            # to `size`, which is the first frame's cell.
+            #
+            # Those are the same thing only while every cell is identical, and
+            # `gutter_cuts` stopped guaranteeing that the day it started cutting
+            # on real gaps instead of an even grid: Benjamin's ability_1 comes
+            # out 468, 548, 518 and 514 wide. Resizing all four to 468 squeezed
+            # three of them by up to 15% horizontally while leaving their height
+            # alone, so the character got narrower on half the frames of every
+            # clip whose factor was not 1 -- which is most of them.
+            #
+            # `size` is still what the canvas is measured against, and that is
+            # fine: it only has to be big enough.
+            scaled = (
+                f
+                if abs(k - 1) < 1e-6
+                else f.resize(
+                    (max(1, round(f.width * k)), max(1, round(f.height * k))), Image.LANCZOS
+                )
+            )
             page = Image.new('RGBA', canvas, (0, 0, 0, 0))
             page.paste(scaled, at)
             placed.append(page)
@@ -1580,12 +1719,104 @@ def build_animations(name: str) -> dict:
     ink = outline_ink(reference(name)) if outline_width(name) else None
 
     raw = {}
+
+    '''
+    Per-frame folders, which take precedence over a sheet of the same name.
+
+    A folder IS the clip: `animations/idle_2/` holding three PNGs is a
+    three-frame idle, and the frame count is how many files are in it. That
+    retires two whole classes of bug at once -- there is no grid to infer, so
+    the `_NxM` trap cannot fire, and there is no cut to make, so a drawing that
+    overruns a cell cannot bleed into its neighbour.
+
+    It also makes a frame a thing you can own. Regenerate one bad drawing
+    instead of a whole sheet; lift a frame out of one animation into another to
+    build something the generator would not produce in a single pass.
+
+    Files are read in sorted order, so index them zero-padded: `idle_2_01.png`
+    before `idle_2_10.png`, which a bare `_1` / `_10` gets backwards.
+
+    Frames of unequal size are padded to the largest, anchored bottom-centre --
+    the case that arises the moment a frame is borrowed from another clip. It
+    is a guess, so it is reported rather than done quietly, and the lab's
+    per-frame `dx`/`dy` is where a borrowed frame gets nudged onto its mark.
+    '''
+    for sub in sorted(d for d in folder.iterdir() if d.is_dir()):
+        clip = sub.name[len(name) + 1:] if sub.name.startswith(f'{name}_') else sub.name
+        if clip in EXTRA_POSES or clip.endswith(DEPRECATED_CLIPS):
+            continue
+        files = sorted(sub.glob('*.png'))
+        if not files:
+            print(f'  ! {sub.name}/ is empty -- no clip built from it')
+            continue
+        frames = [key_flat_background(Image.open(f).convert('RGBA')) for f in files]
+        widest = max(f.width for f in frames)
+        tallest = max(f.height for f in frames)
+        if any(f.size != (widest, tallest) for f in frames):
+            odd = [f.name for f, im in zip(files, frames) if im.size != (widest, tallest)]
+            print(f'  ! {sub.name}/: frames are not all one size -- padding to '
+                  f'{widest}x{tallest}, bottom-centred ({", ".join(odd)}).'
+                  f' Nudge them in the animation lab if they land off their mark.')
+            padded = []
+            for im in frames:
+                canvas = Image.new('RGBA', (widest, tallest), (0, 0, 0, 0))
+                canvas.alpha_composite(im, ((widest - im.width) // 2, tallest - im.height))
+                padded.append(canvas)
+            frames = padded
+        if width := outline_width(name):
+            frames = [add_outline(f, width, ink) for f in frames]
+        if any(content_box(f) for f in frames):
+            raw[clip] = frames
+
     for src in sorted(folder.glob('*.png')):
         clip = src.stem[len(name) + 1:] if src.stem.startswith(f'{name}_') else src.stem
         if clip.endswith(DEPRECATED_CLIPS):
             continue
+        # A pose filed in here is still a POSE. It is published by the extra
+        # stills pass and joined to the clip list afterwards, tight-cropped and
+        # unnormalised -- letting it in here instead would put a figure drawn
+        # lying down through `normalise`, which scales every clip to a common
+        # figure HEIGHT and would stand the body back up at four times its size.
+        if clip in EXTRA_POSES:
+            continue
         clip, grid = parse_grid(clip)
-        frames = split_sheet(Image.open(src).convert('RGBA'), grid)
+        # A folder beats a sheet. Both can exist while a clip is being moved
+        # over, and the folder is the one somebody has been editing frame by
+        # frame -- silently preferring the sheet would hand back the drawings
+        # they had just fixed.
+        if clip in raw:
+            continue
+        sheet = Image.open(src).convert('RGBA')
+        if grid is None:
+            from math import gcd
+
+            cell = gcd(sheet.width, sheet.height)
+            cols, rows = sheet.width // cell, sheet.height // cell
+            # An actor strip is one row. More than that means the square-cell
+            # guess missed -- a 2048x768 four-frame sheet reads as 8x3, and the
+            # 24 slivers it produces are not obviously wrong until you play the
+            # clip. Naming the file `..._4x1.png` settles it, so say so rather
+            # than packing the garbage.
+            if rows > 1 or cols > MAX_INFERRED_COLS:
+                # REFUSED, not warned.
+                #
+                # A warning is advice nobody reads at the bottom of a pack log.
+                # This is not advice: `gcd` is a terrible guess for a sheet whose
+                # cells are not square, and the failures are not small. A 2048x768
+                # four-frame sheet reads as 8x3 and ships 24 slivers. A 2876x768
+                # one has a gcd of 4 and reads as 719x192 -- 138,048 frames -- and
+                # the pipeline will genuinely try to cut, outline and pack every
+                # one of them before the browser tries to build a strip and a
+                # keyframe track for it. That is a machine-eating amount of work
+                # to do on behalf of a guess.
+                #
+                # Skipping leaves the clip simply absent, which `npm run art`
+                # reports as missing and names the fix for.
+                print(f'  ! {src.name}: SKIPPED -- no _NxM in the name, and {sheet.width}x{sheet.height}'
+                      f' infers {cols}x{rows} = {cols * rows} frames, which is not a character strip.'
+                      f'\n      Rename it with its real grid, e.g. {src.stem}_4x1.png')
+                continue
+        frames = split_sheet(sheet, grid)
         if width := outline_width(name):
             # Ink sampled from the STILL, not per frame: sampling each frame
             # could pick a different near-black on a frame that happens to hide
@@ -1655,7 +1886,7 @@ def build_animations(name: str) -> dict:
         for i, f in enumerate(cropped):
             strip.paste(f, (i * cw, 0))
         path = out_dir / f'{name}_{clip}.png'
-        strip.save(path)
+        save_if_changed(strip, path)
 
         clips[clip] = {
             'src': '/sprites/%s/%s_%s.png' % (name, name, clip),
@@ -1682,6 +1913,47 @@ def build_animations(name: str) -> dict:
         target = settles_into(clip, clips)
         if target:
             info['settlesInto'] = target
+
+    '''
+    The stills, offered to the lab as one-frame clips.
+
+    Added HERE, after everything above has finished, and that placement is the
+    whole design. A pose must not go through `normalise`, which scales each clip
+    by the ratio of its figure HEIGHT to the reference clip's: a death pose is
+    drawn lying down, so its figure height is small, and normalising would blow
+    it up until the body stood as tall as the character does. It must not join
+    the union box either -- that is what the upgrade sheet's starburst did, and
+    it re-scaled all seven of Benjamin's clips.
+
+    So they are measured from their own published PNG, which is already tightly
+    cropped: `restFill` 1.0 and `footPad` 0.0 say "this image IS the figure",
+    which is exactly true of a still and never quite true of a strip.
+
+    They are entries in the same map purely so the animation lab can reach them.
+    Nothing else looks a clip up by these names -- `abilityClipName` matches
+    ability slugs -- and the battle still draws both poses through their own
+    paths, now honouring whatever placement the lab saves for them.
+    '''
+    for pose in EXTRA_POSES:
+        path = out_dir / f'{name}_{pose}.png'
+        if not path.exists():
+            continue
+        img = Image.open(path).convert('RGBA')
+        w, h = img.size
+        clips[pose] = {
+            'src': '/sprites/%s/%s_%s.png' % (name, name, pose),
+            'frames': 1,
+            'aspect': round(w / h, 6),
+            'pxH': h,
+            'anchorX': round(foot_anchor(img), 3),
+            'loops': False,
+            'normalised': 1.0,
+            'trimmed': 0,
+            'size': path.stat().st_size,
+            'restFill': 1.0,
+            'footPad': 0.0,
+            'still': True,
+        }
 
     if clips:
         save_manifest(name, clips=clips)
@@ -1768,7 +2040,7 @@ def prepare_creature(name: str) -> tuple[int, list[str]]:
         board = board.resize((max(1, round(board.width * r)), BOARD_HEIGHT), Image.LANCZOS)
 
     board_path = out / f'{name}.png'
-    board.save(board_path, optimize=True)
+    save_if_changed(board, board_path, optimize=True)
 
     # Portrait for the team list. Grown by a whole factor so it stays crisp at
     # the 26-56px the panels draw it at, same rule as the hand-made ones.
@@ -1778,7 +2050,7 @@ def prepare_creature(name: str) -> tuple[int, list[str]]:
     elif icon.height and icon.height * 2 <= ICON_SIZE:
         factor = max(1, ICON_SIZE // icon.height)
         icon = icon.resize((icon.width * factor, icon.height * factor), Image.NEAREST)
-    icon.save(out / f'{name}_icon.png')
+    save_if_changed(icon, out / f'{name}_icon.png')
 
     save_manifest(name, stamp=stamp_of(board_path))
     return box[3] - box[1], notes
@@ -1840,7 +2112,7 @@ def prepare(name: str) -> tuple[int, list[str]]:
         board = board.resize((round(board.width * ratio), BOARD_HEIGHT), Image.LANCZOS)
 
     board_path = out / f'{name}.png'
-    board.save(board_path)
+    save_if_changed(board, board_path)
     save_manifest(name, stamp=stamp_of(board_path))
 
     # Icons are full-bleed portrait crops -- art runs to all four edges, so there
@@ -1860,21 +2132,35 @@ def prepare(name: str) -> tuple[int, list[str]]:
             # direction that looks right without nearest-neighbour.
             factor = ICON_SIZE // icon.height
             icon = icon.resize((icon.width * factor, icon.height * factor), Image.NEAREST)
-        icon.save(out / f'{name}_icon.png')
+        save_if_changed(icon, out / f'{name}_icon.png')
     else:
         # `derive_icon` already documents itself as the fallback a hand-cropped
         # icon beats; until now only creatures reached it, so an actor without
         # one simply shipped no icon and fell back to their role glyph. Paper art
         # arrives as a single sticker with no separate headshot, so the fallback
         # is the normal case for it rather than the exception.
-        derive_icon(board).save(out / f'{name}_icon.png')
+        save_if_changed(derive_icon(board), out / f'{name}_icon.png')
 
     # Extra stills: one-off poses a clip cannot express, published beside the
     # board sprite under the same name. `pain` is the first -- a hit reaction is
     # a single drawing held for a moment, not a sequence, and packing it as a
     # one-frame clip would put it through the whole strip machinery to say so.
+    # `death` is the second, and the one that is genuinely never a sequence: a
+    # downed Performer holds that drawing until the battle ends.
+    #
+    # Note the height clamp below does not fire for a pose drawn LYING DOWN --
+    # it is shorter than the standing figure, not taller -- so a death pose
+    # keeps its own proportions and the renderer sizes it by width instead.
     for pose in EXTRA_POSES:
-        pose_src = src / f'{name}_{pose}.png'
+        # `animations/` first, the actor root second.
+        #
+        # A pose belongs with the clips: it is one of the drawings a character
+        # owns, it is listed beside them in the lab, and keeping it a directory
+        # up made "where does art go" a question with two answers. The old
+        # location still works so nothing has to be moved in a hurry.
+        pose_src = src / 'animations' / f'{name}_{pose}.png'
+        if not pose_src.exists():
+            pose_src = src / f'{name}_{pose}.png'
         if not pose_src.exists():
             continue
         art = key_flat_background(Image.open(pose_src).convert('RGBA'))
@@ -1883,7 +2169,7 @@ def prepare(name: str) -> tuple[int, list[str]]:
         if art.height > BOARD_HEIGHT:
             r = BOARD_HEIGHT / art.height
             art = art.resize((round(art.width * r), BOARD_HEIGHT), Image.LANCZOS)
-        art.save(out / f'{name}_{pose}.png')
+        save_if_changed(art, out / f'{name}_{pose}.png')
 
     clips = build_animations(name)
 
@@ -1992,7 +2278,8 @@ def write_metrics() -> None:
     )
     scenery_json = json.dumps(scenery, indent=2)
     METRICS_TS.parent.mkdir(parents=True, exist_ok=True)
-    METRICS_TS.write_text(
+    wrote = write_if_changed(
+        METRICS_TS,
         f'''// GENERATED by scripts/pack_sprites.py -- do not edit by hand.
 // Measured from the PNGs in public/sprites/; re-run the script after changing art.
 import type {{ SpriteSheet }} from './types.ts';
@@ -2016,6 +2303,13 @@ export interface SpriteMetrics extends Omit<SpriteSheet, 'scale' | 'nativePx'> {
   nativeCanvas: number;
   /** A held single-frame hit reaction, when the actor ships one. */
   pain?: string;
+  /**
+   * Lying down, held for the rest of the battle once this unit is at 0 HP.
+   *
+   * Optional like `pain`: an actor without one simply leaves the stage when
+   * they fall, which is what everyone did before any of these existed.
+   */
+  death?: string;
   /** True when the shipped sheet is native-grid art needing nearest-neighbour. */
   pixelArt: boolean;
   /**
@@ -2094,7 +2388,10 @@ export interface AnimationClip {{
 ''',
         encoding='utf-8',
     )
-    print(f'\nmetrics {METRICS_TS.as_posix()}  ({len(entries)} sprites)')
+    print(
+        f'\nmetrics {METRICS_TS.as_posix()}  ({len(entries)} sprites)'
+        + ('' if wrote else '  unchanged -- no reload')
+    )
 
 
 if __name__ == '__main__':
@@ -2170,3 +2467,8 @@ if __name__ == '__main__':
         print('\nprune skipped -- not every actor was processed this run.')
 
     write_metrics()
+
+    # The last line, and the one the dev server greps. Say it plainly either way
+    # -- an animator who dropped a sheet in the wrong folder needs to be told
+    # that nothing was picked up, not shown a reload that changes nothing.
+    print(f'\n{WRITES} file(s) written' if WRITES else '\nno files changed')

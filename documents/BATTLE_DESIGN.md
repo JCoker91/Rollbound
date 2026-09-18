@@ -145,6 +145,14 @@ would quietly make every duration one longer than it reads.
 **A cooldown counts turns you cannot use it.** A 2-turn cooldown used on turn three means turns
 four and five are locked out and turn six is available again.
 
+**Every ultimate is on a 3-turn cooldown by default.** An ability marked `ultimate: true` gets it
+without stating a number; `cooldown` on the ability still wins if it is set, so a particular ult
+can be made faster or slower later without touching the others. The engine never reads
+`Ability.cooldown` directly — `cooldownOf(a)` is the only accessor, so the default cannot be
+skipped at one of the three places a cooldown is set. Cast on turn three, an ultimate is locked
+out on four, five and six, and ready on seven. That is deliberately longer than a modifier's
+3-turn duration: an ultimate should not be the thing you simply do every time its buff lapses.
+
 > **As implemented.** `planAction` / `planUpgrade` queue an action and reserve its dice
 > immediately, so the tray shows what is genuinely left to spend; `unplan` gives them back.
 > `movePlanned` reorders. `commitNext` resolves the front of the queue and returns what happened,
@@ -492,6 +500,17 @@ tracks, so a shred can be pointed at one of them.
   twice on one ally is one modifier with its clock reset.
 - **Different abilities stack**, as separate modifiers with separate clocks. Two sources of +20%
   give +40%, and each expires on its own schedule.
+- **A recast overwrites, including downwards.** `applyModifier` keys on `(ability, stat)` and
+  rewrites `amount`, `turns` and `by` in place, so a weaker second cast replaces a stronger first
+  one rather than losing to it. That is the honest reading of "one source, one effect", and it is
+  what makes the sheet's chip a complete statement of what that ability is doing.
+
+> **Self-Rally converges, it does not compound.** Rally reads `casterCurrent`, so Benjamin casting
+> it on himself measures 20% of stats that already include the last cast. Measured over eight
+> consecutive self-casts from a base of 104 ATK: 125, 129, 130, then 130 forever. The fixed point is
+> `a = 0.2(b + a)`, i.e. **+25% of base**, reached on the third cast. Three modifier entries
+> throughout — one per stat — never six. The creep is real and bounded; if it should sit at exactly
+> +20%, the change is `of: 'casterBase'`, which is what Perfect Form already does for this reason.
 
 ### Percentages resolve to a flat amount at cast time, from a named source
 
@@ -748,6 +767,9 @@ authored for a system that is going away, and their balance data is not evidence
 
 Authored one at a time against everything above. Numbers are the last thing decided, not the first.
 
+Every kit's most expensive ability is its **ultimate**, and every ultimate carries the 3-turn
+default cooldown from §2 unless a row below says otherwise. The tables do not repeat it.
+
 ### Benjamin — the Utility Vanguard
 
 **Goal:** never sit out, and make whoever *is* acting hit harder. His value is multiplicative on
@@ -763,7 +785,7 @@ a later balance pass: see Rally.
 | **Quick Cut** | wildcard | — | 1 | Physical damage, single target. |
 | **Sunder** | 6 | 97.4% | 1.42 | Physical damage, **then** shred the target's Physical Defense, 3 turns. |
 | **Rally** | 4 | 87.0% | 1.34 | Buff one ally's Attack/P.DEF/M.DEF by a % of **Benjamin's current** stats, 3 turns. |
-| **Perfect Form** | 10 | 92.6% | 2.58 | Buff **his own** stats by a %, 3 turns, **then** deal large single-target physical damage. **2-turn cooldown.** |
+| **Perfect Form** | 10 | 92.6% | 2.58 | Buff **his own** stats by a %, 3 turns, **then** deal large single-target physical damage. **3-turn cooldown** (the ultimate default). |
 
 **In-battle upgrades — survive, sustain, multiply.**
 
@@ -818,8 +840,10 @@ applied on a turn covers that turn and the two after it, turn four is spare befo
 reapplying. Each Performer acts once per turn, so the loop is forced to be sequential; he cannot
 front-load it, and the spare turn is where his dice go to somebody else.
 
-The 2-turn cooldown on the ult sits inside that loop rather than fighting it: used on turn three,
-locked out on four and five, ready again on six.
+The ult's cooldown deliberately does not sit inside that loop. Used on turn three it is locked out
+on four, five and six and comes back on seven, which is one turn longer than the self-buff it
+applies. He cannot simply recast it the moment the buff lapses; the turn in between is the one
+where the dice he would have spent go somewhere else.
 
 **Why Rally reads his current stats.** It is what makes flat stat investment in Benjamin pay out
 across the whole team, it lets his ult feed his own buff a turn later, and it is his obsolescence

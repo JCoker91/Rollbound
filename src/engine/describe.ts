@@ -1,5 +1,6 @@
 import { describeDie } from './dice.ts';
 import type { Ability, Effect, ModStat, Passive, VersusPower } from './types.ts';
+import { cooldownOf } from './types.ts';
 import { DEFAULT_MODIFIER_TURNS } from './combat.ts';
 import { splitPower } from './battle.ts';
 import { STRONG_RESIST, WEAK_RESIST, strongAgainst, weakTo } from './elements.ts';
@@ -284,7 +285,13 @@ export function describeCost(a: Ability): string {
   if (a.wildcard) {
     return 'Basic — spend any single die, whatever its value. Always available.';
   }
-  return `Spend any dice totalling exactly ${a.cost}.`;
+  // The cooldown belongs here, not only on the enemy sheet. It used to appear
+  // exclusively in `describeEnemyUsage`, so a player's ultimate stated its
+  // cooldown nowhere at all -- the only way to learn an ability was on a timer
+  // was to spend three dice and watch it grey out.
+  const cd = cooldownOf(a);
+  const cool = cd ? ` Then unavailable for ${cd} turn${cd === 1 ? '' : 's'}.` : '';
+  return `Spend any dice totalling exactly ${a.cost}.${cool}`;
 }
 
 /** Rules text for an always-on effect. */
@@ -361,6 +368,7 @@ export function describePassive(p: Passive): string {
 export function describeEnemyUsage(a: Ability): string | null {
   const bits: string[] = [];
   if (a.telegraph) bits.push(`announced ${a.telegraph} turn ahead, then lands`);
-  if (a.cooldown) bits.push(`${a.cooldown}-turn cooldown`);
+  const cd = cooldownOf(a);
+  if (cd) bits.push(`${cd}-turn cooldown`);
   return bits.length > 0 ? cap(bits.join(' · ')) : null;
 }

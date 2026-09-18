@@ -19,6 +19,7 @@ import type {
 import {
   alive,
   canAct,
+  cooldownOf,
   freezeThreshold,
   noStatuses,
   SHATTER_PER_STACK,
@@ -804,7 +805,8 @@ export function commitNext(s: BattleState): PlannedAction | null {
     // this was cast on. A 2-turn cooldown therefore locks out the next two
     // turns and is ready on the third -- turns you cannot use it, which is how
     // a player reads the number.
-    if (ability.cooldown) unit.cooldowns[ability.name] = ability.cooldown + 1;
+    const cd = cooldownOf(ability);
+    if (cd) unit.cooldowns[ability.name] = cd + 1;
     // Read BEFORE arming, or an ability would chain off its own symbol.
     const fires = chainFires(s.armed, ability);
     s.log.push({
@@ -872,7 +874,8 @@ export function commitAction(
   for (const d of picked) d.spent = true;
   unit.hasActed = true;
   if (unit.freeCast === ability.name) unit.freeCast = null;
-  if (ability.cooldown) unit.cooldowns[ability.name] = ability.cooldown + 1;
+  const cd = cooldownOf(ability);
+    if (cd) unit.cooldowns[ability.name] = cd + 1;
   s.log.push({ t: 'act', side: s.phase, actor: unit.def.name, ability: ability.name, dice: values });
 
   applyAbility(s, unit, ability, target);
@@ -1259,9 +1262,29 @@ export function chainPreview(plan: PlannedAction[], armed: ChainSymbol[] = []): 
   const live = [...armed];
   return plan.map(({ ability }) => {
     const fires = chainFires(live, ability);
-    if (ability?.symbol && !live.includes(ability.symbol)) live.push(ability.symbol);
+    arm(live, ability);
     return fires;
   });
+}
+
+/** Arming, in one place, because `chainPreview` and `armedAfter` both do it. */
+function arm(live: ChainSymbol[], ability: Ability | null): void {
+  if (ability?.symbol && !live.includes(ability.symbol)) live.push(ability.symbol);
+}
+
+/**
+ * What will be armed once everything already queued has resolved -- which is
+ * the state an action added to the END of the plan will meet.
+ *
+ * Here rather than in the UI for the same reason `chainPreview` is: the screen
+ * needs to know whether the cast being aimed right now will chain, and a second
+ * implementation of the arming rule would drift from `commitNext` the first
+ * time that rule changed.
+ */
+export function armedAfter(plan: PlannedAction[], armed: ChainSymbol[] = []): ChainSymbol[] {
+  const live = [...armed];
+  for (const { ability } of plan) arm(live, ability);
+  return live;
 }
 
 /**
@@ -1941,7 +1964,8 @@ function nextEnemyStep(s: BattleState, team: Unit[], foes: Unit[]): AiStep | nul
 
     const { ability, target } = choice;
     u.hasActed = true;
-    if (ability.cooldown) u.cooldowns[ability.name] = ability.cooldown + 1;
+    const cdEnemy = cooldownOf(ability);
+    if (cdEnemy) u.cooldowns[ability.name] = cdEnemy + 1;
 
     if (ability.telegraph) {
       u.pending = { ability, target, turnsLeft: ability.telegraph };

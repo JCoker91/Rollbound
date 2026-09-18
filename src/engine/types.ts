@@ -522,7 +522,26 @@ export interface Ability {
    * still authored with it and are about to be rebuilt anyway.
    */
   priority?: number;
-  /** Turns before this can be used again. 0/undefined means every turn. */
+  /**
+   * The kit's ultimate — its biggest, slowest, most-committed ability.
+   *
+   * A declared flag rather than "whichever costs most", because cost is not the
+   * question being asked. A kit may one day carry two expensive abilities, or a
+   * cheap one that is still the centrepiece, and the presentation the roadmap
+   * wants for ultimates (a spotlight, a different camera beat) has to find them
+   * by intent rather than by arithmetic.
+   *
+   * Its only mechanical consequence today is the default cooldown below.
+   */
+  ultimate?: boolean;
+  /**
+   * Turns this cannot be used after a cast.
+   *
+   * Omitted on an ultimate means `ULTIMATE_COOLDOWN`; omitted on anything else
+   * means none. Written explicitly it wins either way, which is the point --
+   * the default is a starting position for the whole roster, not a rule, and
+   * individual ultimates are expected to move off it.
+   */
   cooldown?: number;
   /**
    * Turns of wind-up before the ability lands. A telegraphed ability locks its
@@ -861,6 +880,19 @@ export interface SpriteSheet {
    * through the whole timeline machinery to say nothing.
    */
   pain?: string;
+  /**
+   * Lying down, held for the rest of the battle once this unit is at 0 HP.
+   *
+   * Optional like `pain`, and for the same reason it must stay optional: an
+   * actor without one simply leaves the stage when they fall, which is what the
+   * whole roster did before any death pose existed.
+   *
+   * Drawn wider than it is tall, unlike every other sprite here -- so the
+   * renderer sizes it by WIDTH, spending the figure height a standing Performer
+   * would have had on their length instead. Sizing it by height would make a
+   * body twice the size of anyone standing over it.
+   */
+  death?: string;
   /** width / height of the trimmed art. */
   aspect: number;
   anchorX: number;
@@ -1328,5 +1360,25 @@ export interface PendingCast {
 }
 
 export type Side = 'player' | 'enemy';
+
+/**
+ * Every ultimate is slow by default, and each one may disagree.
+ *
+ * Three turns is the roster-wide starting position: an ultimate is the thing a
+ * turn is built around, and one that comes back every other turn stops being a
+ * decision and becomes a rotation.
+ */
+export const ULTIMATE_COOLDOWN = 3;
+
+/**
+ * The cooldown an ability actually imposes.
+ *
+ * Read through this, never off `ability.cooldown` directly -- the field is what
+ * an author WROTE, and an ultimate that wrote nothing still has one. Three call
+ * sites set cooldowns and a fourth prints them; all four go through here, so
+ * the default can move without anybody hunting for the places that forgot.
+ */
+export const cooldownOf = (a: Ability): number =>
+  a.cooldown ?? (a.ultimate ? ULTIMATE_COOLDOWN : 0);
 
 export const alive = (u: Unit): boolean => u.hp > 0;

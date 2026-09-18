@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ROSTER } from '../../engine/content.ts';
 import { HIT_SPLITS, hitSplitKey } from '../../engine/hitSplits.ts';
-import { abilitySlug } from '../clipAnimation.ts';
+import { abilitySlug, slotAbilityName } from '../clipAnimation.ts';
 import { ANIMATION_CLIPS, EFFECTS, type AnimationClip } from '../../engine/sprites.generated.ts';
 
 import {
@@ -127,6 +127,38 @@ function trimPlacement(p: ClipPlacement): ClipPlacement {
   if (p.dx) out.dx = p.dx;
   if (p.dy) out.dy = p.dy;
   return out;
+}
+
+/**
+ * One burst, wherever it is playing.
+ *
+ * The lab draws impacts in two places now -- on the dummy and on the performer
+ * -- and they are the same burst with the same geometry, so they are the same
+ * component. The positioning context comes from whichever box contains it,
+ * which is exactly how the battle does it: a burst is a percentage of its
+ * parent and does not know whose body that is.
+ */
+function LabBurst({ impact }: { impact: Impact }) {
+  const fx = EFFECTS[impact.effect];
+  if (!fx) return null;
+  return (
+    <span
+      className="impact-burst"
+      style={
+        {
+          width: `calc(${(impact.scale ?? 1) * 100}% * ${fx.aspect})`,
+          aspectRatio: `${fx.aspect}`,
+          left: `${50 + (impact.dx ?? 0)}%`,
+          top: `${50 + (impact.dy ?? 0)}%`,
+          backgroundImage: `url(${fx.src})`,
+          backgroundSize: `${fx.frames * 100}% 100%`,
+          ['--fx-frames' as string]: fx.frames,
+          ['--fx-end' as string]: `${fx.frames * 100}%`,
+          ['--fx-ms' as string]: `${impact.ms ?? BURST_MS}ms`,
+        } as React.CSSProperties
+      }
+    />
+  );
 }
 
 export function AnimationLab() {
@@ -496,7 +528,11 @@ ${poseCss}` : ''),
    * so the replay button restarts the volley along with the animation.
    */
   useEffect(() => {
-    if (!dummy || !playing || !showing) return;
+    // Not gated on the dummy any more. A `caster` burst plays on the performer,
+    // so it is visible whether or not there is a stand-in target on screen --
+    // and an animator turning the dummy off to see the figure clearly was the
+    // most likely person to be tuning one.
+    if (!playing || !showing) return;
     // The LIVE list, not the saved one: the dummy exists to show the edit you
     // are making. `editing` is false while previewing another actor's clip, and
     // then the saved catalogue is the right answer.
@@ -571,11 +607,20 @@ ${poseCss}` : ''),
         <label>
           Clip
           <select value={clipName} onChange={(e) => setClipName(e.target.value)}>
-            {names.map((n) => (
-              <option key={n} value={n}>
-                {n} {clips[n].loops ? '(loops)' : '(one-shot)'}
-              </option>
-            ))}
+            {/* A slot-named clip shows WHICH ability it is currently bound to.
+                `ability_2` alone is a filing reference, not information -- and
+                the binding is positional, so a kit reorder repoints the art
+                with nothing to say it did. Printing it here is what makes that
+                visible at the moment somebody is looking at the animation. */}
+            {names.map((n) => {
+              const bound = slotAbilityName(n, ROSTER.find((d) => d.id === who)?.abilities);
+              return (
+                <option key={n} value={n}>
+                  {n}
+                  {bound ? ` — ${bound}` : ''} {clips[n].loops ? '(loops)' : '(one-shot)'}
+                </option>
+              );
+            })}
           </select>
         </label>
 
@@ -794,10 +839,11 @@ ${poseCss}` : ''),
                   <select
                     value={im.at ?? 'each'}
                     onChange={(e) => set({ at: e.target.value as Impact['at'] })}
-                    title="Where it lands. Which SIDE is decided by who the ability affected."
+                    title="Where it lands. Which SIDE is decided by who the ability affected -- except on the caster, who is never in question."
                   >
                     <option value="each">on each target</option>
                     <option value="centre">once, at their centre</option>
+                    <option value="caster">once, on the caster</option>
                   </select>
                   <button
                     type="button"
@@ -1014,6 +1060,24 @@ ${poseCss}` : ''),
                 />
               </span>
             </span>
+            {/*
+              Where a `caster` impact lands: a box the dummy's size and shape,
+              laid over the performer.
+
+              Sized to match the dummy rather than to the clip's box on purpose.
+              `scale` is a fraction of the body the burst plays on, and the clip
+              box is as tall as the highest jump and as wide as the widest swing
+              -- judging a buff against that would make the number mean one
+              thing in the lab and another in a battle, where the burst rides
+              the unit's slot.
+            */}
+            <span className="lab-caster-fx" style={{ height, width: height * 0.42 }}>
+              {bursts
+                .filter(({ impact }) => impact.at === 'caster')
+                .map(({ id, impact }) => (
+                  <LabBurst key={id} impact={impact} />
+                ))}
+            </span>
           </span>
           {/* No caption here on purpose. It sat under the sprite, and its TEXT
               width set the figure's width -- so the moment a clip handed off to
@@ -1037,29 +1101,11 @@ ${poseCss}` : ''),
         {dummy && (
           <figure className="lab-dummy-fig">
             <span className="lab-dummy" style={{ height, width: height * 0.42 }}>
-              {bursts.map(({ id, impact }) => {
-                const fx = EFFECTS[impact.effect];
-                if (!fx) return null;
-                return (
-                  <span
-                    key={id}
-                    className="impact-burst"
-                    style={
-                      {
-                        width: `calc(${(impact.scale ?? 1) * 100}% * ${fx.aspect})`,
-                        aspectRatio: `${fx.aspect}`,
-                        left: `${50 + (impact.dx ?? 0)}%`,
-                        top: `${50 + (impact.dy ?? 0)}%`,
-                        backgroundImage: `url(${fx.src})`,
-                        backgroundSize: `${fx.frames * 100}% 100%`,
-                        ['--fx-frames' as string]: fx.frames,
-                        ['--fx-end' as string]: `${fx.frames * 100}%`,
-                        ['--fx-ms' as string]: `${impact.ms ?? BURST_MS}ms`,
-                      } as React.CSSProperties
-                    }
-                  />
-                );
-              })}
+              {bursts
+                .filter(({ impact }) => impact.at !== 'caster')
+                .map(({ id, impact }) => (
+                  <LabBurst key={id} impact={impact} />
+                ))}
             </span>
             <figcaption className="dim">dummy</figcaption>
           </figure>

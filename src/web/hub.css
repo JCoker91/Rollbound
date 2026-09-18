@@ -1601,7 +1601,24 @@ button.big em {
 /* The burst itself. Unscoped `.impact-burst` already carries the sprite-sheet
    animation; this only supplies the positioning context the battle gets from a
    unit's own box. */
-.lab-dummy .impact-burst {
+/*
+ * The caster layer: the dummy's box, over the performer, holding nothing but
+ * bursts. Invisible itself -- the figure it sits on is the thing being looked
+ * at, and a second silhouette over the art would answer the question the dummy
+ * already answers.
+ */
+.lab-caster-fx {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  transform: translateX(-50%);
+  display: block;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.lab-dummy .impact-burst,
+.lab-caster-fx .impact-burst {
   position: absolute;
   transform: translate(-50%, -50%);
   background-repeat: no-repeat;
@@ -1647,3 +1664,245 @@ button.big em {
 }
 
 .lab-split-warn { color: #ffb45c; }
+
+/*
+ * The in-app toolbox.
+ *
+ * A reading page, so it is set like one: a measure that does not run the width
+ * of a monitor, and rows that put the thing you TYPE first and what it does
+ * second. You arrive here knowing what you want to do and needing the exact
+ * string, not the other way round -- which is why the command is the column
+ * your eye lands on and the prose is the quiet half.
+ */
+.dev-tips {
+  max-width: 940px;
+  margin: 0 auto;
+  padding: 18px 20px 40px;
+}
+
+.dev-tips h2 {
+  margin: 0 0 4px;
+}
+
+.dev-tips section {
+  margin-top: 26px;
+}
+
+.dev-tips h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+.dev-tips p {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.tip-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+/*
+ * Two columns at width, stacked when there is not room. Grid rather than a
+ * table so the command column can size to its longest entry and the prose
+ * takes the rest -- a table would either truncate the commands or leave a gutter.
+ */
+.tip-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 22em) 1fr;
+  gap: 4px 16px;
+  align-items: baseline;
+  padding: 7px 10px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.tip-list.wide li {
+  grid-template-columns: minmax(0, 16em) 1fr;
+}
+
+.tip-list li:nth-child(odd) {
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.tip-list code,
+.dev-tips p code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  color: #e6c47a;
+  word-break: break-word;
+}
+
+.tip-list span {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--dim);
+}
+
+@media (max-width: 720px) {
+  .tip-list li,
+  .tip-list.wide li {
+    grid-template-columns: 1fr;
+  }
+}
+
+/*
+ * The sheet drop.
+ *
+ * The preview is the substance of this page: the decision being made is "is
+ * that the right cut", and that is a question about an image, not about a
+ * number. Everything else -- the selects, the report -- is small so the sheet
+ * gets the room.
+ */
+.sheet-drop {
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: 18px 20px 40px;
+}
+
+.sheet-drop h2 {
+  margin: 0 0 4px;
+}
+
+.sheet-drop > p {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.drop-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin: 16px 0 10px;
+  align-items: flex-end;
+}
+
+.drop-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+.drop-form .drop-check {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 12px;
+  padding-bottom: 6px;
+}
+
+/*
+ * A target that reads as one before anything is in it, and gets out of the way
+ * once something is: the dashed edge is the invitation, and an invitation that
+ * stays visible around a picture is just a border competing with the art.
+ */
+.drop-zone {
+  border: 2px dashed var(--line);
+  border-radius: 10px;
+  padding: 10px;
+  min-height: 140px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  color: var(--dim);
+  font-size: 13px;
+  background: rgba(255, 255, 255, 0.02);
+  transition: border-color 140ms ease, background 140ms ease;
+}
+
+.drop-zone:hover {
+  border-color: var(--accent);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.sheet-preview {
+  position: relative;
+  width: 100%;
+  line-height: 0;
+}
+
+.sheet-preview img {
+  width: 100%;
+  height: auto;
+  /* A chequer, because a sprite sheet is mostly transparency and a cut line
+     over a dark panel is indistinguishable from the gap it is marking. */
+  background-image:
+    linear-gradient(45deg, rgba(255, 255, 255, 0.07) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(255, 255, 255, 0.07) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(255, 255, 255, 0.07) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(255, 255, 255, 0.07) 75%);
+  background-size: 18px 18px;
+  background-position: 0 0, 0 9px, 9px -9px, -9px 0;
+}
+
+/*
+ * Where the frames part. Positioned from the numbers the splitter reported, as
+ * a percentage of the sheet's own pixels, so the overlay stays true at whatever
+ * width the image happens to be displayed.
+ */
+.cut-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 2px dashed #ffb14a;
+  pointer-events: none;
+}
+
+.cut-line.flat {
+  top: auto;
+  left: 0;
+  right: 0;
+  bottom: auto;
+  width: auto;
+  height: 0;
+  border-left: 0;
+  border-top: 2px dashed #ffb14a;
+}
+
+.drop-report {
+  margin-top: 14px;
+}
+
+.drop-report p {
+  margin: 4px 0;
+  font-size: 12.5px;
+}
+
+.drop-report button {
+  margin-top: 10px;
+}
+
+.warn-line {
+  color: #ffb14a;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.drop-log {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.045);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  color: #cdf3d2;
+}

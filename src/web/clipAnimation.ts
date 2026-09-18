@@ -1,3 +1,8 @@
+// Re-exported so existing callers keep one import. The definitions live in a
+// leaf module a plain node process can also read -- see `clipNaming.ts`.
+export { abilitySlug, slotAbilityName, abilityClipName, idleStances } from './clipNaming.ts';
+import { abilitySlug } from './clipNaming.ts';
+
 import {
   ANIMATION_TUNING,
   CLIP_ORDER,
@@ -42,40 +47,6 @@ export const clipKey = (who: string, clip: string): string => `${who}/${clip}`;
 export const clipAnimName = (who: string, clip: string): string => `clip-${who}-${clip}`;
 /** The companion track that squashes and leans the drawing. See `poseKeyframes`. */
 export const poseAnimName = (who: string, clip: string): string => `pose-${who}-${clip}`;
-
-/** An ability's name as a clip name: `Quick Cut` -> `quick_cut`. */
-export const abilitySlug = (ability: string): string =>
-  ability
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '');
-
-/**
- * Which clip an actor plays for a given ability.
- *
- * Per-ability first, `attack` as the fallback. The lookup is by NAME, so
- * authoring a new animation is entirely a matter of what the file is called --
- * drop `benjamin_quick_cut_4x1.png` into the animations folder and Quick Cut
- * starts using it, with no registry to update and no code to touch. The packer
- * already derives clip names from file names, so nothing in the pipeline had to
- * learn what an ability is.
- *
- * Falling back rather than requiring one per ability is what keeps this
- * incremental: a character with forty abilities and one `attack` sheet plays
- * exactly as they do today, and every sheet added after that upgrades one
- * ability without disturbing the rest.
- */
-export function abilityClipName(
-  clips: Record<string, unknown> | undefined,
-  ability: string | undefined,
-): string {
-  if (!clips) return 'attack';
-  if (ability) {
-    const slug = abilitySlug(ability);
-    if (slug && clips[slug]) return slug;
-  }
-  return 'attack';
-}
 
 export const tuningFor = (who: string, clip: string): ClipTuning | undefined =>
   ANIMATION_TUNING[clipKey(who, clip)];

@@ -421,7 +421,7 @@ export const ROSTER: CharacterDef[] = [
          * are planned and will price it again; until then the escalation is
          * doing the work on its own.
          */
-        symbol: 'lantern', name: 'Avalanche', cost: 12, kind: 'attack',
+        symbol: 'lantern', name: 'Avalanche', cost: 12, kind: 'attack', ultimate: true,
         /*
          * Half again as hard, and a fourth stack.
          *
@@ -623,7 +623,7 @@ export const ROSTER: CharacterDef[] = [
         // at 2.58 dice for 15 plus a self-buff on the way in. The conditional
         // payoff never caught up with the unconditional one. Nine is 2.41 dice,
         // uncontested by any finished kit, and leaves the number itself simple.
-        symbol: 'crescent', name: 'Reckoning', cost: 9, kind: 'attack',
+        symbol: 'crescent', name: 'Reckoning', cost: 9, kind: 'attack', ultimate: true,
         damageType: 'physical', range: 2, power: 2.0,
         effects: [{ do: 'damage', power: 2.0 }],
         // Section 4's own worked example, to the decimal: a 2.0 ability taken to
@@ -799,9 +799,9 @@ export const ROSTER: CharacterDef[] = [
         // Carries `lantern` but has NO trigger. Triggers never sit on the ult:
         // it is already his big turn, and making it bigger when it chains would
         // collapse the decision into "save the ult for a chain".
-        name: 'Perfect Form', cost: 10, kind: 'attack',
+        name: 'Perfect Form', cost: 10, kind: 'attack', ultimate: true,
         symbol: 'lantern',
-        damageType: 'physical', range: 2, power: 2.0, cooldown: 2,
+        damageType: 'physical', range: 2, power: 2.0,
         effects: [
           {
             do: 'modify', on: 'self',
@@ -1072,7 +1072,7 @@ export const ROSTER: CharacterDef[] = [
        * on either sheet says it is happening.
        */
       {
-        symbol: 'tide', name: 'Deep Cold', cost: 10, kind: 'attack',
+        symbol: 'tide', name: 'Deep Cold', cost: 10, kind: 'attack', ultimate: true,
         damageType: 'magical', power: 1.0, perFrost: 0.25,
         element: 'water', range: 5, scope: 'all',
         /*
@@ -1263,7 +1263,7 @@ export const ROSTER: CharacterDef[] = [
        * spend a symbol arming it.
        */
       {
-        symbol: 'tide', name: 'Hallowed Grove', cost: 11, kind: 'heal',
+        symbol: 'tide', name: 'Hallowed Grove', cost: 11, kind: 'heal', ultimate: true,
         power: 0, element: 'earth', range: 3, scope: 'self',
         trigger: { text: 'the grove stands two turns longer', prolong: 2 },
         effects: [
@@ -1383,9 +1383,9 @@ export const ROSTER: CharacterDef[] = [
       {
         // His only real commitment at ~2.6 dice, on a cooldown so it anchors a
         // rhythm rather than being spammed.
-        name: 'Tectonic Guard', cost: 10, kind: 'attack',
+        name: 'Tectonic Guard', cost: 10, kind: 'attack', ultimate: true,
         symbol: 'anvil',
-        damageType: 'physical', element: 'earth', range: 1, power: 1.6, cooldown: 2,
+        damageType: 'physical', element: 'earth', range: 1, power: 1.6,
         effects: [
           {
             do: 'modify', on: 'allies',
@@ -1453,7 +1453,7 @@ export const ROSTER: CharacterDef[] = [
       // Spiral is hers alone for now -- nobody else carries it, so it is the
       // hook a future Performer chains into rather than a dead symbol.
       { symbol: 'spiral', name: 'Tidebreak', cost: 9, kind: 'attack', damageType: 'magical', power: 1.3, element: 'water', range: 4, scope: 'all' },
-      { symbol: 'spiral', name: 'Gale Verdict', cost: 11, kind: 'attack', damageType: 'magical', power: 2.2, element: 'wind', range: 5, cooldown: 2 },
+      { symbol: 'spiral', name: 'Gale Verdict', cost: 11, kind: 'attack', ultimate: true, damageType: 'magical', power: 2.2, element: 'wind', range: 5 },
     ],
     upgrades: [
       { name: 'Focus', cost: 6, passive: { kind: 'frenzy', percent: 25 } },

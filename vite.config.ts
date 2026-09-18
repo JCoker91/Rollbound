@@ -1,5 +1,11 @@
 import { spawn } from 'node:child_process';
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import {
+  readFileSync,
+  writeFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+} from 'node:fs';
 import { resolve } from 'node:path';
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
@@ -217,6 +223,156 @@ function animationSaver(): Plugin {
         });
       });
 
+      /*
+       * Sprite sheet upload, cut server-side.
+       *
+       * The point is that a drop does not require getting a filename right.
+       * Actor, clip and grid are chosen in the UI, so `_4x1`, the slot-vs-name
+       * question and "why is nothing happening" (a sheet left in art/samples/)
+       * all stop being things anyone has to know.
+       *
+       * The CUT is done by `scripts/split_sheet.py`, spawned, not reimplemented
+       * here. A canvas version in the browser would be a second answer to
+       * "where do the frames start", and the two would disagree the first time
+       * either changed -- which is exactly why the splitter imports the
+       * packer's cutter rather than having its own.
+       *
+       * Two calls. `analyse` stashes the upload outside art/ and reports where
+       * the cut lands, so the page can draw it before committing; nothing under
+       * art/ moves, so the watcher does not fire and the page does not reload
+       * mid-decision. `commit` names the file properly, puts it in place and
+       * runs the split.
+       *
+       * Validated like its neighbours: a dev server is reachable from the
+       * network if anyone runs it with --host, so `who` and `clip` are matched
+       * against a strict pattern and every resolved path is checked to be
+       * inside the folder it belongs to.
+       */
+      server.middlewares.use('/__art/upload', (req, res) => {
+        const fail = (code: number, error: string) => {
+          res.statusCode = code;
+          res.setHeader('content-type', 'application/json');
+          res.end(JSON.stringify({ error }));
+        };
+        if (req.method !== 'POST') return fail(405, 'POST only');
+
+        let body = '';
+        req.on('data', (chunk) => {
+          body += chunk;
+          // Sheets run to a couple of MB; base64 inflates by a third.
+          if (body.length > 40_000_000) req.destroy();
+        });
+        req.on('end', () => {
+          let parsed: {
+            mode?: string;
+            who?: string;
+            clip?: string;
+            grid?: string;
+            bleed?: string;
+            token?: string;
+            png?: string;
+            append?: boolean;
+          };
+          try {
+            parsed = JSON.parse(body);
+          } catch (e) {
+            return fail(400, e instanceof Error ? e.message : 'bad JSON');
+          }
+          const { mode, who, clip, grid, bleed, token, png, append } = parsed;
+          if (grid && !/^\d{1,2}x\d{1,2}$/.test(grid)) return fail(400, 'grid must look like 4x1');
+
+          const inbox = resolve(root, '.art-inbox');
+          const python =
+            process.env.STAGEBOUND_PYTHON ?? (process.platform === 'win32' ? 'python' : 'python3');
+
+          const run = (args: string[], done: (code: number, out: string, err: string) => void) => {
+            const child = spawn(python, args, { cwd: root });
+            let out = '';
+            let err = '';
+            child.stdout.on('data', (d) => (out += d));
+            child.stderr.on('data', (d) => (err += d));
+            child.on('error', (e) => done(-1, '', e.message));
+            child.on('close', (code) => done(code ?? -1, out, err));
+          };
+
+          if (mode === 'analyse') {
+            if (typeof png !== 'string') return fail(400, 'png must be a base64 data URL');
+            const data = Buffer.from(png.replace(/^data:image\/png;base64,/, ''), 'base64');
+            if (!data.length) return fail(400, 'empty upload');
+            // A PNG and nothing else: this is written to disk and later fed to
+            // Pillow, and "it had a .png name" is not evidence of anything.
+            if (data.subarray(0, 8).toString('hex') !== '89504e470d0a1a0a') {
+              return fail(400, 'not a PNG');
+            }
+            mkdirSync(inbox, { recursive: true });
+            const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+            const stash = resolve(inbox, `${id}.png`);
+            writeFileSync(stash, data);
+            const args = ['scripts/split_sheet.py', stash, '--json'];
+            if (grid) args.push('--grid', grid);
+            return run(args, (code, out, err) => {
+              if (code !== 0) return fail(500, (err || out).trim() || 'analysis failed');
+              res.setHeader('content-type', 'application/json');
+              res.end(JSON.stringify({ token: id, cut: JSON.parse(out) }));
+            });
+          }
+
+          if (mode === 'commit') {
+            if (!who || !NAME.test(who)) return fail(400, 'bad actor name');
+            if (!clip || !NAME.test(clip)) return fail(400, 'bad clip name');
+            if (!token || !/^[a-z0-9]{6,32}$/.test(token)) return fail(400, 'bad token');
+            const stash = resolve(inbox, `${token}.png`);
+            if (!stash.startsWith(inbox + '\\') && !stash.startsWith(inbox + '/')) {
+              return fail(400, 'path escaped the inbox');
+            }
+            if (!existsSync(stash)) return fail(404, 'upload expired -- drop the sheet again');
+
+            const folder = resolve(root, 'art', 'actors', who, 'animations');
+            if (!existsSync(folder)) return fail(404, `no art/actors/${who}/animations/`);
+            const frames = resolve(folder, clip);
+            if (!frames.startsWith(folder + '\\') && !frames.startsWith(folder + '/')) {
+              return fail(400, 'path escaped the animations folder');
+            }
+            const already =
+              existsSync(frames) && readdirSync(frames).filter((f) => f.endsWith('.png')).length;
+            if (already && !append) {
+              return fail(409, `${clip}/ already has ${already} frames -- tick "add to it" to append`);
+            }
+            /*
+             * Split straight out of the staging folder into the clip's folder.
+             *
+             * The sheet is never copied into `animations/` at all. It would only
+             * be dead weight there -- a folder beats a same-named sheet, so the
+             * sheet would sit unread forever -- and leaving one behind is how an
+             * actor ends up with two sources for one clip and a question about
+             * which is live. `--clip` and `--out` exist so the splitter can be
+             * told where things go rather than reading it off a filename that,
+             * for an upload, is a random token.
+             */
+            const args = [
+              'scripts/split_sheet.py',
+              stash,
+              '--write',
+              '--remove',
+              '--clip',
+              clip,
+              '--out',
+              folder,
+            ];
+            if (grid) args.push('--grid', grid);
+            if (bleed) args.push('--bleed', bleed);
+            if (append) args.push('--append');
+            return run(args, (code, out, err) => {
+              if (code !== 0) return fail(500, (err || out).trim() || 'split failed');
+              res.setHeader('content-type', 'application/json');
+              res.end(JSON.stringify({ ok: true, clip, appended: !!already, log: out.trim() }));
+            });
+          }
+
+          return fail(400, 'mode must be "analyse" or "commit"');
+        });
+      });
+
       server.middlewares.use('/__anim/save', (req, res) => {
         const fail = (code: number, error: string) => {
           res.statusCode = code;
@@ -382,6 +538,17 @@ function artPipeline(): Plugin {
    * back to the battle screen to see nothing changed.
    */
   const DATA_ONLY = /(\.anim\.json|[\\\/]art[\\\/]scenes[\\\/][^\\\/]+\.json)$/;
+  /*
+   * The drop box, deliberately not a source.
+   *
+   * `art/samples/` holds originals and works in progress; nothing under it is
+   * ever packed -- clips come only from `art/actors/<name>/animations/` and
+   * effects from `art/effects/`. But it IS under art/, so dropping a new sheet
+   * there triggered a full pack and a page reload that changed nothing, which
+   * reads as "the pipeline ran and my art did not take" when the truth is "that
+   * file is not anywhere the pipeline looks".
+   */
+  const SAMPLES = new RegExp('[' + '\\/' + ']art[' + '\\/' + ']samples[' + '\\/' + ']');
   const ACTOR = /[\\/]art[\\/]actors[\\/]([a-z0-9][a-z0-9_]*)[\\/]/i;
 
   const python = process.env.STAGEBOUND_PYTHON ?? (process.platform === 'win32' ? 'python' : 'python3');
@@ -391,7 +558,10 @@ function artPipeline(): Plugin {
    * dev server is live, and a synchronous child would block the event loop for
    * the seconds the pack takes -- stalling every request the page has in flight.
    */
-  function pack(actors: Set<string>, log: (m: string) => void): Promise<boolean> {
+  function pack(
+    actors: Set<string>,
+    log: (m: string) => void,
+  ): Promise<'changed' | 'unchanged' | 'failed'> {
     const args = ['scripts/pack_sprites.py', ...[...actors].flatMap((a) => ['--only', a])];
     return new Promise((done) => {
       const child = spawn(python, args, { cwd: root });
@@ -403,17 +573,18 @@ function artPipeline(): Plugin {
         // Worth being loud about: the alternative is a dev server that silently
         // stops updating art and looks like the pipeline itself is broken.
         log(`cannot run ${python} (${e.message}). Set STAGEBOUND_PYTHON to your interpreter.`);
-        done(false);
+        done('failed');
       });
       child.on('close', (code) => {
         if (code !== 0) {
           log(`pack failed:\n${(err || out).trim()}`);
-          return done(false);
+          return done('failed');
         }
         // The script's own report already names what it wrote and lists any
         // audit notes, so surface it rather than inventing a summary of it.
         for (const line of out.trim().split('\n')) if (line.trim()) log(line);
-        done(true);
+        // Its last line says whether anything was actually rewritten.
+        done(/no files changed$/.test(out.trim()) ? 'unchanged' : 'changed');
       });
     });
   }
@@ -448,6 +619,10 @@ function artPipeline(): Plugin {
 
       const changed = (file: string) => {
         if (!resolve(file).startsWith(ART) || GENERATED.test(file)) return;
+        if (SAMPLES.test(resolve(file))) {
+          log('art/samples/ is a drop box, not a source — nothing packed');
+          return;
+        }
         if (DATA_ONLY.test(resolve(file))) {
           clearTimeout(dataTimer);
           dataTimer = setTimeout(() => {
@@ -475,10 +650,22 @@ function artPipeline(): Plugin {
         full = false;
         active = active
           .then(() => pack(actors, log))
-          .then((ok) => {
-            // A full reload, not HMR: most of what changed is files under
-            // public/, which the module graph knows nothing about.
-            if (ok) server.ws.send({ type: 'full-reload' });
+          .then((result) => {
+            /*
+             * A full reload, not HMR: most of what changed is files under
+             * public/, which the module graph knows nothing about.
+             *
+             * Only when the pack actually WROTE something. Every output is
+             * guarded by `write_if_changed` / `save_if_changed`, so a run that
+             * finds nothing to do touches no file -- and reloading on one of
+             * those throws an animator out of the lab to show them the frame
+             * they were already looking at. Worse, it reads as "the pipeline
+             * ran and my art did not take", which sends you hunting for a bug
+             * in the packer when the real answer is that the file you changed
+             * is not one the packer reads.
+             */
+            if (result === 'changed') server.ws.send({ type: 'full-reload' });
+            else if (result === 'unchanged') log('nothing changed — no reload');
           });
       };
 

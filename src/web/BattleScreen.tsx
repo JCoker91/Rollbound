@@ -14,6 +14,8 @@ import {
   startEnemyPhase,
   finishEnemyPhase,
   chainPreview,
+  armedAfter,
+  chainFires,
   nextAiStep,
   livingOf,
   MAX_TURNS,
@@ -62,7 +64,7 @@ import {
   STANDARD_PARTY_SLOTS,
   type Slot,
 } from '../engine/formation.ts';
-import { actionLine, floaterClass, type Floater } from './narrate.ts';
+import { actionLine, floaterClass, modifierGroups, type Floater } from './narrate.ts';
 import {
   ROLE_LABEL,
   alive,
@@ -103,6 +105,7 @@ import {
   poseAnimName,
   poseKeyframes,
   stepMsFor,
+  idleStances,
   placementFor,
   tuningFor,
 } from './clipAnimation.ts';
@@ -546,7 +549,24 @@ export function BattleScreen({
   });
   /** Impact effects currently playing, keyed so each one animates once. */
   const [bursts, setBursts] = useState<
-    { id: number; on: string | null; at?: { x: number; y: number }; impact: Impact }[]
+    {
+      id: number;
+      on: string | null;
+      at?: { x: number; y: number };
+      /**
+       * Rides the performer's walk to the mark.
+       *
+       * Decided when the burst is SPAWNED, from whether it landed on whoever is
+       * acting, rather than from its placement -- a `caster` burst is not the
+       * only one that can end up on the performer, since a team-wide buff hits
+       * him along with everyone else. Fixing it at spawn also keeps a burst in
+       * one container for its whole life: derived from the live `pulse` it
+       * would change container the instant the beat ended, and React would tear
+       * the element down and rebuild it mid-animation.
+       */
+      walks?: boolean;
+      impact: Impact;
+    }[]
   >([]);
   /** Ids damaged by the action just resolved. Written by `withHitReactions`. */
   /*
@@ -556,7 +576,23 @@ export function BattleScreen({
    * used to write camera offsets here is gone.
    */
   const rootRef = useRef<HTMLDivElement>(null);
-  const lastHurt = useRef<string[]>([]);
+  /**
+   * Whoever the action just resolved AFFECTED, for its impact effects to land
+   * on. Not whoever it hurt.
+   *
+   * It was the hurt list, read from an HP diff, and that made a buff invisible:
+   * Rally touches every ally and damages none of them, so the list came back
+   * empty and `each` had nobody to burst on -- an ability set to show an effect
+   * on all its targets showed nothing at all, with no error anywhere to say why.
+   *
+   * The HP diff still supplies half of it, in both directions now, and the
+   * action's own log events supply the rest: a modifier landing, frost, a
+   * freeze, a sleep. Reading the log rather than the ability's declared targets
+   * keeps the original guarantee that made this a diff in the first place --
+   * an effect appears only where something actually happened, so a miss, an
+   * immunity or a resisted debuff still produces nothing.
+   */
+  const lastAffected = useRef<string[]>([]);
   const [hits, setHits] = useState<Record<string, number>>({});
   const [floaters, setFloaters] = useState<Floater[]>([]);
   const floaterId = useRef(0);
@@ -689,12 +725,40 @@ export function BattleScreen({
     const sum = pickedSum();
     for (const a of sel.unit.def.abilities) {
       if (!(affordable.get(a.name) ?? false)) continue;
+      // Cooling abilities never enter this set. `matched` is what every "can
+      // this be cast" question in the screen reads -- the row's ready styling,
+      // the board button, `chooseAbility`'s guard and the tray's count -- so
+      // the cooldown belongs here rather than being re-tested at each of them.
+      // It was not, and the tray cheerfully reported "1 ability ready" for an
+      // ultimate the player could not cast; on a roll that matches nothing else
+      // that line is the only feedback there is.
+      if ((sel.unit.cooldowns[a.name] ?? 0) > 0) continue;
       if (paysAsWildcard(a, sel.unit.freeCast) ? sel.dice.length === 1 : sum === a.cost)
         out.add(a.name);
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sel.unit, sel.dice, affordable, battle.turn, battle.phase]);
+
+  /**
+   * What the dice WOULD have bought if it were not cooling, and how long is
+   * left on it. Purely for the tray's hint, but the hint needs it: without this
+   * a roll covering a cooling ultimate and nothing else fell through to
+   * "Benjamin has nothing costing 10", which is a flat contradiction of the
+   * row sitting a few pixels away with 10 on its badge and a counter over it.
+   */
+  const coolingMatch = useMemo(() => {
+    if (!sel.unit || sel.unit.side !== 'player' || sel.dice.length === 0) return null;
+    const sum = pickedSum();
+    for (const a of sel.unit.def.abilities) {
+      const turns = sel.unit.cooldowns[a.name] ?? 0;
+      if (!turns) continue;
+      if (paysAsWildcard(a, sel.unit.freeCast) ? sel.dice.length === 1 : sum === a.cost)
+        return { name: a.name, turns };
+    }
+    return null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sel.unit, sel.dice, battle.turn, battle.phase]);
 
   const diceCover = (cost: number): boolean => sel.dice.length > 0 && pickedSum() === cost;
 
@@ -734,10 +798,38 @@ export function BattleScreen({
     const pool = livingOf(battle, sel.ability.kind === 'attack'
       ? (sel.unit.side === 'player' ? 'enemy' : 'player')
       : sel.unit.side);
+
+    /*
+     * A chain that retargets widens the ability, and the preview has to say so.
+     *
+     * Rally is a single-target buff whose trigger turns it into a whole-team
+     * one. Aiming it while the chain is live asked for one ally, glowed on one
+     * ally, and then buffed five -- the ability was doing the right thing and
+     * the board was describing a different ability. `scope` cannot express
+     * this, because the widening is not a property of the ability; it is a
+     * property of this particular cast.
+     *
+     * Still aimed at one body, because that is what the engine does: it
+     * resolves the aim first and then moves the effects. The click is the same
+     * click -- it is only the consequence that is wider, which is exactly what
+     * the highlight is for.
+     */
+    const retarget = chainFires(armedAfter(battle.plan, battle.armed), sel.ability)
+      ? sel.ability.trigger?.retarget
+      : undefined;
+    if (retarget === 'allies') {
+      for (const u of livingOf(battle, sel.unit.side)) out.add(pk(u.pos));
+      return out;
+    }
+    if (retarget === 'self') {
+      out.add(pk(sel.unit.pos));
+      return out;
+    }
+
     for (const u of unitsHit(sel.ability, hover, pool)) out.add(pk(u.pos));
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sel.unit, sel.ability, hover, targets]);
+  }, [sel.unit, sel.ability, hover, targets, battle.plan, battle.armed]);
 
   /**
    * Who the enemies have declared they will hit this round, and with what.
@@ -875,7 +967,7 @@ export function BattleScreen({
    * and no name matching.
    */
   function withHitReactions(act: () => void) {
-    lastHurt.current = [];
+    lastAffected.current = [];
     const before = new Map(battle.units.map((u) => [u.def.id, u.hp]));
     // Where the log stood before the action, so the events it appends can be
     // read back. The HP diff below still decides the NUMBER -- it catches
@@ -903,20 +995,42 @@ export function BattleScreen({
     const changed = battle.units
       .map((u) => ({ unit: u, delta: u.hp - (before.get(u.def.id) ?? u.hp) }))
       .filter((c) => c.delta !== 0);
+
+    /*
+     * Who this action reached, in any way that shows.
+     *
+     * Built here rather than below the `changed.length === 0` return, because
+     * that return is the path EVERY pure buff takes -- no HP moved, so the
+     * function used to give up before recording anything, and the impacts had
+     * an empty list to work with.
+     *
+     * Log events are named by `def.name` while everything downstream is keyed
+     * by id, so they are resolved back through the roster here rather than
+     * leaving the burst code to match on names.
+     */
+    const affected = new Set(changed.map((c) => c.unit.def.id));
+    for (const e of battle.log.slice(logMark)) {
+      const name =
+        e.t === 'damage' ||
+        e.t === 'heal' ||
+        e.t === 'buff' ||
+        e.t === 'modify' ||
+        e.t === 'frost' ||
+        e.t === 'freeze' ||
+        e.t === 'shatter'
+          ? e.target
+          : e.t === 'sleep'
+            ? e.unit
+            : null;
+      if (!name) continue;
+      const u = battle.units.find((x) => x.def.name === name);
+      if (u) affected.add(u.def.id);
+    }
+    lastAffected.current = [...affected];
+
     if (changed.length === 0) return;
 
     const hurt = changed.filter((c) => c.delta < 0);
-    if (hurt.length > 0) {
-      // Whoever this action actually damaged, for the impact effects to land
-      // on. Read from the HP diff rather than the ability's declared targets,
-      // so a spark only ever appears where something was really hit -- a miss,
-      // an immunity or a shielded blow produces none.
-      //
-      // Nothing VISIBLE happens here. The counter that drives the flinch, and
-      // the floaters, are both deferred to `pendingHit` below so they land with
-      // the blow rather than with the engine resolving it.
-      lastHurt.current = hurt.map((c) => c.unit.def.id);
-    }
 
     /*
      * The blows of a multi-hit, each as its own batch of floaters.
@@ -1054,7 +1168,27 @@ export function BattleScreen({
   }
 
   /** Runs one performance and returns how long it will take. */
-  function lunge(id: string, side: Unit['side'], targets: string[] = [], ability?: Ability): number {
+  function lunge(
+    id: string,
+    side: Unit['side'],
+    targets: string[] = [],
+    ability?: Ability,
+    /**
+     * A clip to play instead of the one the ability would name.
+     *
+     * Buying an upgrade is a real action -- it costs the Performer's turn and
+     * their dice -- but it has no ability, so it fell through to `attack` and
+     * the player watched Benjamin swing his sword at nobody in order to learn
+     * Hold the Line. Named here rather than invented inside `abilityClipName`,
+     * because that function answers "which clip does this ABILITY use" and an
+     * upgrade is not one.
+     *
+     * Ignored when the actor has no such clip, which keeps this as incremental
+     * as the per-ability clips are: whoever has been drawn one uses it, and
+     * everyone else goes on swinging until somebody draws them one.
+     */
+    prefer?: string,
+  ): number {
     /*
      * Repositioning is not a performance.
      *
@@ -1079,7 +1213,16 @@ export function BattleScreen({
      * had already walked home. Deriving it means the animator sets the pace and
      * the staging follows, which is the only order that cannot drift.
      */
-    const clipName = abilityClipName(ANIMATION_CLIPS[id], ability?.name);
+    const clipName =
+      prefer && ANIMATION_CLIPS[id]?.[prefer]
+        ? prefer
+        : abilityClipName(
+            ANIMATION_CLIPS[id],
+            ability?.name,
+            // So a sheet filed by slot -- `benjamin_ability_2_4x1.png` --
+            // finds its ability without anyone naming it twice.
+            battle.units.find((u) => u.def.id === id)?.def.abilities,
+          );
     const clip = ANIMATION_CLIPS[id]?.[clipName];
     const steps = clip
       ? clipTimeline(clip.frames, tuningFor(id, clipName), orderFor(id, clipName))
@@ -1131,9 +1274,18 @@ export function BattleScreen({
     pendingHit.current = null;
     const marks = clip ? impactTimes(id, clipName, steps, stepMsFor(id, clipName)) : [];
 
-    if (!clip || targets.length === 0 || marks.length === 0) {
+    /*
+     * A `caster` burst plays on the performer, so it does not need the ability
+     * to have affected anybody -- which means an empty target list can no
+     * longer cancel the whole schedule. It still cancels the other two
+     * placements, since both are defined in terms of who was hit.
+     */
+    const onCaster = marks.some(({ impact }) => impact.at === 'caster');
+    const nothingToLandOn = targets.length === 0 && !onCaster;
+
+    if (!clip || nothingToLandOn || marks.length === 0) {
       if (react) window.setTimeout(() => react(0), leadIn);
-      if (!clip || targets.length === 0) return beat;
+      if (!clip || nothingToLandOn) return beat;
     }
 
     marks.forEach(({ at, impact }, n) => {
@@ -1145,9 +1297,16 @@ export function BattleScreen({
         // The point is the mean of their slots, which is where the group
         // visually is -- not the mean of the whole side.
         const spawned =
-          impact.at === 'centre'
-            ? [{ id: key, on: null, at: centroidOf(targets), impact }]
-            : targets.map((on, i) => ({ id: key + i, on, impact }));
+          // `caster` rides the performer's own slot, which is why it needs no
+          // position of its own and no targets: `on` is the acting unit, and
+          // the slot renderer does the rest exactly as it does for a target.
+          impact.at === 'caster'
+            ? [{ id: key, on: id, walks: true, impact }]
+            : targets.length === 0
+              ? []
+              : impact.at === 'centre'
+                ? [{ id: key, on: null, at: centroidOf(targets), impact }]
+                : targets.map((on, i) => ({ id: key + i, on, walks: on === id, impact }));
         setBursts((b) => [...b, ...spawned]);
         const ids = new Set(spawned.map((x) => x.id));
         // Cleared when it has finished PLAYING, which is now per impact. A
@@ -1308,7 +1467,15 @@ export function BattleScreen({
       return;
     }
 
-    const beat = lunge(step.unit.def.id, step.unit.side, lastHurt.current, step.ability ?? undefined);
+    // A null ability IS the upgrade purchase -- that is how the engine records
+    // one -- so this is the only call site that can ask for the upgrade clip.
+    const beat = lunge(
+      step.unit.def.id,
+      step.unit.side,
+      lastAffected.current,
+      step.ability ?? undefined,
+      step.ability ? undefined : 'upgrade',
+    );
     setNarration(actionLine(step.unit, step.ability, step.target, battle.units));
     bump();
     playerTimer.current = window.setTimeout(stepPlan, beat + AFTER_BEAT_MS);
@@ -1331,7 +1498,7 @@ export function BattleScreen({
       return;
     }
 
-    const beat = lunge(step.unit.def.id, step.unit.side, lastHurt.current, step.ability ?? undefined);
+    const beat = lunge(step.unit.def.id, step.unit.side, lastAffected.current, step.ability ?? undefined);
     setNarration(actionLine(step.unit, step.ability, step.target, battle.units));
     bump();
     enemyTimer.current = window.setTimeout(stepEnemy, beat + AFTER_BEAT_MS);
@@ -1411,6 +1578,19 @@ export function BattleScreen({
   // Recomputed on every plan change, which is what makes reordering legible:
   // move an action above its arming symbol and its chain marker goes out.
   const chained = chainPreview(battle.plan, battle.armed);
+  /*
+   * What is armed for an action added NOW -- everything already queued has
+   * resolved by then, so the plan arms into this too.
+   *
+   * The same set the splash preview reads, and the reason it is computed up
+   * here: a chain being live is a fact about the round, not about the sheet you
+   * happen to be looking at, so it reads the same on a previewed Performer's
+   * abilities as on the selected one's.
+   */
+  const liveArmed = armedAfter(battle.plan, battle.armed);
+  // Which resting stance each Performer is holding right now. Empty for
+  // anyone who has only been drawn one idle, which is currently everyone.
+  const stances = useIdleStances(battle.units);
   const nextTier =
     sel.unit && sel.unit.side === 'player' ? (sel.unit.def.upgrades ?? [])[sel.unit.upgrades] : undefined;
   const upgradeMasks = nextTier ? masksFor({ cost: nextTier.cost } as Ability) : [];
@@ -1580,7 +1760,7 @@ export function BattleScreen({
       {/* The walk, retimed for whoever is currently performing. */}
       <style>
         {(() => {
-          const b = beatOf(pulse?.id ?? '', pulse?.clip ?? 'attack');
+          const b = beatOf(pulse?.id ?? '', pulse?.clip ?? '');
           return strikeKeyframes(b.holdStart, b.holdEnd);
         })()}
       </style>
@@ -1681,6 +1861,76 @@ export function BattleScreen({
             );
           })}
 
+        {/*
+          The fallen, still on the boards.
+
+          They used to vanish the moment their HP hit zero, because everything
+          that draws the stage filters on `alive` -- which is correct for the
+          RULES (a dead Performer cannot act, cannot be aimed at, and is not
+          caught by an area attack; all four are enforced in the engine and none
+          of that changed here) and wrong for the picture. A party of five that
+          quietly becomes a party of three tells you the fight is going badly by
+          leaving an empty stage, when a body on the boards says it better and
+          says WHOSE.
+
+          A pass of their own rather than a branch inside the living one. They
+          take no pointer events, carry no marks, no intent, no hit reactions
+          and no walk -- a downed unit has none of the states those describe --
+          and a branch would have had to switch all of it off one prop at a
+          time.
+
+          Anyone without a `death` pose still leaves the stage, which is exactly
+          what everyone did before this existed.
+        */}
+        {battle.units
+          .filter((u) => !alive(u) && u.def.sprite?.death)
+          .map((u) => {
+            const slot = slotFor(u, board, foeSlots);
+            if (!slot) return null;
+            const sheet = u.def.sprite!;
+            // The same figure height the living are drawn at, spent on WIDTH
+            // instead: lying down, a Performer is about as long as they are
+            // tall. The packer clamps a pose to the board height, which for a
+            // drawing wider than it is tall would otherwise blow it up to
+            // twice the size of everyone standing over it.
+            const len =
+              SLOT_H * (u.side === 'enemy' ? ENEMY_SCALE : 1) * sheet.scale * depthScale(slot.yPct);
+            const down = placementFor(u.def.id, 'death') ?? {};
+            return (
+              <div
+                key={`down-${u.def.id}`}
+                className="stage-slot downed"
+                style={{
+                  left: `${slot.xPct * 100}%`,
+                  top: `${slot.yPct * 100}%`,
+                  // Its own depth band, entirely below the living. Bodies are on
+                  // the floor, so nobody standing should ever be behind one --
+                  // but they still sort among themselves by how far downstage
+                  // they fell.
+                  zIndex: Math.round(slot.yPct * 40),
+                }}
+                title={`${u.def.name} is down`}
+              >
+                <img
+                  className={`sprite downed-sprite ${sheet.pixelated ? 'pixel' : ''}`}
+                  src={sheet.death}
+                  alt=""
+                  draggable={false}
+                  style={{
+                    // Tuned in the animation lab like anything else. The pose is
+                    // packed as a one-frame clip purely so the lab can reach it,
+                    // and this is the half that makes editing it mean something.
+                    width: `${len * (down.scale ?? 1) * 100}cqh`,
+                    height: 'auto',
+                    transform:
+                      `translate(${down.dx ?? 0}%, ${down.dy ?? 0}%)` +
+                      ` scaleX(${u.side === 'player' ? 1 : -1})`,
+                  }}
+                />
+              </div>
+            );
+          })}
+
         {battle.units.filter(alive).map((u) => {
           const slot = slotFor(u, board, foeSlots);
           if (!slot) return null;
@@ -1729,7 +1979,7 @@ export function BattleScreen({
                 // the sprite's own box rather than against the stage.
                 // The clip THIS beat is playing decides its length, so a long
                 // ability holds the mark longer than a short one.
-                ['--beat' as string]: `${beatOf(u.def.id, pulse?.id === u.def.id ? pulse.clip : 'attack').beat}ms`,
+                ['--beat' as string]: `${beatOf(u.def.id, pulse?.id === u.def.id ? pulse.clip : '').beat}ms`,
                 ['--sx' as string]: `${(acts[u.side].x - slot.xPct) * 100}cqw`,
                 ['--sy' as string]: `${(acts[u.side].y - slot.yPct) * 100}cqh`,
               }}
@@ -1757,14 +2007,64 @@ export function BattleScreen({
                 hit={hits[u.def.id] ?? 0}
                 flinching={flinching[u.def.id] ?? null}
                 striking={pulse?.id === u.def.id}
-                actClip={pulse?.id === u.def.id && pulse.act ? (pulse.clip ?? 'attack') : null}
+                actClip={pulse?.id === u.def.id && pulse.act ? (pulse.clip || null) : null}
+                stance={stances[u.def.id]}
               />
               {u.pending && <span className="casting">!</span>}
+              {/*
+                A burst that landed on the PERFORMER has to walk out with him.
+
+                The step-to-the-mark animation is on `.unit`, INSIDE this slot,
+                so a burst placed beside it stays on the mark the performer left
+                -- which is right for a target, who does not move, and plainly
+                wrong for the caster, who is halfway downstage by the time the
+                flourish fires. Rather than move the bursts inside `.unit` (whose
+                box is the figure, not the slot, and would rescale every number
+                already authored against a slot), this wrapper runs the SAME
+                generated `stage-strike` keyframes off the same `--beat`, `--sx`
+                and `--sy` this slot already carries.
+
+                Rendered unconditionally and toggled by class, so its animation
+                starts on the same frame as the performer's rather than
+                whenever the first burst happens to spawn -- a wrapper mounted
+                mid-beat would start its walk from the beginning, several
+                hundred ms after he did.
+              */}
+              <span
+                className={`caster-fx${pulse?.id === u.def.id ? ' striking' : ''}`}
+                aria-hidden="true"
+              >
+                {bursts
+                  .filter((b) => b.on === u.def.id && b.walks)
+                  .map((b) => {
+                    const fx = EFFECTS[b.impact.effect];
+                    if (!fx) return null;
+                    return (
+                      <span
+                        key={b.id}
+                        className="impact-burst"
+                        style={
+                          {
+                            width: `calc(${(b.impact.scale ?? 1) * 100}% * ${fx.aspect})`,
+                            aspectRatio: `${fx.aspect}`,
+                            left: `${50 + (b.impact.dx ?? 0)}%`,
+                            top: `${50 + (b.impact.dy ?? 0)}%`,
+                            backgroundImage: `url(${fx.src})`,
+                            backgroundSize: `${fx.frames * 100}% 100%`,
+                            ['--fx-frames' as string]: fx.frames,
+                            ['--fx-end' as string]: `${fx.frames * 100}%`,
+                            ['--fx-ms' as string]: `${b.impact.ms ?? BURST_MS}ms`,
+                          } as CSSProperties
+                        }
+                      />
+                    );
+                  })}
+              </span>
               {/* Impact effects land ON the target, inside its slot, so they
                   travel with it and inherit its depth in the painter's order
                   rather than needing a position of their own. */}
               {bursts
-                .filter((b) => b.on !== null && b.on === u.def.id)
+                .filter((b) => b.on !== null && b.on === u.def.id && !b.walks)
                 .map((b) => {
                   const fx = EFFECTS[b.impact.effect];
                   if (!fx) return null;
@@ -1892,6 +2192,20 @@ export function BattleScreen({
               ? elementResistance(u, aiming.element)
               : null;
           const st = u.statuses;
+          /*
+           * Modifiers are deliberately NOT marked here.
+           *
+           * They were, as a `▲ 2t` / `▼ 3t` pair, and the clock is what killed
+           * it: a unit can be carrying three buffs on three schedules, and one
+           * number cannot speak for them without picking a winner and implying
+           * the others do not exist. Anything honest enough to fix that is a
+           * list, and a list does not belong on a character's head.
+           *
+           * The sheet answers it instead, which is what hover-to-read is for --
+           * the same glance that shows a Performer's dice costs shows what is
+           * currently on them. A status like frost stays here because it IS one
+           * number, and one the design asks you to count before spending dice.
+           */
           // `aimed` of 0 is a real answer -- neutral -- and it is the answer
           // that gets NO badge, so an empty marker column must not be left
           // behind for it.
@@ -2140,6 +2454,36 @@ export function BattleScreen({
                 <span className="boosted">+{Math.round((statScale(shownUnit) - 1) * 100)}%</span>
               )}
             </div>
+            {/*
+              What is currently ON this Performer, and for how long.
+
+              Under the stat row on purpose: these ARE those numbers' second
+              half. `ATK 130` is not a fact about Benjamin, it is a fact about
+              Benjamin this turn, and the row above could not say which part of
+              it was about to lapse.
+
+              Grouped by the ability that applied them, which is also how the
+              engine stores them -- one cast of Rally is one thing with one
+              clock that happens to move three stats, and three separate rows
+              would read as three buffs that might expire apart. They cannot.
+            */}
+            {modifierGroups(shownUnit).length > 0 && (
+              <div className="mods">
+                {modifierGroups(shownUnit).map((g) => (
+                  <span
+                    key={g.ability}
+                    className={`mod ${g.good ? 'good' : 'bad'}`}
+                    title={`${g.ability}: ${g.parts.join(', ')} — ${g.turns} turn${
+                      g.turns === 1 ? '' : 's'
+                    } left`}
+                  >
+                    <strong>{g.ability}</strong>
+                    <span className="mod-parts">{g.parts.join(' · ')}</span>
+                    <em>{g.turns}t</em>
+                  </span>
+                ))}
+              </div>
+            )}
             <div className="terrain-note">
               {ROLE_LABEL[shownUnit.def.role]} · {elementsOf(shownUnit.def).join('/')} ·{' '}
               {rankLabel(shownUnit, battle)}
@@ -2305,26 +2649,49 @@ export function BattleScreen({
                   // Plain-but-disabled is the middle -- payable, wrong dice.
                   const ok = affordable.get(a.name) ?? false;
                   const active = sel.ability?.name === a.name;
+                  // Turns left before this can be cast again. Its own state,
+                  // separate from affordability: a cooled-down ability is not
+                  // "you picked the wrong dice", it is "not this turn, whatever
+                  // you roll", and the two should not read the same.
+                  const cooling = shownUnit!.cooldowns[a.name] ?? 0;
+                  // Somebody ahead of this one has already put the symbol out,
+                  // so casting this now fires its trigger. Worth saying loudly:
+                  // it is the one thing on the sheet that changes what the
+                  // ability DOES, and until now the only way to know was to
+                  // remember what had been queued and check the chip yourself.
+                  const chainReady = chainFires(liveArmed, a);
                   // A previewed sheet shows no ability as castable, because none of
                   // them is: the dice belong to whoever is selected.
+                  // `matched` already excludes anything cooling, so this does
+                  // not need to re-test it -- `cooling` below is for the styling
+                  // and the tooltip, which need to say WHY it is not ready.
                   const ready = !previewing && matched.has(a.name);
                   return (
                     // Hover lives on the <li>: disabled buttons swallow mouse events.
                     <li key={a.name} onMouseEnter={() => setPreview(a)} onMouseLeave={() => setPreview(null)}>
                       <button
-                        className={`ability ${!canAct || ok ? '' : 'locked'} ${active ? 'active' : ''} ${ready ? 'ready' : ''}`}
+                        className={[
+                          'ability',
+                          !canAct || cooling || ok ? '' : 'locked',
+                          cooling ? 'cooling' : '',
+                          chainReady ? 'chains' : '',
+                          active ? 'active' : '',
+                          ready ? 'ready' : '',
+                        ].filter(Boolean).join(' ')}
                         onClick={() => chooseAbility(a)}
-                        disabled={!canAct || !ready}
+                        disabled={!canAct || !!cooling || !ready}
                         title={
-                          !canAct
-                            ? `${shownUnit!.def.name} is not acting again this round`
-                            : !ok
-                              ? `No dice in this roll can total ${a.cost}`
-                              : !ready
-                                ? paysAsWildcard(a, shownUnit!.freeCast)
-                                  ? 'Select any single die'
-                                  : `Select dice totalling ${a.cost}`
-                                : undefined
+                          cooling
+                            ? `${a.name} is not ready for ${cooling} more turn${cooling === 1 ? '' : 's'}`
+                            : !canAct
+                              ? `${shownUnit!.def.name} is not acting again this round`
+                              : !ok
+                                ? `No dice in this roll can total ${a.cost}`
+                                : !ready
+                                  ? paysAsWildcard(a, shownUnit!.freeCast)
+                                    ? 'Select any single die'
+                                    : `Select dice totalling ${a.cost}`
+                                  : undefined
                         }
                       >
                         {/* A charge that makes this cast free shows AS a
@@ -2343,7 +2710,12 @@ export function BattleScreen({
                                 four chain together" is a question about the KIT
                                 and cannot be answered by hovering one of them. */}
                             {a.symbol && (
-                              <em className={`sym ${a.trigger ? 'has-trigger' : ''}`} title={describeChain(a) ?? ''}>
+                              <em
+                                className={`sym ${a.trigger ? 'has-trigger' : ''} ${chainReady ? 'on' : ''}`}
+                                title={
+                                  (chainReady ? 'Chain is live — ' : '') + (describeChain(a) ?? '')
+                                }
+                              >
                                 <SymbolIcon symbol={a.symbol} size={13} />
                               </em>
                             )}
@@ -2358,7 +2730,36 @@ export function BattleScreen({
                               </>
                             )}
                           </em>
+                          {/* What the chain will DO, spelled out on the row, the
+                              same way the queue spells it out on a planned
+                              action. The lit chip says a trigger is live; it
+                              cannot say that Rally is about to buff the whole
+                              team instead of one ally, and that sentence is the
+                              entire reason to cast this one now rather than
+                              next turn. */}
+                          {chainReady && a.trigger && (
+                            <span className="trigger">{a.trigger.text}</span>
+                          )}
                         </span>
+                        {/* The turns left, on a sheet drawn over the whole row.
+
+                            Two earlier versions put this number on the cost
+                            badge and then in a pill at the row's right edge.
+                            Both read as a price: a small numeral on an ability
+                            row joins the scan the player is running down the
+                            cost column against their dice, whatever it actually
+                            means. Covering the row says "not this one" before
+                            the number is read, and nothing else in this UI puts
+                            a figure in the middle of a darkened button. */}
+                        {cooling > 0 && (
+                          <span
+                            className="cd-overlay"
+                            aria-label={`Ready in ${cooling} turn${cooling === 1 ? '' : 's'}`}
+                          >
+                            <strong>{cooling}</strong>
+                            <em aria-hidden="true">{cooling === 1 ? 'turn' : 'turns'}</em>
+                          </span>
+                        )}
                       </button>
                     </li>
                   );
@@ -2379,12 +2780,25 @@ export function BattleScreen({
               exactly the same thing).
             */}
 
-            {/* Hidden while previewing. The tiers, their costs and whether one
-                is affordable are all derived from the SELECTED unit, so showing
-                them under somebody else's name would be a track that belongs to
-                neither -- and the button behind it spends real dice. */}
-            {shownUnit.side === 'player' && !over && !previewing && (
-              <div className="upgrades">
+            {/*
+              Shown while previewing, and inert -- the same rule the ability list
+              follows, for the same reason.
+
+              It used to be hidden outright, because `nextTier`, `upgradeMasks`
+              and `upgradeReady` are all derived from the SELECTED unit, so a
+              track drawn under somebody else's name mixed two characters and the
+              button behind it spent real dice. But hiding it answered a
+              presentation problem by deleting information: hovering a Performer
+              is how you read them, and their upgrade line is half of what there
+              is to read.
+
+              So the selection-derived parts are suppressed instead. What is left
+              is intrinsic to the hovered unit -- which tiers exist, what they
+              cost, what they grant, how many are already bought -- and nothing
+              reads as purchasable.
+            */}
+            {shownUnit.side === 'player' && !over && (
+              <div className={`upgrades ${previewing ? 'inert' : ''}`}>
                 <div className="upgrade-track">
                   {(shownUnit.def.upgrades ?? []).map((t, i) => (
                     <span key={t.name} className={`pip-tier ${i < shownUnit!.upgrades ? 'on' : ''}`} title={t.name} />
@@ -2401,7 +2815,10 @@ export function BattleScreen({
                 */}
                 {(shownUnit.def.upgrades ?? []).map((tier, i) => {
                   const bought = i < shownUnit!.upgrades;
-                  const isNext = i === shownUnit!.upgrades;
+                  // Affordability belongs to the selection, so while previewing
+                  // there is no such thing: no tier is next, ready or locked,
+                  // because none of them is anything to the dice in hand.
+                  const isNext = !previewing && i === shownUnit!.upgrades;
                   const payable = isNext && upgradeMasks.length > 0;
                   return (
                     <button
@@ -2416,10 +2833,16 @@ export function BattleScreen({
                       ].filter(Boolean).join(' ')}
                       onClick={handleUpgrade}
                       disabled={
-                        !isNext || shownUnit!.hasActed || isPlanned(battle, shownUnit!) || !upgradeReady
+                        previewing ||
+                        !isNext ||
+                        shownUnit!.hasActed ||
+                        isPlanned(battle, shownUnit!) ||
+                        !upgradeReady
                       }
                       title={
-                        bought
+                        previewing
+                          ? `Select ${shownUnit!.def.name} to buy this`
+                          : bought
                           ? 'Already bought'
                           : !isNext
                             ? 'Buy the earlier tiers first'
@@ -2641,7 +3064,11 @@ export function BattleScreen({
                       }`
                     : upgradeReady && nextTier
                       ? ` — pays for the ${nextTier.name} upgrade`
-                      : ` — ${diceOnly.def.name} has nothing costing ${diceSum}`}
+                      : coolingMatch
+                        ? ` — pays for ${coolingMatch.name}, ready in ${coolingMatch.turns} turn${
+                            coolingMatch.turns === 1 ? '' : 's'
+                          }`
+                        : ` — ${diceOnly.def.name} has nothing costing ${diceSum}`}
                 </span>
               )}
               {sel.ability && (
@@ -2694,6 +3121,67 @@ export function BattleScreen({
       )}
     </div>
   );
+}
+
+/**
+ * Which resting stance each Performer is currently holding.
+ *
+ * Four idles exist so a waiting party does not read as four statues, and the
+ * whole difficulty is WHEN to change between them. Three rules, each answering
+ * a way the naive version looks wrong:
+ *
+ *   - Never mid-loop. A stance change is a cut, and cutting halfway through a
+ *     breath reads as a glitch rather than as a shift of weight -- so the timer
+ *     is always a whole number of loops of the stance now playing.
+ *   - Never all at once. Each Performer gets their own timer, their own random
+ *     number of loops and a staggered first change, because five characters
+ *     changing stance on the same frame is a cutscene, not life.
+ *   - Never the same one twice running. A re-roll that lands on the stance
+ *     already playing is a pause with nothing to show for it.
+ *
+ * Held in state rather than derived at render. `Math.random()` inside a render
+ * would re-roll on every unrelated state change -- a die landing, a floater
+ * expiring -- and the board would strobe.
+ *
+ * A character with one idle is skipped entirely, so this costs nothing until
+ * the alternate sheets exist.
+ */
+function useIdleStances(units: Unit[]): Record<string, string> {
+  const [stance, setStance] = useState<Record<string, string>>({});
+  // Read by the scheduler without making the stance a dependency of it, which
+  // would tear down and rebuild every timer each time one of them fired.
+  const current = useRef(stance);
+  current.current = stance;
+  // Only who is on stage matters here, not their hit points.
+  const cast = units.map((u) => u.def.id).join();
+
+  useEffect(() => {
+    const timers: number[] = [];
+    for (const id of cast ? cast.split(',') : []) {
+      const options = idleStances(ANIMATION_CLIPS[id]);
+      if (options.length < 2) continue;
+      const tick = () => {
+        const now = current.current[id] ?? options[0]!;
+        const others = options.filter((o: string) => o !== now);
+        const next = others[Math.floor(Math.random() * others.length)]!;
+        const clip = ANIMATION_CLIPS[id]?.[next];
+        const loop = clip
+          ? clipDuration(
+              clipTimeline(clip.frames, tuningFor(id, next), orderFor(id, next)),
+              stepMsFor(id, next),
+            )
+          : 1200;
+        setStance((s) => ({ ...s, [id]: next }));
+        // Two to four loops of whatever we just switched TO, so the next change
+        // lands on a boundary as well.
+        timers.push(window.setTimeout(tick, loop * (2 + Math.floor(Math.random() * 3))));
+      };
+      timers.push(window.setTimeout(tick, 400 + Math.random() * 2600));
+    }
+    return () => timers.forEach(window.clearTimeout);
+  }, [cast]);
+
+  return stance;
 }
 
 /**
@@ -2777,6 +3265,7 @@ function UnitChip({
   hit,
   striking,
   actClip,
+  stance,
   flinching = null,
   queued = false,
 }: {
@@ -2796,6 +3285,11 @@ function UnitChip({
   striking: boolean;
   /** The clip to PLAY, once they have arrived and taken their pause. */
   actClip: string | null;
+  /**
+   * Which resting stance to hold. Falls back to `idle`, so a character with one
+   * idle sheet is drawn exactly as they were before alternates existed.
+   */
+  stance?: string;
 }) {
   // Only grey out the side whose turn it is; the idle side's flags are stale.
   // `queued` is distinct from `acted`: one is a promise the player can still take
@@ -2846,8 +3340,11 @@ function UnitChip({
      * costs nothing for a character who has not been drawn one.
      */
     const ready = !attack && (queued || striking) ? ANIMATION_CLIPS[unit.def.id]?.ready : undefined;
-    const clipName = attack ? actClip! : ready ? 'ready' : 'idle';
-    const strip = attack ?? ready ?? idle;
+    // The resting stance, which is `idle` unless this character has alternates
+    // and the scheduler has moved them onto one.
+    const resting = (stance && ANIMATION_CLIPS[unit.def.id]?.[stance]) || undefined;
+    const clipName = attack ? actClip! : ready ? 'ready' : (resting ? stance! : 'idle');
+    const strip = attack ?? ready ?? resting ?? idle;
     const box = strip ? clipBox(strip, h, placementFor(unit.def.id, clipName)) : null;
     // The strip and the still are different files with different heights --
     // Maxine's strip is 105px against her 106px still -- so the rounding step
@@ -2873,6 +3370,9 @@ function UnitChip({
     const poseName = poseKeyframes(poseAnimName(unit.def.id, clipName), clipSteps)
       ? poseAnimName(unit.def.id, clipName)
       : '';
+    // Both stills are packed as one-frame clips so the lab can list them, which
+    // is only useful if what the lab saves is what the battle draws.
+    const hurtPlace = placementFor(unit.def.id, 'pain') ?? {};
     const body = painting ? (
       <img
         className={`sprite ${sheet.pixelated ? 'pixel' : ''}`}
@@ -2880,9 +3380,11 @@ function UnitChip({
         alt=""
         draggable={false}
         style={{
-          height: '100%',
+          height: `${(hurtPlace.scale ?? 1) * 100}%`,
           width: 'auto',
-          transform: `translateX(${(0.5 - sheet.anchorX) * 100}%) scaleX(${facing})`,
+          transform:
+            `translate(${(0.5 - sheet.anchorX) * 100 + (hurtPlace.dx ?? 0)}%, ${hurtPlace.dy ?? 0}%)` +
+            ` scaleX(${facing})`,
         }}
       />
     ) : strip && box ? (

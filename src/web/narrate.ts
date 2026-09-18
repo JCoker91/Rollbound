@@ -94,3 +94,58 @@ export function floaterClass(f: Pick<Floater, 'kind' | 'element' | 'crit'>): str
   return `floater ${f.kind}${f.element ? ` el-${f.element}` : ''}${f.crit ? ' crit' : ''}`;
 }
 
+
+/** One ability's worth of live modifiers on a unit, ready to render. */
+export interface ModGroup {
+  /** The ability that applied them, which is also their identity for refresh. */
+  ability: string;
+  /** `ATK +21`, `P.DEF −12`, `fire res +25%` -- already signed and labelled. */
+  parts: string[];
+  /** Turns left. One number per group, because one cast sets one clock. */
+  turns: number;
+  /** Whether this helps its holder. Mixed groups count as a buff if any part is. */
+  good: boolean;
+}
+
+const MOD_LABEL: Record<string, string> = {
+  attack: 'ATK',
+  physicalDefense: 'P.DEF',
+  magicalDefense: 'M.DEF',
+};
+
+/**
+ * A unit's live modifiers, grouped the way the engine stores them.
+ *
+ * Grouped by ABILITY rather than listed flat because that is the unit the rules
+ * work in: one cast of Rally is one thing with one clock that happens to move
+ * three stats, and printing it as three rows of "+21, 3 turns" invites reading
+ * it as three separate buffs that might expire apart. They cannot.
+ *
+ * Signed with a real minus (U+2212) rather than a hyphen, because these sit
+ * next to numbers and a hyphen at small sizes reads as punctuation.
+ *
+ * An element key is a resistance in percentage POINTS, not a stat amount -- the
+ * one place `Modifier.amount` changes meaning -- so it is labelled differently
+ * and carries its own sign convention: positive resistance is good.
+ */
+export function modifierGroups(unit: Unit): ModGroup[] {
+  const out: ModGroup[] = [];
+  for (const m of unit.modifiers) {
+    const sign = m.amount < 0 ? '−' : '+';
+    const mag = Math.abs(m.amount);
+    const stat = MOD_LABEL[m.stat as string];
+    const part = stat ? `${stat} ${sign}${mag}` : `${m.stat} res ${sign}${mag}%`;
+    const found = out.find((g) => g.ability === m.ability);
+    if (found) {
+      found.parts.push(part);
+      found.good ||= m.amount > 0;
+      // The longest clock in the group. They are set together by one cast, so
+      // this is a tie in practice -- but a group whose parts disagreed would
+      // be better described by the one still standing than by the one gone.
+      found.turns = Math.max(found.turns, m.turns);
+    } else {
+      out.push({ ability: m.ability, parts: [part], turns: m.turns, good: m.amount > 0 });
+    }
+  }
+  return out;
+}

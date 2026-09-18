@@ -5,6 +5,8 @@ import { load, save, wipe } from '../engine/save.ts';
 import { applyStars, progressFor } from '../engine/stars.ts';
 import { applyLevel } from '../engine/levels.ts';
 import { BattleScreen } from './BattleScreen.tsx';
+import { DevTips } from './screens/DevTips.tsx';
+import { SheetDrop } from './screens/SheetDrop.tsx';
 import { Home } from './screens/Home.tsx';
 import { Characters } from './screens/Characters.tsx';
 import { Summon } from './screens/Summon.tsx';
@@ -15,7 +17,7 @@ import { StageLab } from './screens/StageLab.tsx';
 import { devTools, useDevTools } from './dev.ts';
 import { DevBadge } from './DevBadge.tsx';
 
-type Screen = 'home' | 'characters' | 'summon' | 'inventory' | 'events' | 'anim' | 'stage';
+type Screen = 'home' | 'characters' | 'summon' | 'inventory' | 'events' | 'anim' | 'stage' | 'tips' | 'drop';
 
 /**
  * The game's own navigation. Five tabs, and no dev screen among them.
@@ -48,7 +50,8 @@ const IDS: Screen[] = TABS.map((t) => t.id);
  */
 function screenFromHash(): Screen {
   const raw = window.location.hash.replace('#', '') as Screen;
-  if (raw === 'anim' || raw === 'stage') return devTools() ? raw : 'home';
+  if (raw === 'anim' || raw === 'stage' || raw === 'tips' || raw === 'drop')
+    return devTools() ? raw : 'home';
   return IDS.includes(raw) ? raw : 'home';
 }
 
@@ -75,7 +78,8 @@ export function App() {
   // Turning the tools off while standing in the lab would leave an empty
   // `<main>`, since the lab is the one screen with no player-facing form.
   useEffect(() => {
-    if (!dev && (screen === 'anim' || screen === 'stage')) setScreen('home');
+    if (!dev && (screen === 'anim' || screen === 'stage' || screen === 'tips' || screen === 'drop'))
+      setScreen('home');
   }, [dev, screen]);
 
   /** Wipe the save and start over from the tutorial roster. */
@@ -129,6 +133,8 @@ export function App() {
         {screen === 'events' && <Events profile={profile} />}
         {screen === 'anim' && dev && <AnimationLab />}
         {screen === 'stage' && dev && <StageLab />}
+        {screen === 'tips' && dev && <DevTips />}
+        {screen === 'drop' && dev && <SheetDrop />}
       </main>
 
       <nav className="hub-nav">
@@ -152,6 +158,10 @@ export function App() {
         onLab={() => setScreen('anim')}
         stageActive={screen === 'stage'}
         onStage={() => setScreen('stage')}
+        tipsActive={screen === 'tips'}
+        onTips={() => setScreen('tips')}
+        dropActive={screen === 'drop'}
+        onDrop={() => setScreen('drop')}
         onReset={reset}
       />
     </>

@@ -28,6 +28,10 @@ export function DevBadge({
   /** Open the stage lab, where battle scenes are composed. */
   onStage,
   stageActive = false,
+  onTips,
+  tipsActive = false,
+  onDrop,
+  dropActive = false,
 }: {
   overNav?: boolean;
   onLab?: () => void;
@@ -35,6 +39,12 @@ export function DevBadge({
   labActive?: boolean;
   onStage?: () => void;
   stageActive?: boolean;
+  /** Open the toolbox: the commands and filename rules, one click from the lab. */
+  onTips?: () => void;
+  tipsActive?: boolean;
+  /** Open the sheet drop, where art is uploaded and cut. */
+  onDrop?: () => void;
+  dropActive?: boolean;
 }) {
   const dev = useDevTools();
 
@@ -52,7 +62,7 @@ export function DevBadge({
         switch is one control and keeps one shape; anything it REVEALS belongs
         in something else.
       */}
-      {dev && (onLab || onStage || onReset) && (
+      {dev && (onLab || onStage || onTips || onDrop || onReset) && (
         <div className={`dev-panel${overNav ? ' over-nav' : ''}`}>
           <span className="dev-panel-title">Dev tools</span>
           {onLab && (
@@ -71,6 +81,24 @@ export function DevBadge({
               onClick={onStage}
             >
               ▦ Stage lab
+            </button>
+          )}
+          {onDrop && (
+            <button
+              className={`quiet dev-link${dropActive ? ' on' : ''}`}
+              title="Drop a sprite sheet: it is named, cut into frames and filed for you"
+              onClick={onDrop}
+            >
+              ⤓ Drop art
+            </button>
+          )}
+          {onTips && (
+            <button
+              className={`quiet dev-link${tipsActive ? ' on' : ''}`}
+              title="Commands, art filenames, and what to check when something looks wrong"
+              onClick={onTips}
+            >
+              ? Toolbox
             </button>
           )}
           {onReset && (

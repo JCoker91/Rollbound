@@ -54,6 +54,9 @@ originally built for has been **abandoned** (§2).
 
 ---
 
+> **Looking for a command or a tool?** `DEV_TOOLBOX.md` is the reference — every script, what it is
+> for, and the traps around it. This document carries the reasoning; that one carries the usage.
+
 ## 2. Quick start
 
 Requires **Node 22.18+** — the CLI tools run TypeScript directly via `--experimental-strip-types`,
@@ -244,6 +247,35 @@ gate matters: without `aiming` the board would sit half-dimmed during ordinary p
 > The AoE splash highlight is written **after** the target highlight at the same specificity, so a
 > target caught by the hovered blast still turns orange. Reorder them and that feedback silently
 > disappears.
+
+**The splash preview is chain-aware.** A `scope: 'all'` ability needs nothing special — `unitsHit`
+returns the whole side and `canTarget` makes every slot a legal aim point, so hovering any one of
+them lights all of them. A chain that *retargets* is the case that broke: Rally is a single-target
+buff whose trigger turns it into a whole-team one, so aiming it with the chain live asked for one
+ally, glowed on one ally, and then buffed five. `scope` cannot express that, because the widening is
+not a property of the ability — it is a property of that particular cast. The preview now asks
+`chainFires(armedAfter(plan, armed), ability)` and, when the trigger carries a `retarget`, highlights
+what the cast will actually reach. `armedAfter` lives in `battle.ts` beside `chainPreview` and shares
+its arming step, because a second copy of the arming rule in the UI would drift from `commitNext` the
+first time that rule changed.
+
+It still asks for one body, because that is what the engine does — it resolves the aim and *then*
+moves the effects. The click is the same click; only the consequence is wider, which is what the
+highlight is there to say.
+
+**A live chain is marked on the ability that would fire it.** `chainFires(liveArmed, a)` per row:
+the symbol chip lights (the same `.sym.on` the queue uses), a gold edge runs down the left of the
+row, and the trigger's own text appears under the meta line. Until then the only way to know a chain
+was live was to remember what had been queued and check the chip against it — and the chip alone
+cannot say that Rally is about to buff the whole team instead of one ally, which is the entire
+reason to cast it *now* rather than next turn.
+
+The ring is a `::before` sitting in the 6px gap between rows, carrying its own border and glow.
+`.ability.ready` already spends the row's border *and* box-shadow on the gold "your dice buy this"
+state, and both states can be true at once — a pseudo-element competes for neither, so a ready
+chained row reads as both, and `ready`'s glow survives where a second `box-shadow` rule on the row
+would have replaced it rather than added to it. The marker is computed from the round, not from the
+selection, so it reads the same on a previewed Performer's sheet as on the selected one's.
 
 **The ability list is never hidden.** A kit describes the character; it is not a menu that exists
 only while it can be used, and hiding it emptied the widest part of the sheet at the exact moment
@@ -1052,6 +1084,26 @@ is verified to reach identical state.
 
 Three rules, and the second is the one that matters.
 
+**Live modifiers are shown, with their clocks.** They were stored, resolved and expired correctly
+and displayed nowhere — `ATK 130` on the sheet is not a fact about Benjamin, it is a fact about
+Benjamin *this turn*, and nothing said which part of it was about to lapse. `modifierGroups` in
+`narrate.ts` groups a unit's modifiers **by the ability that applied them**, which is how the engine
+stores them: one cast of Rally is one thing with one clock that happens to move three stats, and
+three flat rows would read as three buffs that might expire apart. They cannot.
+
+The sheet is the only surface: a chip per cast — source, amounts, turns left — under the stat row,
+because these are those numbers' second half. A pair of `▲`/`▼` stage badges was built first and
+removed. A unit can carry three modifiers on three schedules and a badge has room for one clock, so
+it could only answer by picking a winner and implying the rest were not there; anything honest
+enough to fix that is a list, and a list does not belong on a character's head. Hovering a Performer
+already exists to answer exactly this class of question — the same glance that reads their dice
+costs now reads what is on them. Statuses stay on the stage because frost *is* one number, and one
+the design asks you to count before spending dice.
+
+The chips also make the stacking rule visible: recasting Rally rewrites its chip's numbers and
+resets its `t` rather than adding a second one, while Perfect Form lands beside it as its own chip
+with its own clock.
+
 **Stacking: refresh within an ability, stack across abilities.** The same ability recast refreshes
 its own modifier rather than stacking with itself — Rally cast twice on one ally is one modifier
 with its clock reset. Different abilities stack as separate entries with separate clocks, so two
@@ -1122,6 +1174,29 @@ could be cast every turn. `checkAction` and `commitAction` respect it, which is 
 meets; `bestPlan` respects it too, though nothing reachable from the game calls that. A cooldown is
 set to `cooldown + 1` on use because Start Turn counts every cooldown down including the turn it
 was cast on, so **a 2-turn cooldown locks out the next two turns** and is ready on the third.
+
+**Ultimates default to 3 turns.** `Ability.ultimate` is a flag, not a number, and
+`cooldownOf(a) = a.cooldown ?? (a.ultimate ? ULTIMATE_COOLDOWN : 0)` in `types.ts` is the only
+thing that reads it. All three cooldown set-sites in `battle.ts` and the describer go through it,
+so raising or lowering `ULTIMATE_COOLDOWN` moves every ult at once while a hand-written `cooldown`
+on one ability still overrides it — which is how these numbers are expected to be tuned. The seven
+ultimates carry the flag and no number.
+
+The cooldown is **stated on the sheet** now: `describeCost` appends "Then unavailable for N turns."
+It used to appear only in `describeEnemyUsage`, so a player's own ultimate declared its cooldown
+nowhere and the lockout arrived as a surprise. In battle a cooling ability stays in the list under a
+dark sheet with **N turns** centred on it — shown rather than hidden because the count is the point,
+and deliberately a different look from `.locked` ("no dice in this roll can pay"), which comes back
+the moment the dice do.
+
+Two things that cost a revision each. **Where the number goes:** it sat on the cost badge first, then
+in a pill at the row's right edge, and both read as a price — a small numeral anywhere on an ability
+row joins the scan the player is running down the cost column against their dice, whatever it means.
+Covering the row says "not this one" before the number is read at all. **What dims the row:** not
+`opacity`. It composites the whole subtree, so anything faded takes the counter with it and no child
+rule can rescue it (`filter: opacity()` clamps at 1, and composites after the parent rather than
+against it). The base `button:disabled { opacity: .4 }` applies to every cooling row, so
+`.ability.cooling` sets `opacity: 1` and the dimming is the overlay's own alpha.
 
 ### 5.2c Statuses — frost, freeze, sleep
 
@@ -1479,7 +1554,7 @@ Non-obvious choices, each made to fix a real observed problem.
 | Enemy AI advances every turn regardless of whether it acted | Universal wildcards meant a unit could self-buff forever without closing. Gating advance on "did nothing" left whole teams idle until the turn cap — **78% draws**. |
 | Buff scoring estimates *actual added damage*, not a flat multiplier | A flat `power × 2 × targets` made a 5-target +30 ATK buff score 300, beating almost every attack. The AI turtled and 25% of battles timed out. |
 | Sprites are positioned by a measured **foot anchor**, not centred | An outstretched weapon drags the image's centre sideways; centring puts the character off their mark. |
-| Damage reactions diff HP rather than parse the log | Catches direct hits, AoE splash, thorns, lifesteal and regen in one place, with exact amounts, and needs no name matching. |
+| Damage reactions diff HP rather than parse the log | Catches direct hits, AoE splash, thorns, lifesteal and regen in one place, with exact amounts, and needs no name matching. **Impact effects read a wider set** — the diff in both directions plus the action's own `modify`/`frost`/`freeze`/`sleep` events — because a buff changes no HP and left every effect with nobody to play on. |
 | Spent characters are **darkened**, not faded | Transparency let the backdrop show through and they became hard to find. |
 | Sprite sizing derives from the 64px native grid | The grid is the one measurement the whole roster shares, so the art itself encodes relative stature and one global factor scales everyone. |
 | The turn is queued and committed, not clicked and resolved | Immediate resolution turns ordering into a probe: cast the cheap thing, look at the result, then decide. The order stops being a decision. |
@@ -1796,8 +1871,48 @@ hard-coded constant — so it moved the lab preview and nothing else.
 #### Impacts — when a particle effect fires
 
 An `impacts` entry is what turns a sword swing into a hit: `{ frame, effect, at, scale, dx, dy,
-delay, ms }`. `effect` names a particle set, `at` is `each` (once per target) or `centre`, and the
-offsets and `scale` place it against the target.
+delay, ms }`. `effect` names a particle set, `at` is `each` (once per target), `centre` (one burst
+at the middle of them) or `caster` (one burst on the performer), and the offsets and `scale` place
+it against whichever body it lands on.
+
+**Impacts land on whoever the action AFFECTED, not on whoever it hurt.** The list used to come from
+an HP diff, which made every buff invisible: Rally touches allies and damages none of them, so the
+list came back empty, `each` had nobody to burst on, and an ability set to show an effect on all its
+targets showed nothing at all with no error to say why. It is now the HP diff in both directions
+plus the action's own log events — `modify`, `frost`, `freeze`, `sleep` — resolved from name back to
+id. Reading the log rather than the ability's declared targets keeps the guarantee that made this a
+diff in the first place: an effect appears only where something actually happened, so a miss, an
+immunity or a resisted debuff still produces nothing.
+
+**A burst that lands on the performer walks out with them.** The step-to-the-mark animation is on
+`.unit`, *inside* the slot, so a burst placed beside it stays on the mark the performer left — right
+for a target, who does not move, and wrong for the caster, who is halfway downstage by the time the
+flourish fires. Caster bursts render in a `.caster-fx` layer that runs the same generated
+`stage-strike` keyframes off the same `--beat`/`--sx`/`--sy` the slot already carries; the rule is
+declared on one line with `.unit.striking` so the two can never be retimed apart. Whether a burst
+walks is decided when it **spawns**, from whether it landed on whoever is acting rather than from
+its placement — a team-wide buff puts an `each` burst on the caster too, and deriving it from the
+live beat instead would change the burst's container the instant the beat ended, tearing the element
+down mid-animation.
+
+**`caster` is what a buff needs.** The other two placements are defined in terms of who was hit, so
+Rally — whose beneficiary is an ally — could only put its flourish on the ally and nothing on
+Benjamin, and an ability affecting nobody could show nothing at all. `caster` names the one unit
+that is never in question, the one whose clip is playing, so it needs no targets and picks no side.
+It is a third value rather than a rule about `kind` because some abilities want both: two impacts on
+one frame, `caster` and `each`, read as "he raises his sword and the light settles on her", and no
+single placement says that. In the battle it costs nothing to draw — `on` is set to the acting unit
+and the burst rides that unit's slot exactly as a target burst rides theirs.
+
+The first effect authored for it is `art/effects/buff_4x1.png`, a gold ring-and-swirl flourish, on
+Benjamin's `rally` at step 2 — the long held pose — with `ms: 900` so it plays under the hold rather
+than snapping out of it at the 380ms default.
+
+The second is `defense_down` — a shield shattering over a red arrow — on **Sunder**, the ability that
+actually shreds P.DEF, at step 2. One step *after* the blade lands on step 1: the shred is a
+consequence of the hit rather than the hit itself, and firing both on one frame reads as a single
+louder impact instead of two things happening. Note Kael's Disarm reduces **ATK**, not defence, so it
+is not a user for this sheet.
 
 > **`frame` is a STEP POSITION, not a source frame.** It indexes the *played* timeline. That
 > distinction is the whole reason the field was re-specified: duplicating a frame in the lab gave
@@ -1829,7 +1944,156 @@ from file names, so nothing in the pipeline had to learn what an ability is.
 Falling back rather than requiring one per ability is what keeps it incremental: a character with
 forty abilities and one `attack` sheet plays exactly as they did before, and every sheet added after
 that upgrades one ability without disturbing the rest. Benjamin currently has `quick_cut`, `rally`,
-`sunder` and `perfect_form` beside his `attack`, plus `ready` for the walk-out.
+`sunder` and `perfect_form` beside his `attack`, plus `ready` for the walk-out and `upgrade`.
+
+**Both stills are editable in the lab.** `pain` and `death` are packed as *one-frame clips* and
+added to `ANIMATION_CLIPS` alongside the real ones, purely so the lab lists them — and added at the
+very end of `build_animations`, after normalisation and after the union box is computed, which is
+the whole design. `normalise` scales each clip by the ratio of its figure *height* to the reference
+clip's; a death pose is drawn lying down, so normalising it would blow the body up until it stood as
+tall as the character does. Letting it into the union box would re-scale every other clip, which is
+exactly what the glowing upgrade sheet did. Instead each is measured from its own published PNG,
+which is already tightly cropped: `restFill: 1.0`, `footPad: 0.0`, `still: true` — "this image *is*
+the figure", which is true of a still and never quite true of a strip.
+
+The battle still draws both through their own paths, now reading `placementFor(who, 'pain' | 'death')`
+so scale and offset tuned in the lab are what appears on stage. Without that half, the lab would
+have listed two poses it could not actually change.
+
+**There is no generic `attack` clip.** Every ability gets its own sheet; `abilityClipName` returns
+`''` when there is no match rather than naming one. The fallback was not doing its job anyway —
+Benjamin was the only actor who ever shipped an `attack` sheet, and once his four abilities each had
+their own he stopped reaching it, while for the rest of the roster it named a clip that did not
+exist. An ability with no sheet is still playable: the Performer walks out, holds their `ready`
+stance for the beat and walks back, which is what everyone but Benjamin already did.
+
+**Four idle stances, switched on a timer.** `idle`, `idle_2`, `idle_3`, `idle_4` — the packer needed
+no changes, because `LOOPING` matches by prefix, so all four already registered as looping clips.
+`idleStances` lists whichever exist and `useIdleStances` moves each Performer between them. Three
+rules, each answering a way the obvious version looks wrong:
+
+- **Never mid-loop.** A stance change is a cut, and cutting halfway through a breath reads as a
+  glitch rather than a shift of weight — so the timer is always a whole number of loops of the
+  stance now playing.
+- **Never in unison.** Each Performer gets their own timer, their own random number of loops (2–4)
+  and a staggered first change. Five characters changing stance on one frame is a cutscene, not life.
+- **Never the same one twice running**, which would be a pause with nothing to show for it.
+
+Held in state, not derived at render: `Math.random()` inside a render would re-roll on every
+unrelated state change — a die landing, a floater expiring — and the board would strobe. A character
+with one idle is skipped entirely, so this cost nothing until the alternate sheets existed.
+
+**`upgrade` is the one reserved clip name.** Buying an in-battle upgrade is a real action — it costs
+the Performer's turn and their dice — but the engine records it as a planned action with a **null
+ability**, so it had no name to look a clip up by and fell through to `attack`: the player watched
+Benjamin swing his sword at nobody in order to learn Hold the Line. `lunge` takes a `prefer` clip
+name for this, asked for at the one call site that can tell (`step.ability ? undefined : 'upgrade'`),
+and ignored when the actor has no such clip — so it stays as incremental as the per-ability clips
+are. Narration already handled it: "takes a bow — a new flourish!".
+
+**The fallen stay on the boards.** A `death` pose — the second `EXTRA_POSES` still after `pain`,
+packed as `<name>_death.png` — is held for the rest of the battle once a unit is at 0 HP. It changes
+no rule: a dead Performer already could not act (`checkAction` refuses with "X is down"), could not
+be found at their slot (`unitAt` filters `alive`), could not be aimed at (`canTarget` false) and was
+not caught by a `scope: 'all'` area attack (`unitsHit` filters `alive`). All four were verified
+against the engine rather than assumed. What changed is only that they stopped *vanishing*: every
+stage pass filters on `alive`, so a party of five quietly became a party of three, which says the
+fight is going badly by leaving an empty stage instead of saying whose body is on it.
+
+Drawn in a pass of its own, not a branch inside the living one — the dead take no pointer events and
+carry no marks, intent, hit reactions or walk, and a branch would have had to switch all of that off
+one prop at a time. They sit in a depth band entirely below the living, since nobody standing should
+be behind a body. **Sized by width**, uniquely: a death pose is wider than it is tall, and the
+packer clamps a pose to the board height, so sizing it the usual way would draw a body at twice the
+size of anyone standing over it. The figure height a standing Performer would have had is spent on
+their length instead — lying down, you are about as long as you are tall. An actor with no `death`
+pose still leaves the stage, exactly as the whole roster did before this existed.
+
+**A clip can be a folder of frames, and that is the preferred input.**
+`animations/idle_2/idle_2_01.png…` is a three-frame idle; the count is how many files are in it.
+That retires two whole classes of bug — no grid to infer, so the `gcd` trap cannot fire, and no cut
+to make, so a drawing that overruns a cell cannot bleed into its neighbour. It also makes a frame a
+thing you can own: regenerate one bad drawing instead of a whole sheet, or lift a frame out of one
+animation into another to build something the generator would not produce in one pass. A folder
+beats a same-named sheet, so nothing has to migrate in a hurry.
+
+**A clip can be assembled from several sheets.** `--append` adds a cut sheet's frames to a clip that
+already has some, continuing the numbering; the `⤓ Drop art` screen offers the same thing as a
+checkbox. Benjamin's celebration is built this way — a sword-raise and a back-flip generated
+separately, cut, and joined.
+
+New frames always land at the end, and the order is then set in the animation lab. That is not a
+limitation: `order` in `<name>.anim.json` indexes **source** frames, so appending cannot disturb an
+order already set, and the lab can move, duplicate and disable frames while the clip plays. Benjamin's
+celebration carries `order: [4,5,6,7,0,1,2,3]` — the flip, then the raise. Frames from different
+sheets are padded to the largest, bottom-centred, with the pack naming what it padded.
+
+`python scripts/split_sheet.py <sheet> --write` (or `--all <actor>`) cuts a sheet into one. It
+imports the packer's own `split_sheet` rather than reimplementing the cut, because the split is a
+decision made once and kept forever — it has to be the decision the packer would have made.
+**Verified lossless:** every frame's content box comes out pixel-identical, and 1.4% of pixels
+differ at a maximum delta of 29/255, which is edge antialiasing from resampling a padded image.
+
+**Some seams have no correct cut at all, and the tool says so.** Every split reports which seams cut
+through ink. Benjamin's `idle_3` is the case that forced this: the first figure's sword tip crosses
+the cut *and* the second figure's scarf reaches back past it, so the two silhouettes are one
+continuous run of ink across the whole sheet — there is no x that keeps both figures whole, and no
+cleverness finds one, because the information a clean cut would need is not in the image.
+
+`--bleed [px|%]` (default 10% of a cell) cuts every window wide instead, so frame 1 keeps its entire
+sword plus an unwanted slice of frame 2, and frame 2 keeps its entire scarf plus a slice of frame 1.
+Redrawing a sword tip that was never captured is impossible; deleting an intruder is not — and it
+usually needs no hand at all. After cutting wide, anything that is **its own connected drawing** and
+sits centred outside the cell the frame owns is the neighbour's, and is erased automatically. On
+`idle_3` the sword tip and the next figure's scarf overlap in x but never touch, so both frames came
+out clean with no edit. Separateness is the safeguard: when two drawings genuinely touch, nothing is
+guessed at and the tool reports that the frame needs hand work. The test is the fragment's **centre**,
+not any overlap, because a figure's own reach routinely crosses its cell edge — that is why the frame
+was cut wide in the first place.
+
+Windows stay a uniform size and each cell's left edge sits a constant distance inside its window, so
+every frame's content shifts by the same amount — which is not a change to the animation at all,
+since the clip is cropped to the union of its content and a constant offset vanishes there.
+
+Two bugs surfaced while proving that, both from `gutter_cuts` returning cells of *different* widths
+once it started cutting on real gaps:
+
+- **`normalise` resized every frame of a clip to `frames[0].size × k`.** Correct only while all
+  cells are identical. Benjamin's `ability_1` cuts to 468, 548, 518 and 514 wide, so three frames in
+  four were squeezed up to 15% horizontally with their height left alone — on every clip whose
+  factor was not 1, which is most of them. It now scales each frame against its own size.
+- **`gutter_cuts` demanded exactly `n − 1` gaps** and fell back to an even slice otherwise, so one
+  touching pair anywhere threw away every correct boundary on the sheet — and an even slice bleeds
+  *every* frame, not just the two that touched. It now uses each gutter it can find, matching them
+  to seams by proximity, and fills only the unread seams by even spacing between known ones.
+
+> **Iterating on a sheet is: overwrite the file in `art/actors/<name>/animations/`, keeping its
+> name.** The dev server repacks that one actor and reloads the page. Two things used to make this
+> confusing and no longer do. `art/samples/` is under `art/`, so dropping a new version *there*
+> triggered a pack and a reload that changed nothing — it now says `art/samples/ is a drop box, not
+> a source — nothing packed` and does not reload. And a pack that writes nothing no longer reloads
+> at all, so "reloading" now means art really did change; the packer's last line (`N file(s)
+> written` / `no files changed`) is what the plugin reads to decide.
+
+> **The packer writes nothing it does not have to.** Every output — the metrics module and every
+> PNG — goes through `write_if_changed` / `save_if_changed`, comparing the encoded bytes it is about
+> to write against what is already there. This is not tidiness. `src/engine/sprites.generated.ts` is
+> a *module*, imported by the battle screen, the animation lab and every hub screen, so rewriting it
+> unconditionally fired an HMR wave across all of them; and `public/` is watched by the dev server,
+> so rewriting a byte-identical sprite triggered a full reload. The animation lab re-packs on every
+> save, which means "a pack that changed nothing" was the common case — and each one remounted the
+> editor and lost whatever frame, clip and unsaved tuning was on screen. It also ends the re-encode
+> churn in `git status` after a build. A pack with nothing to do now touches no file and prints
+> `unchanged — no reload`.
+
+> **Adding a clip re-normalises every other clip that character owns.** The packed box is the union
+> of all of them, so Benjamin's `upgrade` — a raised sword and a starburst above his head — made the
+> box taller and re-emitted all seven of his sheets at a new scale (`restFill` 0.810 → 0.743,
+> `anchorX` 0.573 → 0.536). That is the system working: the renderer divides the intended figure
+> height by `restFill`, so his size on stage is unchanged. But the per-clip `placement` nudges in
+> `*.anim.json` were authored against the old anchor, so they are worth a glance in the lab after a
+> clip with a big reach joins a set. The changed `public/sprites/<name>/*.png` are genuine output
+> here, not the 1-byte re-encode churn §11 warns about — check the dimensions to tell them apart.
 
 **The animation lab** (`?dev=1#anim`, or the dev badge's **▶ Anim lab** button) is where all of this is judged and
 edited: swap character and clip, scrub frames by hand, play a one-shot into whatever it settles
@@ -1843,7 +2107,12 @@ It also carries the two tools this session's work needed:
 
 - **A practice dummy.** Particle effects had no home to be judged in — the only way to see one was
   to start a battle, pick the ability and watch it go past once. The dummy stands in as a target so
-  impacts fire, at the offsets and scale being edited, on every replay.
+  impacts fire, at the offsets and scale being edited, on every replay. A `caster` impact plays on
+  the performer instead, in a box the dummy's size laid over the figure — the dummy's size and not
+  the clip's box, because `scale` is a fraction of the body a burst plays on, and the clip box is as
+  tall as the highest jump and as wide as the widest swing. Those previews are not gated on the
+  dummy being switched on, since an animator turning it off to see the figure clearly is the most
+  likely person to be tuning one.
 - **The damage-split editor**, writing `src/engine/hitSplits.ts` (§5.2f). It sits beside the impacts
   because the two halves of a multi-hit are the same decision seen twice — how the damage divides
   and when each piece lands — and splitting them across two screens means authoring a six-hit combo
@@ -1949,6 +2218,32 @@ percentage translate resolving against a 2701px element and a 1550px one (§11).
 ---
 
 ## 8. Current state
+
+### Art, as of this session
+
+**Benjamin is the first complete Performer: 15/15 clips.** Run `npm run art` for the live picture —
+it reads the roster and the pack manifest, so it cannot go stale. Everyone else is at 0–1.
+
+His clips are the reference for what "finished" means: four abilities (filed **by slot**, so the
+kit can be renamed without touching art), four idle stances the game rotates between, `ready`,
+`upgrade`, `move`, `pain`, `death`, `celebration` and `celebration_ending`. Every one of them is a
+**folder of frames** rather than a sheet, which is the format the pipeline now prefers.
+
+Two of his clips are worth looking at as worked examples:
+
+- **`celebration` is two sheets joined** — a sword-raise and a back-flip, generated separately, cut
+  and appended, with `order: [4,5,6,7,0,1,2,3]` putting the flip first.
+- **`idle_2` and `idle_3` were cut with `--bleed`**, because their figures overlap their seams. The
+  neighbour fragments were erased automatically.
+
+`move` packs but nothing plays it: repositioning still returns early with a fixed `MOVE_MS` and no
+clip. That renderer is the one obvious gap left in his kit.
+
+**`SPRITE_STYLE_GUIDE.md` describes the pixel-art era and is superseded** by the paper/sticker art.
+Its banner lists what the pipeline still enforces; the rest is history awaiting an art-direction
+rewrite.
+
+### Balance
 
 **Battle balance is still not tracked, and deliberately so.** The corridor fight reads a 100% win
 rate at 2.9 turns; it is an AI playing a game no human plays, against enemies that have one ability
@@ -2234,6 +2529,12 @@ it:
 - **The camera is centre-on** (`camera.ts`): a rest framing you can tune from the dev bar, a focus
   zoom on roster hover, a punch-in on an action, all clamped so a shot never reveals the edge of the
   backdrop. The mouse-follow camera is gone.
+- **Hovering a roster row previews that Performer's whole sheet** — stats, passives, abilities *and*
+  the upgrade track. Everything derived from the SELECTED unit is suppressed rather than hidden: no
+  ability reads as castable and no tier as purchasable, because the dice belong to whoever is
+  actually selected. The upgrade track used to be hidden outright for that reason, which answered a
+  correctness problem by deleting information — hovering a Performer is how you read them, and how
+  far along their track is, is half of what there is to read.
 - **Actions have a beat.** A Performer walks to their acting mark in their **ready** clip, holds
   still for a second, then plays the ability's own clip and walks back. The beat is derived from the
   clip rather than the other way round.

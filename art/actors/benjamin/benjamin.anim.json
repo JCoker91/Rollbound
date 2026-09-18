@@ -2,14 +2,14 @@
   "attack": {
     "impacts": [
       {
-        "frame": 2,
+        "frame": 1,
         "effect": "impact",
         "at": "each",
         "scale": 1.15,
         "dy": 0
       },
       {
-        "frame": 3,
+        "frame": 2,
         "effect": "impact",
         "at": "each"
       }
@@ -34,19 +34,32 @@
     ],
     "stepMs": 242
   },
+  "death": {
+    "placement": {
+      "scale": 0.5,
+      "dx": -7,
+      "dy": -11.5
+    },
+    "stepMs": 105
+  },
   "idle": {
     "placement": {
       "dx": 7
     },
-    "stepMs": 1500,
     "frames": [
-      {
-        "hold": 3.2
-      },
+      {},
       {
         "hold": 0.1
       }
-    ]
+    ],
+    "stepMs": 1500
+  },
+  "pain": {
+    "placement": {
+      "scale": 1.065,
+      "dx": 15.5
+    },
+    "stepMs": 105
   },
   "perfect_form": {
     "impacts": [
@@ -160,6 +173,16 @@
     "stepMs": 242
   },
   "rally": {
+    "impacts": [
+      {
+        "frame": 2,
+        "effect": "buff",
+        "at": "each",
+        "scale": 1.15,
+        "dy": 10,
+        "ms": 900
+      }
+    ],
     "placement": {
       "scale": 1.205,
       "dx": -3,
@@ -196,29 +219,82 @@
     "stepMs": 232
   },
   "sunder": {
-    "stepMs": 150,
+    "impacts": [
+      {
+        "frame": 2,
+        "effect": "impact",
+        "at": "each",
+        "scale": 1.2,
+        "dy": -36,
+        "ms": 840,
+        "dx": -50
+      },
+      {
+        "frame": 3,
+        "effect": "defense_down",
+        "at": "each",
+        "scale": 1.45,
+        "dy": 8,
+        "ms": 1300,
+        "dx": 12
+      }
+    ],
+    "placement": {
+      "dx": -6.5
+    },
     "frames": [
       {
-        "hold": 1.6
+        "hold": 1.6,
+        "dx": 4.5
       },
       {
         "hold": 0.7
       },
       {
-        "hold": 1
+        "dx": 14
       },
       {
-        "hold": 1.6
+        "hold": 1.6,
+        "dx": 5.5
       }
     ],
-    "impacts": [
+    "stepMs": 206
+  },
+  "upgrade": {
+    "placement": {
+      "scale": 1.08,
+      "dx": -7.5,
+      "dy": 0.5
+    },
+    "frames": [
       {
-        "frame": 1,
-        "effect": "impact",
-        "at": "each",
-        "scale": 1.2,
-        "dy": -6
+        "hold": 1.3
+      },
+      {
+        "hold": 1.1,
+        "dx": -3.5
+      },
+      {
+        "hold": 3.2,
+        "dx": -3.5
+      },
+      {
+        "hold": 1.6,
+        "dx": -3
       }
+    ],
+    "stepMs": 200
+  },
+  "celebration": {
+    "order": [
+      4,
+      5,
+      6,
+      7,
+      0,
+      1,
+      2,
+      3
     ]
   }
 }

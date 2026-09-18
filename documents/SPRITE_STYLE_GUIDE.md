@@ -1,6 +1,27 @@
 # Game Sprite Style Guide
 
-**Status:** Production standard v3.0  
+> ## ⚠ Superseded for the current art, and not yet rewritten
+>
+> Everything below describes the **pixel-art standard (v3.0)**. The roster has since moved to
+> **paper/sticker art** — painted stickers with a white outline and a soft drop shadow — and every
+> character on stage today is drawn that way. The sections on pixel clusters, dithering, palette
+> ramps and native pixel grids do not apply to it.
+>
+> What is still true, because the pipeline enforces it, is only this:
+>
+> | | |
+> | --- | --- |
+> | **Figure height carries stature** | `nativePx / nativeCanvas` is a character's share of their own canvas, so art drawn on a 64px grid and a 128px one stand correctly beside each other. Draw a character taller to make them bigger; there is no size knob. |
+> | **Transparent background** | Sheets arrive with real alpha. A flat-colour background is keyed out by flood fill from the corners, but alpha is the reliable path. |
+> | **One drawing per cell** | A drawing that overruns its cell bleeds into its neighbour. See `DEV_TOOLBOX.md` — `--bleed` rescues it, but clear space between figures avoids the problem. |
+> | **Name the grid** | A multi-frame sheet needs `_NxM` unless its cells are square, or split it into a folder of frames. |
+> | **Stills are tight-cropped** | `pain` and `death` are single drawings; `death` is drawn lying down and is sized by width rather than height. |
+>
+> Rewriting the rest is a real task and an art-direction decision, so it is left for whoever makes
+> that call rather than guessed at here. Until then, treat this document as history plus the table
+> above.
+
+**Status:** Production standard v3.0 — **pixel-art era, superseded by paper art (see above)**  
 **Purpose:** Keep every playable character and creature visually consistent across design, generation, cleanup, animation, and export.
 
 > The approved sword-wielding character remains the visual source of truth for rendering style. This guide is the source of truth for canvas size, body scale, anchors, palette, animation layout, and export requirements.

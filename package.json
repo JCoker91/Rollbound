@@ -9,7 +9,9 @@
     "preview": "vite preview",
     "play": "node --experimental-strip-types src/cli/play.ts",
     "sim": "node --experimental-strip-types src/cli/sim.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "art": "node --experimental-strip-types src/cli/art.ts",
+    "art:split": "python scripts/split_sheet.py"
   },
   "devDependencies": {
     "@types/node": "^26.4.1",
