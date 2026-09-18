@@ -931,7 +931,24 @@ ${poseCss}` : ''),
         {status && <span className="dim lab-saved">{status}</span>}
       </div>
 
-      <div className={`lab-stage ${onBackdrop ? 'backdrop' : ''}`}>
+      {/*
+        Room above the figure for the clip BOX.
+
+        The stage bottom-aligns its figures and the clip window hangs from that
+        baseline at `boxH` -- which is the union of every clip this character
+        owns, so it is routinely taller than the figure and the excess goes
+        UPWARDS, out of the stage and over the controls. Benjamin's box became
+        1.45x his figure the day a back-flip and an upgrade joined it, and his
+        clip window started covering the Save button.
+
+        Reserved here rather than guessed at in CSS, because only this component
+        knows how tall the box is -- and clipping it instead would hide the very
+        thing the box exists to show: the reach of a jump or a swing.
+      */}
+      <div
+        className={`lab-stage ${onBackdrop ? 'backdrop' : ''}`}
+        style={{ paddingTop: Math.max(24, Math.ceil(box.boxH - height) + 24) }}
+      >
         {/* The still it replaces, at the same figure height. */}
         {still && (
           <figure>

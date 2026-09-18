@@ -208,6 +208,24 @@ def seam_report(sheet: Image.Image, cols: int, rows: int) -> list[str]:
     return notes
 
 
+def readable(p: Path) -> str:
+    """
+    A path short enough to read, without ever failing to produce one.
+
+    This was `p.relative_to(ACTORS.parent.parent)`, which crashed the whole
+    split -- from a line whose only job was to print a heading. `ACTORS` is
+    relative, so the comparison only worked while the caller's paths were
+    relative too; the upload endpoint passes an absolute `--out` and
+    `relative_to` raises rather than giving up. A formatting convenience must
+    not be able to take the operation down with it, so this falls back to the
+    full path instead of throwing.
+    """
+    try:
+        return str(p.relative_to(Path.cwd()))
+    except ValueError:
+        return str(p)
+
+
 def analyse(path: Path, grid: str | None) -> dict:
     """
     What the cut WOULD be, as data, so a UI can draw it.
@@ -303,7 +321,7 @@ def split(
     out = (out_dir or path.parent) / clip
     sizes = ' '.join(f'{f.width}x{f.height}' for f in frames)
     print(f'{path.name}  {sheet.width}x{sheet.height}  {cols}x{rows}'
-          f'  ->  {out.relative_to(ACTORS.parent.parent)}/  ({len(frames)} frames: {sizes})')
+          f'  ->  {readable(out)}/  ({len(frames)} frames: {sizes})')
 
     if not write:
         return 0

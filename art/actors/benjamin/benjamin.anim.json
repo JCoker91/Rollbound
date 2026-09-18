@@ -1,4 +1,129 @@
 {
+  "ability_1": {
+    "impacts": [
+      {
+        "frame": 2,
+        "effect": "impact",
+        "at": "each",
+        "dy": -20,
+        "dx": -20,
+        "scale": 1.5
+      },
+      {
+        "frame": 3,
+        "effect": "impact",
+        "at": "each",
+        "dy": 0
+      }
+    ],
+    "placement": {
+      "scale": 1.095,
+      "dx": -9
+    },
+    "frames": [
+      {
+        "hold": 2
+      },
+      {
+        "dx": -1.5
+      },
+      {
+        "dx": 2.5
+      },
+      {
+        "hold": 2,
+        "dx": 3
+      }
+    ],
+    "stepMs": 215
+  },
+  "ability_2": {
+    "impacts": [
+      {
+        "frame": 2,
+        "effect": "impact",
+        "at": "each",
+        "dy": -20,
+        "scale": 1.5,
+        "ms": 540
+      },
+      {
+        "frame": 3,
+        "effect": "defense_down",
+        "at": "each",
+        "scale": 1.5,
+        "delay": 0,
+        "ms": 1200,
+        "dx": 8
+      }
+    ],
+    "placement": {
+      "dx": -6.5
+    },
+    "frames": [
+      {},
+      {
+        "dx": -1.5
+      },
+      {
+        "dx": 4
+      }
+    ],
+    "stepMs": 244
+  },
+  "ability_3": {
+    "impacts": [
+      {
+        "frame": 3,
+        "effect": "buff",
+        "at": "each",
+        "scale": 1,
+        "dx": 12,
+        "dy": 14,
+        "delay": 0,
+        "ms": 1200
+      },
+      {
+        "frame": 4,
+        "effect": "buff",
+        "at": "each",
+        "ms": 1200,
+        "scale": 1,
+        "dy": 14,
+        "dx": 12
+      }
+    ],
+    "placement": {
+      "scale": 1.25,
+      "dx": -14.5
+    },
+    "frames": [
+      {
+        "hold": 5,
+        "dx": 3
+      },
+      {
+        "hold": 3,
+        "dx": -2
+      },
+      {
+        "hold": 4,
+        "dx": -2.5
+      },
+      {
+        "hold": 2,
+        "dx": 3
+      }
+    ],
+    "order": [
+      0,
+      1,
+      2,
+      2,
+      3
+    ],
+    "stepMs": 105
+  },
   "attack": {
     "impacts": [
       {
@@ -34,6 +159,80 @@
     ],
     "stepMs": 242
   },
+  "celebration": {
+    "frames": [
+      {
+        "dx": -1.5,
+        "scale": 1.2
+      },
+      {
+        "dx": -6.5,
+        "scale": 1.2
+      },
+      {
+        "dx": -10.5,
+        "scale": 1.2
+      },
+      {
+        "hold": 1.75,
+        "dx": -9.5,
+        "scale": 1.25
+      },
+      {
+        "hold": 1.5,
+        "dx": -4.5,
+        "dy": 8
+      },
+      {
+        "hold": 0.75,
+        "dx": -3
+      },
+      {
+        "hold": 0.75,
+        "dx": -3.5
+      },
+      {
+        "hold": 1.25,
+        "dx": -9,
+        "dy": 8
+      }
+    ],
+    "order": [
+      4,
+      5,
+      6,
+      7,
+      0,
+      1,
+      2,
+      3
+    ],
+    "stepMs": 260
+  },
+  "celebration_ending": {
+    "placement": {
+      "scale": 1.22,
+      "dx": -13
+    },
+    "frames": [
+      {
+        "hold": 1.5,
+        "dx": -4.5
+      },
+      {
+        "hold": 1.25,
+        "dx": -3
+      },
+      {
+        "hold": 2,
+        "dx": -4.5
+      },
+      {
+        "dx": -2.5
+      }
+    ],
+    "stepMs": 260
+  },
   "death": {
     "placement": {
       "scale": 0.5,
@@ -44,20 +243,87 @@
   },
   "idle": {
     "placement": {
-      "dx": 7
+      "scale": 1.02,
+      "dx": -1.5
     },
     "frames": [
       {},
       {
-        "hold": 0.1
+        "hold": 0.5,
+        "dx": -0.5
       }
     ],
     "stepMs": 1500
   },
+  "idle_2": {
+    "placement": {
+      "dx": -2.5
+    },
+    "frames": [
+      {
+        "dx": 0.5
+      },
+      {
+        "hold": 5,
+        "dx": 0.5
+      },
+      {
+        "hold": 1.75,
+        "dx": 0.5
+      }
+    ],
+    "order": [
+      0,
+      1
+    ],
+    "stepMs": 260
+  },
+  "idle_3": {
+    "placement": {
+      "dx": -2
+    },
+    "frames": [
+      {
+        "hold": 3,
+        "dx": 0.5
+      },
+      {
+        "hold": 1.25,
+        "dx": 4.5
+      }
+    ],
+    "stepMs": 260
+  },
+  "idle_4": {
+    "frames": [
+      {
+        "dx": 2.5
+      },
+      {
+        "hold": 2.25,
+        "dx": -1.5
+      },
+      {
+        "hold": 2.75,
+        "dx": -3
+      },
+      {
+        "hold": 0.75,
+        "dx": -1.5
+      }
+    ],
+    "stepMs": 260
+  },
+  "move": {
+    "placement": {
+      "dx": -8
+    },
+    "stepMs": 105
+  },
   "pain": {
     "placement": {
-      "scale": 1.065,
-      "dx": 15.5
+      "scale": 1.035,
+      "dx": 5
     },
     "stepMs": 105
   },
@@ -284,17 +550,5 @@
       }
     ],
     "stepMs": 200
-  },
-  "celebration": {
-    "order": [
-      4,
-      5,
-      6,
-      7,
-      0,
-      1,
-      2,
-      3
-    ]
   }
 }

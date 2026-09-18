@@ -1,15 +1,15 @@
 {
   "clips": {
     "idle": {
-      "anchorX": 0.443,
-      "aspect": 0.765217,
+      "anchorX": 0.4455,
+      "aspect": 0.8,
       "footPad": 0.0,
       "frames": 8,
       "loops": true,
       "normalised": 1.0,
       "pxH": 115,
       "restFill": 0.978261,
-      "size": 75226,
+      "size": 75695,
       "src": "/sprites/veyra/veyra_idle.png",
       "trimmed": 0
     }

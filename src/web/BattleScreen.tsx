@@ -1903,11 +1903,21 @@ export function BattleScreen({
                 style={{
                   left: `${slot.xPct * 100}%`,
                   top: `${slot.yPct * 100}%`,
-                  // Its own depth band, entirely below the living. Bodies are on
-                  // the floor, so nobody standing should ever be behind one --
-                  // but they still sort among themselves by how far downstage
-                  // they fell.
-                  zIndex: Math.round(slot.yPct * 40),
+                  /*
+                   * Between the scrim and the living.
+                   *
+                   * Scenery sits at 0, the focus scrim at 60, every standing
+                   * Performer at 100+. The first attempt put bodies at 0-40,
+                   * which is on the SET's side of the scrim -- so every corpse
+                   * was dimmed along with the backdrop the moment anyone took
+                   * their turn, and mostly disappeared into it.
+                   *
+                   * A body belongs to the cast, so it goes above the scrim; it
+                   * is on the floor, so it goes below anyone standing. That
+                   * leaves 61-99, and they still sort among themselves by how
+                   * far downstage they fell.
+                   */
+                  zIndex: 65 + Math.round(slot.yPct * 30),
                 }}
                 title={`${u.def.name} is down`}
               >
@@ -3126,18 +3136,27 @@ export function BattleScreen({
 /**
  * Which resting stance each Performer is currently holding.
  *
- * Four idles exist so a waiting party does not read as four statues, and the
- * whole difficulty is WHEN to change between them. Three rules, each answering
- * a way the naive version looks wrong:
+ * Four idles exist so a waiting party does not read as four statues. The rule
+ * is the simplest one that can look right: **play a stance all the way through,
+ * then move to the next, in order, forever.**
  *
- *   - Never mid-loop. A stance change is a cut, and cutting halfway through a
- *     breath reads as a glitch rather than as a shift of weight -- so the timer
- *     is always a whole number of loops of the stance now playing.
- *   - Never all at once. Each Performer gets their own timer, their own random
- *     number of loops and a staggered first change, because five characters
- *     changing stance on the same frame is a cutscene, not life.
- *   - Never the same one twice running. A re-roll that lands on the stance
- *     already playing is a pause with nothing to show for it.
+ * That is a correction. The first version held each stance for two to four
+ * loops chosen at random, and staggered the first change by a random 400-3000ms
+ * so the party would not move in unison -- and that stagger was the bug. A
+ * delay picked at random is not a loop boundary, so the opening switch always
+ * landed mid-animation, cutting a breath in half. A cut mid-loop reads as a
+ * glitch rather than as a shift of weight, which is exactly the thing the
+ * scheduling was supposed to avoid.
+ *
+ * Going round in order rather than picking at random fixes the other half. A
+ * random pick can repeat a stance, or skip one for a minute at a time, and both
+ * read as something misfiring rather than as a character shifting about.
+ *
+ * Nothing stops the party from switching together now, and that turns out not
+ * to need solving: every Performer's clips have their own frame counts and
+ * their own `stepMs`, so they drift apart within a cycle or two on their own.
+ * An artificial offset would only buy the first few seconds, at the cost of the
+ * alignment that makes every switch land cleanly.
  *
  * Held in state rather than derived at render. `Math.random()` inside a render
  * would re-roll on every unrelated state change -- a die landing, a floater
@@ -3148,10 +3167,6 @@ export function BattleScreen({
  */
 function useIdleStances(units: Unit[]): Record<string, string> {
   const [stance, setStance] = useState<Record<string, string>>({});
-  // Read by the scheduler without making the stance a dependency of it, which
-  // would tear down and rebuild every timer each time one of them fired.
-  const current = useRef(stance);
-  current.current = stance;
   // Only who is on stage matters here, not their hit points.
   const cast = units.map((u) => u.def.id).join();
 
@@ -3160,23 +3175,37 @@ function useIdleStances(units: Unit[]): Record<string, string> {
     for (const id of cast ? cast.split(',') : []) {
       const options = idleStances(ANIMATION_CLIPS[id]);
       if (options.length < 2) continue;
-      const tick = () => {
-        const now = current.current[id] ?? options[0]!;
-        const others = options.filter((o: string) => o !== now);
-        const next = others[Math.floor(Math.random() * others.length)]!;
-        const clip = ANIMATION_CLIPS[id]?.[next];
-        const loop = clip
+
+      const runtime = (name: string): number => {
+        const clip = ANIMATION_CLIPS[id]?.[name];
+        return clip
           ? clipDuration(
-              clipTimeline(clip.frames, tuningFor(id, next), orderFor(id, next)),
-              stepMsFor(id, next),
+              clipTimeline(clip.frames, tuningFor(id, name), orderFor(id, name)),
+              stepMsFor(id, name),
             )
           : 1200;
-        setStance((s) => ({ ...s, [id]: next }));
-        // Two to four loops of whatever we just switched TO, so the next change
-        // lands on a boundary as well.
-        timers.push(window.setTimeout(tick, loop * (2 + Math.floor(Math.random() * 3))));
       };
-      timers.push(window.setTimeout(tick, 400 + Math.random() * 2600));
+
+      /*
+       * Scheduled against a running clock rather than by chaining delays.
+       *
+       * `setTimeout` fires late under load, and a chain of them accumulates
+       * every one of those late arrivals. A few milliseconds is nothing once;
+       * after a hundred switches it is enough to land a change in the middle of
+       * a loop, which is the whole thing this is arranged to avoid. Tracking
+       * when the NEXT switch is due and asking for the remaining time absorbs
+       * the lateness instead of compounding it.
+       */
+      let at = performance.now() + runtime(options[0]!);
+      let i = 0;
+      const tick = () => {
+        i = (i + 1) % options.length;
+        const next = options[i]!;
+        setStance((s) => ({ ...s, [id]: next }));
+        at += runtime(next);
+        timers.push(window.setTimeout(tick, Math.max(16, at - performance.now())));
+      };
+      timers.push(window.setTimeout(tick, Math.max(16, at - performance.now())));
     }
     return () => timers.forEach(window.clearTimeout);
   }, [cast]);
@@ -3372,7 +3401,44 @@ function UnitChip({
       : '';
     // Both stills are packed as one-frame clips so the lab can list them, which
     // is only useful if what the lab saves is what the battle draws.
-    const hurtPlace = placementFor(unit.def.id, 'pain') ?? {};
+    /*
+     * The hit reaction, sized like a FIGURE rather than like the box.
+     *
+     * It used to be `height: 100%`, and 100% of what was the problem: the unit
+     * element is as tall as the CLIP BOX, which is the union of every clip this
+     * character owns -- as tall as their highest jump and as wide as their
+     * widest swing. The figure fills only `restFill` of it. So a tight-cropped
+     * still stretched to the box drew the character at `1 / restFill` of their
+     * proper size: 1.45x for Benjamin, which reads as the sprite jumping bigger
+     * on every hit, and looks like a deliberate effect rather than a bug.
+     *
+     * Now it goes through `clipBox`, the same helper the animated path uses,
+     * against the pose's OWN packed metrics -- which is what putting `pain` in
+     * the clip catalogue bought. Its `restFill` is 1 because it is tight
+     * cropped, so its box is exactly the figure height, and its own `anchorX`
+     * places it instead of the board sprite's, which was only ever an
+     * approximation of where this drawing stands.
+     *
+     * `bottom: 0` because the unit element's bottom edge IS the ground line:
+     * the animated path lands its feet there by pushing the clip down by
+     * `footPad`, so a still whose feet are its own bottom edge simply sits on it.
+     */
+    const painClip = ANIMATION_CLIPS[unit.def.id]?.pain;
+    const painBox = painClip ? clipBox(painClip, h, placementFor(unit.def.id, 'pain')) : null;
+    /*
+     * Pushed down to the ground line, not pinned to it.
+     *
+     * `bottom: 0` was the obvious way and it silently did nothing: in a battle
+     * these sprites are `position: static` (`.battle .sprite-unit .sprite`), and
+     * insets have no effect on a static element. So the still sat at the TOP of
+     * a box 1.45x its own height and floated well above the mark -- which is
+     * why the size fix alone left it hanging in the air.
+     *
+     * A translate works in flow and composes with the mirror already on this
+     * element. The percentage is of the IMAGE's own height, so the distance from
+     * its bottom to the box's bottom has to be expressed in those terms.
+     */
+    const boxH = box ? box.boxH : h;
     const body = painting ? (
       <img
         className={`sprite ${sheet.pixelated ? 'pixel' : ''}`}
@@ -3380,10 +3446,13 @@ function UnitChip({
         alt=""
         draggable={false}
         style={{
-          height: `${(hurtPlace.scale ?? 1) * 100}%`,
+          height: painBox
+            ? crispCss(`${painBox.boxH * 100}cqh`, sheet.snapPx, sheet.pixelated)
+            : '100%',
           width: 'auto',
           transform:
-            `translate(${(0.5 - sheet.anchorX) * 100 + (hurtPlace.dx ?? 0)}%, ${hurtPlace.dy ?? 0}%)` +
+            `translate(${painBox ? painBox.shiftPct : (0.5 - sheet.anchorX) * 100}%,` +
+            ` ${painBox ? ((boxH - painBox.boxH) / painBox.boxH) * 100 : 0}%)` +
             ` scaleX(${facing})`,
         }}
       />

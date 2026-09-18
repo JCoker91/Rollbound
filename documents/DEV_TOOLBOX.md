@@ -232,6 +232,7 @@ under parameters you chose.
 
 | symptom | look at |
 | --- | --- |
+| A sliver of the next frame shows, but the source PNGs are clean | Not the cut. Packed strips need their 2px gutter (`FRAME_GUTTER`) — without it a fractional scale samples across the frame boundary. Re-pack. |
 | A new animation "does not show up" | Is it in `animations/`? `art/samples/` is never packed. |
 | Frames sliced wrong, or the page eats memory | Missing `_NxM` on a sheet. See the table above. |
 | A frame contains part of the one before it | A seam cuts through a drawing — `--bleed`. |

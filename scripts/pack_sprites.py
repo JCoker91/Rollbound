@@ -303,6 +303,9 @@ EXTRA_POSES = ('pain', 'death')
 #: Most frames a square-cell guess may claim before it is treated as nonsense
 #: rather than as a very long animation. Benjamin's longest authored clip is 16.
 MAX_INFERRED_COLS = 16
+#: Transparent pixels left either side of every frame in a packed strip, so a
+#: fractional scale cannot sample a neighbour's ink. See `build_animations`.
+FRAME_GUTTER = 2
 # The grid statures are expressed against, shared with content.ts's BASE_CANVAS.
 BASE_DENSITY = 128
 
@@ -1882,22 +1885,48 @@ def build_animations(name: str) -> dict:
             rest_fill = round(median(b[3] - b[1] for b in spans) / ch, 6)
             foot_pad = round((ch - max(b[3] for b in spans)) / ch, 6)
 
-        strip = Image.new('RGBA', (cw * len(cropped), ch), (0, 0, 0, 0))
+        '''
+        A transparent gutter between frames.
+
+        Frames were butted together, and several of them legitimately reach
+        their own cell edge -- the shared crop box is exactly as wide as the
+        widest frame's content, so whichever frame set that width touches both
+        sides of it. With no gap, the neighbour's ink is the very next pixel.
+
+        That is invisible in the files and visible on screen. The renderer shows
+        one frame by making the strip N times the box width and sliding it, and
+        the box is whatever fraction of the stage the character works out to --
+        almost never a whole number of pixels. Sampling at a fractional boundary
+        reaches across it, and a sliver of the next drawing appears at the edge
+        of this one. Every "the frames are clean but I can still see the next
+        one" report is this, not the cut.
+
+        Two pixels of OUTPUT space, added after the resize so the gap is exactly
+        two pixels rather than whatever the source scale happens to make it.
+        `anchorX` and `aspect` are restated below against the padded cell, so
+        the figure lands in the same place on stage -- the gutter buys clearance,
+        it does not move anybody.
+        '''
+        cell = cw + 2 * FRAME_GUTTER
+        strip = Image.new('RGBA', (cell * len(cropped), ch), (0, 0, 0, 0))
         for i, f in enumerate(cropped):
-            strip.paste(f, (i * cw, 0))
+            strip.paste(f, (i * cell + FRAME_GUTTER, 0))
         path = out_dir / f'{name}_{clip}.png'
         save_if_changed(strip, path)
 
         clips[clip] = {
             'src': '/sprites/%s/%s_%s.png' % (name, name, clip),
             'frames': len(cropped),
-            'aspect': round(cw / ch, 6),
+            'aspect': round(cell / ch, 6),
             # The strip's own height in file pixels. `aspect` cannot stand in for
             # it: the renderer needs the absolute number to round a figure to a
             # whole multiple of the art's pixels, and it is NOT the same as the
             # still's height -- Maxine's strip is 105px against a 106px still.
             'pxH': ch,
-            'anchorX': anchor_x,
+            # Against the PADDED cell. The anchor is a fraction of the cell
+            # width, so widening the cell without restating it would slide every
+            # character off their mark by the width of the gutter.
+            'anchorX': round((anchor_x * cw + FRAME_GUTTER) / cell, 4),
             'loops': looping,
             'normalised': round(factor.get(clip, 1.0), 4),
             'trimmed': total - len(cropped),

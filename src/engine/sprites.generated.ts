@@ -40,9 +40,9 @@ export interface SpriteMetrics extends Omit<SpriteSheet, 'scale' | 'nativePx'> {
 export const SPRITE_METRICS: Record<SpriteId, SpriteMetrics> = {
   aethis: { src: '/sprites/aethis/aethis.png', icon: '/sprites/aethis/aethis_icon.png', aspect: 239 / 320, pxH: 320, anchorX: 0.444, nativePx: 84, nativeCanvas: 128, pixelArt: false },
   backdrop_bat: { src: '/sprites/backdrop_bat/backdrop_bat.png', icon: '/sprites/backdrop_bat/backdrop_bat_icon.png', aspect: 114 / 92, pxH: 92, anchorX: 0.346, nativePx: 92, nativeCanvas: 128, pixelArt: true },
-  benjamin: { src: '/sprites/benjamin/benjamin.png', icon: '/sprites/benjamin/benjamin_icon.png', pain: '/sprites/benjamin/benjamin_pain.png', death: '/sprites/benjamin/benjamin_death.png', aspect: 333 / 320, pxH: 320, anchorX: 0.584, nativePx: 84, nativeCanvas: 128, pixelArt: false, idle: { src: '/sprites/benjamin/benjamin_idle.png', frames: 2, aspect: 0.839286, pxH: 224, anchorX: 0.513, restFill: 0.691964, footPad: 0.0 } },
-  brax: { src: '/sprites/brax/brax.png', icon: '/sprites/brax/brax_icon.png', aspect: 224 / 211, pxH: 211, anchorX: 0.493, nativePx: 211, nativeCanvas: 256, pixelArt: true, idle: { src: '/sprites/brax/brax_idle.png', frames: 8, aspect: 1.07109, pxH: 211, anchorX: 0.496, restFill: 0.976303, footPad: 0.0 } },
-  caspian: { src: '/sprites/caspian/caspian.png', icon: '/sprites/caspian/caspian_icon.png', aspect: 356 / 320, pxH: 320, anchorX: 0.406, nativePx: 84, nativeCanvas: 128, pixelArt: false, idle: { src: '/sprites/caspian/caspian_idle.png', frames: 6, aspect: 1.086957, pxH: 92, anchorX: 0.41, restFill: 0.972826, footPad: 0.0 } },
+  benjamin: { src: '/sprites/benjamin/benjamin.png', icon: '/sprites/benjamin/benjamin_icon.png', pain: '/sprites/benjamin/benjamin_pain.png', death: '/sprites/benjamin/benjamin_death.png', aspect: 333 / 320, pxH: 320, anchorX: 0.584, nativePx: 84, nativeCanvas: 128, pixelArt: false, idle: { src: '/sprites/benjamin/benjamin_idle.png', frames: 2, aspect: 0.857143, pxH: 224, anchorX: 0.5127, restFill: 0.691964, footPad: 0.0 } },
+  brax: { src: '/sprites/brax/brax.png', icon: '/sprites/brax/brax_icon.png', aspect: 224 / 211, pxH: 211, anchorX: 0.493, nativePx: 211, nativeCanvas: 256, pixelArt: true, idle: { src: '/sprites/brax/brax_idle.png', frames: 8, aspect: 1.090047, pxH: 211, anchorX: 0.4961, restFill: 0.976303, footPad: 0.0 } },
+  caspian: { src: '/sprites/caspian/caspian.png', icon: '/sprites/caspian/caspian_icon.png', aspect: 356 / 320, pxH: 320, anchorX: 0.406, nativePx: 84, nativeCanvas: 128, pixelArt: false, idle: { src: '/sprites/caspian/caspian_idle.png', frames: 6, aspect: 1.130435, pxH: 92, anchorX: 0.4135, restFill: 0.972826, footPad: 0.0 } },
   false_lead: { src: '/sprites/false_lead/false_lead.png', icon: '/sprites/false_lead/false_lead_icon.png', aspect: 228 / 205, pxH: 205, anchorX: 0.533, nativePx: 205, nativeCanvas: 256, pixelArt: true },
   footlight_skitter: { src: '/sprites/footlight_skitter/footlight_skitter.png', icon: '/sprites/footlight_skitter/footlight_skitter_icon.png', aspect: 114 / 85, pxH: 85, anchorX: 0.509, nativePx: 85, nativeCanvas: 128, pixelArt: true },
   kael: { src: '/sprites/kael/kael.png', icon: '/sprites/kael/kael_icon.png', aspect: 345 / 320, pxH: 320, anchorX: 0.406, nativePx: 84, nativeCanvas: 128, pixelArt: false },
@@ -54,15 +54,15 @@ export const SPRITE_METRICS: Record<SpriteId, SpriteMetrics> = {
   understudy_orange: { src: '/sprites/understudy_orange/understudy_orange.png', icon: '/sprites/understudy_orange/understudy_orange_icon.png', aspect: 303 / 320, pxH: 320, anchorX: 0.421, nativePx: 84, nativeCanvas: 128, pixelArt: false },
   understudy_red: { src: '/sprites/understudy_red/understudy_red.png', icon: '/sprites/understudy_red/understudy_red_icon.png', aspect: 303 / 320, pxH: 320, anchorX: 0.422, nativePx: 84, nativeCanvas: 128, pixelArt: false },
   understudy_yellow: { src: '/sprites/understudy_yellow/understudy_yellow.png', icon: '/sprites/understudy_yellow/understudy_yellow_icon.png', aspect: 302 / 320, pxH: 320, anchorX: 0.421, nativePx: 84, nativeCanvas: 128, pixelArt: false },
-  veyra: { src: '/sprites/veyra/veyra.png', icon: '/sprites/veyra/veyra_icon.png', aspect: 239 / 320, pxH: 320, anchorX: 0.435, nativePx: 84, nativeCanvas: 128, pixelArt: false, idle: { src: '/sprites/veyra/veyra_idle.png', frames: 8, aspect: 0.765217, pxH: 115, anchorX: 0.443, restFill: 0.978261, footPad: 0.0 } },
+  veyra: { src: '/sprites/veyra/veyra.png', icon: '/sprites/veyra/veyra_icon.png', aspect: 239 / 320, pxH: 320, anchorX: 0.435, nativePx: 84, nativeCanvas: 128, pixelArt: false, idle: { src: '/sprites/veyra/veyra_idle.png', frames: 8, aspect: 0.8, pxH: 115, anchorX: 0.4455, restFill: 0.978261, footPad: 0.0 } },
 };
 
 /** Every packed clip, for the dev animation lab. Battle uses `idle` above. */
 export const ANIMATION_CLIPS: Record<string, Record<string, AnimationClip>> = {
   "benjamin": {
     "ability_1": {
-      "anchorX": 0.513,
-      "aspect": 0.839286,
+      "anchorX": 0.5127,
+      "aspect": 0.857143,
       "footPad": 0.0,
       "frames": 4,
       "loops": false,
@@ -73,8 +73,8 @@ export const ANIMATION_CLIPS: Record<string, Record<string, AnimationClip>> = {
       "src": "/sprites/benjamin/benjamin_ability_1.png"
     },
     "ability_2": {
-      "anchorX": 0.513,
-      "aspect": 0.839286,
+      "anchorX": 0.5127,
+      "aspect": 0.857143,
       "footPad": 0.0,
       "frames": 4,
       "loops": false,
@@ -85,8 +85,8 @@ export const ANIMATION_CLIPS: Record<string, Record<string, AnimationClip>> = {
       "src": "/sprites/benjamin/benjamin_ability_2.png"
     },
     "ability_3": {
-      "anchorX": 0.513,
-      "aspect": 0.839286,
+      "anchorX": 0.5127,
+      "aspect": 0.857143,
       "footPad": 0.0,
       "frames": 4,
       "loops": false,
@@ -97,8 +97,8 @@ export const ANIMATION_CLIPS: Record<string, Record<string, AnimationClip>> = {
       "src": "/sprites/benjamin/benjamin_ability_3.png"
     },
     "ability_4": {
-      "anchorX": 0.513,
-      "aspect": 0.839286,
+      "anchorX": 0.5127,
+      "aspect": 0.857143,
       "footPad": 0.0,
       "frames": 4,
       "loops": false,
@@ -109,8 +109,8 @@ export const ANIMATION_CLIPS: Record<string, Record<string, AnimationClip>> = {
       "src": "/sprites/benjamin/benjamin_ability_4.png"
     },
     "celebration": {
-      "anchorX": 0.513,
-      "aspect": 0.839286,
+      "anchorX": 0.5127,
+      "aspect": 0.857143,
       "footPad": 0.0,
       "frames": 8,
       "loops": false,
@@ -121,8 +121,8 @@ export const ANIMATION_CLIPS: Record<string, Record<string, AnimationClip>> = {
       "src": "/sprites/benjamin/benjamin_celebration.png"
     },
     "celebration_ending": {
-      "anchorX": 0.513,
-      "aspect": 0.839286,
+      "anchorX": 0.5127,
+      "aspect": 0.857143,
       "footPad": 0.0,
       "frames": 4,
       "loops": true,
@@ -143,8 +143,8 @@ export const ANIMATION_CLIPS: Record<string, Record<string, AnimationClip>> = {
       "src": "/sprites/benjamin/benjamin_death.png"
     },
     "idle": {
-      "anchorX": 0.513,
-      "aspect": 0.839286,
+      "anchorX": 0.5127,
+      "aspect": 0.857143,
       "footPad": 0.0,
       "frames": 2,
       "loops": true,
@@ -154,8 +154,8 @@ export const ANIMATION_CLIPS: Record<string, Record<string, AnimationClip>> = {
       "src": "/sprites/benjamin/benjamin_idle.png"
     },
     "idle_2": {
-      "anchorX": 0.513,
-      "aspect": 0.839286,
+      "anchorX": 0.5127,
+      "aspect": 0.857143,
       "footPad": 0.0,
       "frames": 3,
       "loops": true,
@@ -165,8 +165,8 @@ export const ANIMATION_CLIPS: Record<string, Record<string, AnimationClip>> = {
       "src": "/sprites/benjamin/benjamin_idle_2.png"
     },
     "idle_3": {
-      "anchorX": 0.513,
-      "aspect": 0.839286,
+      "anchorX": 0.5127,
+      "aspect": 0.857143,
       "footPad": 0.0,
       "frames": 2,
       "loops": true,
@@ -176,19 +176,19 @@ export const ANIMATION_CLIPS: Record<string, Record<string, AnimationClip>> = {
       "src": "/sprites/benjamin/benjamin_idle_3.png"
     },
     "idle_4": {
-      "anchorX": 0.513,
-      "aspect": 0.839286,
+      "anchorX": 0.5127,
+      "aspect": 0.857143,
       "footPad": 0.0,
-      "frames": 2,
+      "frames": 4,
       "loops": true,
-      "normalised": 1.0063,
+      "normalised": 0.9662,
       "pxH": 224,
       "restFill": 0.691964,
       "src": "/sprites/benjamin/benjamin_idle_4.png"
     },
     "move": {
-      "anchorX": 0.513,
-      "aspect": 0.839286,
+      "anchorX": 0.5127,
+      "aspect": 0.857143,
       "footPad": 0.0,
       "frames": 1,
       "loops": false,
@@ -210,8 +210,8 @@ export const ANIMATION_CLIPS: Record<string, Record<string, AnimationClip>> = {
       "src": "/sprites/benjamin/benjamin_pain.png"
     },
     "ready": {
-      "anchorX": 0.513,
-      "aspect": 0.839286,
+      "anchorX": 0.5127,
+      "aspect": 0.857143,
       "footPad": 0.0,
       "frames": 2,
       "loops": false,
@@ -222,8 +222,8 @@ export const ANIMATION_CLIPS: Record<string, Record<string, AnimationClip>> = {
       "src": "/sprites/benjamin/benjamin_ready.png"
     },
     "upgrade": {
-      "anchorX": 0.513,
-      "aspect": 0.839286,
+      "anchorX": 0.5127,
+      "aspect": 0.857143,
       "footPad": 0.0,
       "frames": 4,
       "loops": false,
@@ -236,8 +236,8 @@ export const ANIMATION_CLIPS: Record<string, Record<string, AnimationClip>> = {
   },
   "brax": {
     "idle": {
-      "anchorX": 0.496,
-      "aspect": 1.07109,
+      "anchorX": 0.4961,
+      "aspect": 1.090047,
       "footPad": 0.0,
       "frames": 8,
       "loops": true,
@@ -249,8 +249,8 @@ export const ANIMATION_CLIPS: Record<string, Record<string, AnimationClip>> = {
   },
   "caspian": {
     "idle": {
-      "anchorX": 0.41,
-      "aspect": 1.086957,
+      "anchorX": 0.4135,
+      "aspect": 1.130435,
       "footPad": 0.0,
       "frames": 6,
       "loops": true,
@@ -262,8 +262,8 @@ export const ANIMATION_CLIPS: Record<string, Record<string, AnimationClip>> = {
   },
   "veyra": {
     "idle": {
-      "anchorX": 0.443,
-      "aspect": 0.765217,
+      "anchorX": 0.4455,
+      "aspect": 0.8,
       "footPad": 0.0,
       "frames": 8,
       "loops": true,

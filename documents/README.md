@@ -1967,21 +1967,29 @@ their own he stopped reaching it, while for the rest of the roster it named a cl
 exist. An ability with no sheet is still playable: the Performer walks out, holds their `ready`
 stance for the beat and walks back, which is what everyone but Benjamin already did.
 
-**Four idle stances, switched on a timer.** `idle`, `idle_2`, `idle_3`, `idle_4` — the packer needed
-no changes, because `LOOPING` matches by prefix, so all four already registered as looping clips.
-`idleStances` lists whichever exist and `useIdleStances` moves each Performer between them. Three
-rules, each answering a way the obvious version looks wrong:
+**Four idle stances, played through in turn.** `idle`, `idle_2`, `idle_3`, `idle_4` — the packer
+needed no changes, because `LOOPING` matches by prefix, so all four already registered as looping
+clips. `idleStances` lists whichever exist and `useIdleStances` moves each Performer between them.
+The rule is the simplest one that can look right: **play a stance all the way through, then move to
+the next, in order, forever.** Benjamin cycles all four in about 5.9 seconds.
 
-- **Never mid-loop.** A stance change is a cut, and cutting halfway through a breath reads as a
-  glitch rather than a shift of weight — so the timer is always a whole number of loops of the
-  stance now playing.
-- **Never in unison.** Each Performer gets their own timer, their own random number of loops (2–4)
-  and a staggered first change. Five characters changing stance on one frame is a cutscene, not life.
-- **Never the same one twice running**, which would be a pause with nothing to show for it.
+That is a correction, and worth recording because the first version was cleverer and worse. It held
+each stance for a random two-to-four loops and staggered the first change by a random 400–3000ms so
+the party would not move in unison — and **the stagger was the bug**: a delay picked at random is not
+a loop boundary, so the opening switch always landed mid-animation, cutting a breath in half. Going
+round in order fixed the other half; a random pick can repeat a stance or skip one for a minute, and
+both read as something misfiring rather than as a character shifting about.
 
-Held in state, not derived at render: `Math.random()` inside a render would re-roll on every
-unrelated state change — a die landing, a floater expiring — and the board would strobe. A character
-with one idle is skipped entirely, so this cost nothing until the alternate sheets existed.
+Nothing stops the party switching together now, and that turned out not to need solving: every
+Performer's clips have their own frame counts and `stepMs`, so they drift apart within a cycle or two
+on their own. An artificial offset would only buy the first few seconds, at the cost of the alignment
+that makes every switch land cleanly.
+
+Switches are scheduled against a running clock rather than by chaining delays, because `setTimeout`
+fires late under load and a chain accumulates every late arrival — after a hundred switches that is
+enough to land a change mid-loop again. Held in state, not derived at render: `Math.random()` inside a
+render would re-roll on every unrelated state change and the board would strobe. A character with one
+idle is skipped entirely.
 
 **`upgrade` is the one reserved clip name.** Buying an in-battle upgrade is a real action — it costs
 the Performer's turn and their dice — but the engine records it as a planned action with a **null
@@ -2085,6 +2093,53 @@ once it started cutting on real gaps:
 > editor and lost whatever frame, clip and unsaved tuning was on screen. It also ends the re-encode
 > churn in `git status` after a build. A pack with nothing to do now touches no file and prints
 > `unchanged — no reload`.
+
+> **The lab's stage must reserve room for the clip BOX, not the figure.** It bottom-aligns its
+> figures and the clip window hangs from that baseline at `boxH` — the union of every clip the
+> character owns — so the excess goes *upwards*, out of the stage and over the controls. Benjamin's
+> box became 1.45× his figure the day the back-flip and upgrade clips joined it, and at a 260px
+> preview his clips overflow 116–210px: `ability_3` reached far enough to cover the Save button.
+> The stage now reserves `boxH − figureH` as top padding, computed in the component because only it
+> knows the number, and `.lab-controls` carries `z-index: 2` as a backstop — art partly hidden behind
+> an opaque panel is a much smaller failure than a panel you cannot click. Clipping the overflow
+> instead would hide the very thing the box exists to show: the reach of a jump or a swing.
+
+> **In a battle, a sprite is `position: static`.** `.battle .sprite-unit .sprite` sets it, and insets
+> have no effect on a static element — so `bottom: 0` to drop a still onto the ground line silently
+> does nothing and the image sits at the top of its box. Use a `translateY`, expressed as a
+> percentage of the *image's* own height, which also composes with the mirror already on that
+> element. This cost a round trip: fixing the size of the hit reaction without this left it correctly
+> sized and floating in the air.
+
+> **The stage has four z-bands, and the scrim is the one that catches people out.** Scenery 0, the
+> focus scrim 60, standing Performers 100+, front layers 250+. Anything belonging to the *cast* must
+> be above 60 or it is dimmed along with the set whenever somebody takes a turn. Fallen Performers
+> were first put at 0–40 — on the set's side of it — and mostly vanished into the backdrop. They now
+> sit at 65–95: above the scrim because a body is cast, below the living because it is on the floor.
+
+> **A tight-cropped still is not the same height as the clip box.** The unit element is as tall as
+> the clip box — the union of every clip a character owns, as tall as their highest jump — and the
+> figure fills only `restFill` of it. The hit reaction was drawn at `height: 100%` of that, so it
+> rendered at `1 / restFill` of its proper size: **1.45× for Benjamin**, which looks like a
+> deliberate pop-on-hit rather than a bug, and is exactly what it was reported as. Both stills now
+> size through `clipBox` against their own packed metrics, which is what listing `pain` and `death`
+> in the clip catalogue bought: `restFill` is 1 for a tight crop, so the box is the figure height,
+> and each pose uses its own `anchorX` rather than the board sprite's. `bottom: 0`, because the unit
+> element's bottom edge *is* the ground line — the animated path lands its feet there by pushing the
+> clip down by `footPad`, so a still whose feet are its own bottom edge simply sits on it.
+
+> **Packed strips carry a 2px transparent gutter between frames**, and the reason is worth knowing
+> because the symptom points at the wrong thing. Frames were butted together, and a frame that
+> reaches its own cell edge is normal — the shared crop box is exactly as wide as the widest frame's
+> content, so whichever frame set that width touches both sides of it. With no gap, the neighbour's
+> ink is the very next pixel. The renderer shows one frame by making the strip N times the box width
+> and sliding it, and the box is whatever fraction of the stage the character works out to — almost
+> never a whole number of pixels. Sampling at a fractional boundary reaches across it, and a sliver
+> of the next drawing appears at the edge of this one. **Every "the frames are clean but I can still
+> see the next one" report is this, not the cut** — the source PNGs are innocent. `anchorX` and
+> `aspect` are restated against the padded cell, so the gutter buys clearance without moving anybody:
+> the foot sits 2px further into a box that is 4px wider, and the renderer's anchor transform cancels
+> it exactly.
 
 > **Adding a clip re-normalises every other clip that character owns.** The packed box is the union
 > of all of them, so Benjamin's `upgrade` — a raised sword and a starburst above his head — made the

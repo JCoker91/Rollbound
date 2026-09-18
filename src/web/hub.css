@@ -771,7 +771,18 @@ button.big em {
   padding: 14px;
 }
 
+/*
+ * The controls, guaranteed to stay on top of the art.
+ *
+ * The stage below reserves room for a clip box taller than its figure, which
+ * is the real fix -- but that reservation is computed from one clip's numbers,
+ * and a `placement.scale` or a bigger box can still push art up here. A panel
+ * you cannot click is a worse failure than art that is partly hidden behind an
+ * opaque panel, so this settles it either way: the controls win.
+ */
 .lab-controls {
+  position: relative;
+  z-index: 2;
   display: flex;
   flex-wrap: wrap;
   gap: 18px;

@@ -1,15 +1,15 @@
 {
   "clips": {
     "idle": {
-      "anchorX": 0.41,
-      "aspect": 1.086957,
+      "anchorX": 0.4135,
+      "aspect": 1.130435,
       "footPad": 0.0,
       "frames": 6,
       "loops": true,
       "normalised": 1.0,
       "pxH": 92,
       "restFill": 0.972826,
-      "size": 40146,
+      "size": 40645,
       "src": "/sprites/caspian/caspian_idle.png",
       "trimmed": 2
     }
