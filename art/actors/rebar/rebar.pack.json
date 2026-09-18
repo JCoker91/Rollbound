@@ -1,21 +1,7 @@
 {
-  "clips": {
-    "idle": {
-      "anchorX": 0.5,
-      "aspect": 1.247059,
-      "footPad": 0.0,
-      "frames": 5,
-      "loops": true,
-      "normalised": 1.0,
-      "pxH": 85,
-      "restFill": 0.964706,
-      "size": 29117,
-      "src": "/sprites/rebar/rebar_idle.png",
-      "trimmed": 3
-    }
-  },
+  "clips": {},
   "stamp": {
-    "sha256": "91e119f60e8c1402fcbe4b6f2c1a40d1643c6ee6d7494dafdc46fc5d28380ba8",
-    "size": 10675
+    "sha256": "6b893b2e0e7d596ec2893de756889028f1ff08edcd057a5459a1fa7dc97be09c",
+    "size": 186890
   }
 }

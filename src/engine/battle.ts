@@ -75,6 +75,14 @@ export type Event =
       t: 'damage';
       target: string;
       amount: number;
+      /**
+       * Which blow of a multi-hit this was, or absent for a single strike.
+       *
+       * Carried so the screen can land each number on its own impact frame
+       * instead of merging a volley into one total -- the amounts are already
+       * here, and only their grouping was missing.
+       */
+      hit?: number;
       matchup: string;
       hpAfter: number;
       /** What the hit was made of, so the UI can colour the number. */
@@ -947,17 +955,31 @@ function applyEffects(
     const targets = effectTargets(s, source, ability, centre, fx.on ?? 'target');
 
     switch (fx.do) {
-      case 'damage':
-        for (const target of targets) {
-          strike(s, source, ability, target, {
-            power: fx.power,
-            versus: fx.versus,
-            perFrost: fx.perFrost,
-            damageType: fx.damageType ?? ability.damageType,
-            element: fx.element ?? ability.element,
-          });
-        }
+      case 'damage': {
+        /*
+         * Hits are the OUTER loop, targets the inner.
+         *
+         * So the log comes out hit-major: every target's first blow, then every
+         * target's second. That is the order the presentation needs -- an
+         * impact frame is one moment for the whole volley, not one target's
+         * whole volley -- and getting it the other way round would pair the
+         * second spark with the second TARGET.
+         */
+        const shares = splitPower(fx.power, fx.hits);
+        shares.forEach((power, hit) => {
+          for (const target of targets) {
+            strike(s, source, ability, target, {
+              power,
+              versus: fx.versus,
+              perFrost: fx.perFrost,
+              damageType: fx.damageType ?? ability.damageType,
+              element: fx.element ?? ability.element,
+              hit: shares.length > 1 ? hit : undefined,
+            });
+          }
+        });
         break;
+      }
 
       case 'heal':
         for (const target of targets) {
@@ -1076,6 +1098,21 @@ function applyEffects(
  * `over` lets an effect state its own power, damage type or element without
  * needing a whole synthetic ability to carry them.
  */
+/**
+ * Divide a power into blows by ratio.
+ *
+ * Normalised against the shares' own total, so `[1,1,2]` and `[0.25,0.25,0.5]`
+ * mean the same thing and an author can write whichever reads better. A missing
+ * or degenerate list is one whole blow, which is what every single-hit ability
+ * in the game already is.
+ */
+export function splitPower(power: number, hits?: number[]): number[] {
+  if (!hits?.length) return [power];
+  const total = hits.reduce((n, h) => n + Math.max(0, h), 0);
+  if (total <= 0) return [power];
+  return hits.map((h) => (power * Math.max(0, h)) / total);
+}
+
 function strike(
   s: BattleState,
   source: Unit,
@@ -1087,6 +1124,8 @@ function strike(
     perFrost?: number;
     damageType?: DamageType;
     element?: Element;
+    /** Which blow of a multi-hit this is, for the presentation to pair up. */
+    hit?: number;
   },
 ): void {
   const shot: Ability = over
@@ -1128,6 +1167,7 @@ function strike(
     t: 'damage',
     target: target.def.name,
     amount: dmg,
+    hit: over?.hit,
     matchup: matchupLabel(elementResistance(target, shot.element)),
     hpAfter: target.hp,
     element: shot.element,

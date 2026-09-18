@@ -77,7 +77,7 @@ export type DamageType = 'physical' | 'magical' | 'true';
  *   slot    a SLOT rather than a unit, occupied or not, on the caster's own
  *           side. Only repositioning uses it; see `REPOSITION`.
  *
- * `row` and `column` are what make a 3x3 formation a decision instead of
+ * `row` and `column` are what make a 2-1-2 formation a decision instead of
  * staging. They cut the grid along either axis, so the same five Performers
  * catch one attack or three depending on how they are spread -- and the two
  * axes pull against each other, because the columns that keep you out of an
@@ -161,6 +161,29 @@ export type Effect =
   | {
       do: 'damage';
       power: number;
+      /**
+       * Split this into several blows, by RATIO.
+       *
+       * `[1, 1, 1]` is three equal thirds; `[1, 1, 2]` is a quarter, a quarter
+       * and a half. Shares are normalised against their own total, so an author
+       * can write whichever of the two reads better for the ability and never
+       * has to make the numbers add to anything in particular.
+       *
+       * Each blow is a real strike: mitigated on its own, rolled for critical
+       * on its own, and logged on its own. That is what makes a multi-hit worth
+       * having rather than one number shown in pieces -- it interacts with
+       * per-hit mechanics the way a volley should.
+       *
+       * It also means rounding happens once per blow, so six hits of a third
+       * each will out-damage one whole hit against a target that mitigates down
+       * to fractions. That is a real consequence and it is accepted: the floor
+       * only bites at the very bottom of the damage range, which is where this
+       * game is not aiming to live.
+       *
+       * The animation decides WHEN each one lands -- see `impacts` in the clip
+       * tuning. This decides only how the damage divides.
+       */
+      hits?: number[];
       /** See `VersusPower`. Overrides the ability's own, same as `power`. */
       versus?: VersusPower;
       /** See `PerFrostPower`. Overrides the ability's own, same as `power`. */
@@ -216,7 +239,7 @@ export type Effect =
    *
    * Absolute where `move` is relative, and the two coexist on purpose. A kit
    * ability that shoves a line back a rank does not want the player picking
-   * destinations; a Performer choosing where to stand does, and a 3x3 board
+   * destinations; a Performer choosing where to stand does, and a shaped board
    * with four empty slots is exactly the case relative ranks cannot express.
    * Pairs with `scope: 'slot'`, which is what makes an empty slot aimable.
    *
@@ -830,6 +853,14 @@ export interface SpriteSheet {
   src: string;
   /** Headshot used in panels, where the full figure is too small to read. */
   icon?: string;
+  /**
+   * A held hit reaction, shown for a moment when this character takes damage.
+   *
+   * A single drawing rather than a clip, because that is what a flinch is: one
+   * pose held, then dropped. Packing it as a one-frame strip would put it
+   * through the whole timeline machinery to say nothing.
+   */
+  pain?: string;
   /** width / height of the trimmed art. */
   aspect: number;
   anchorX: number;

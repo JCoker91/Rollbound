@@ -1,21 +1,21 @@
 {
   "clips": {
     "idle": {
-      "anchorX": 0.409,
-      "aspect": 1.083333,
+      "anchorX": 0.41,
+      "aspect": 1.086957,
       "footPad": 0.0,
       "frames": 6,
       "loops": true,
       "normalised": 1.0,
-      "pxH": 96,
-      "restFill": 0.973958,
-      "size": 38492,
+      "pxH": 92,
+      "restFill": 0.972826,
+      "size": 40146,
       "src": "/sprites/caspian/caspian_idle.png",
       "trimmed": 2
     }
   },
   "stamp": {
-    "sha256": "864e8264585e4e3dd30e588cd5fc8f900d06c0a7499a5c583cd37b4341b35184",
-    "size": 127672
+    "sha256": "2baa3a325d9f23e4fa477b127422f75f2dede9e4b0b1809e889487405c3fe4d5",
+    "size": 124483
   }
 }

@@ -1,21 +1,105 @@
 {
   "clips": {
-    "idle": {
-      "anchorX": 0.504,
-      "aspect": 1.25,
+    "attack": {
+      "anchorX": 0.573,
+      "aspect": 0.928571,
       "footPad": 0.0,
-      "frames": 13,
+      "frames": 4,
+      "loops": false,
+      "normalised": 1.8959,
+      "pxH": 224,
+      "restFill": 0.810268,
+      "settlesInto": "idle",
+      "size": 215595,
+      "src": "/sprites/benjamin/benjamin_attack.png",
+      "trimmed": 0
+    },
+    "idle": {
+      "anchorX": 0.573,
+      "aspect": 0.928571,
+      "footPad": 0.0,
+      "frames": 2,
       "loops": true,
       "normalised": 1.0,
-      "pxH": 192,
-      "restFill": 0.984375,
-      "size": 288507,
+      "pxH": 224,
+      "restFill": 0.810268,
+      "size": 118642,
       "src": "/sprites/benjamin/benjamin_idle.png",
+      "trimmed": 0
+    },
+    "perfect_form": {
+      "anchorX": 0.573,
+      "aspect": 0.928571,
+      "footPad": 0.0,
+      "frames": 4,
+      "loops": false,
+      "normalised": 2.0805,
+      "pxH": 224,
+      "restFill": 0.810268,
+      "settlesInto": "idle",
+      "size": 220224,
+      "src": "/sprites/benjamin/benjamin_perfect_form.png",
+      "trimmed": 0
+    },
+    "quick_cut": {
+      "anchorX": 0.573,
+      "aspect": 0.928571,
+      "footPad": 0.0,
+      "frames": 4,
+      "loops": false,
+      "normalised": 1.8959,
+      "pxH": 224,
+      "restFill": 0.810268,
+      "settlesInto": "idle",
+      "size": 215595,
+      "src": "/sprites/benjamin/benjamin_quick_cut.png",
+      "trimmed": 0
+    },
+    "rally": {
+      "anchorX": 0.573,
+      "aspect": 0.928571,
+      "footPad": 0.0,
+      "frames": 4,
+      "loops": false,
+      "normalised": 1.628,
+      "pxH": 224,
+      "restFill": 0.810268,
+      "settlesInto": "idle",
+      "size": 167313,
+      "src": "/sprites/benjamin/benjamin_rally.png",
+      "trimmed": 0
+    },
+    "ready": {
+      "anchorX": 0.573,
+      "aspect": 0.928571,
+      "footPad": 0.0,
+      "frames": 2,
+      "loops": false,
+      "normalised": 1.1094,
+      "pxH": 224,
+      "restFill": 0.810268,
+      "settlesInto": "idle",
+      "size": 125719,
+      "src": "/sprites/benjamin/benjamin_ready.png",
+      "trimmed": 0
+    },
+    "sunder": {
+      "anchorX": 0.573,
+      "aspect": 0.928571,
+      "footPad": 0.0,
+      "frames": 4,
+      "loops": false,
+      "normalised": 2.0434,
+      "pxH": 224,
+      "restFill": 0.810268,
+      "settlesInto": "idle",
+      "size": 251492,
+      "src": "/sprites/benjamin/benjamin_sunder.png",
       "trimmed": 0
     }
   },
   "stamp": {
-    "sha256": "b463f2cb225a033644ff484f8669e5d6de0b8e763710dbbca36c83e3c77e9fac",
-    "size": 27089
+    "sha256": "f56cce759691393c0537fd2838aa04b1b0c9dbf6a5afb178017ba39e169443ab",
+    "size": 147988
   }
 }

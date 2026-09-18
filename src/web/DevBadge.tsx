@@ -25,11 +25,16 @@ export function DevBadge({
   onReset,
   /** Whether the lab is the screen currently showing. */
   labActive = false,
+  /** Open the stage lab, where battle scenes are composed. */
+  onStage,
+  stageActive = false,
 }: {
   overNav?: boolean;
   onLab?: () => void;
   onReset?: () => void;
   labActive?: boolean;
+  onStage?: () => void;
+  stageActive?: boolean;
 }) {
   const dev = useDevTools();
 
@@ -47,7 +52,7 @@ export function DevBadge({
         switch is one control and keeps one shape; anything it REVEALS belongs
         in something else.
       */}
-      {dev && (onLab || onReset) && (
+      {dev && (onLab || onStage || onReset) && (
         <div className={`dev-panel${overNav ? ' over-nav' : ''}`}>
           <span className="dev-panel-title">Dev tools</span>
           {onLab && (
@@ -57,6 +62,15 @@ export function DevBadge({
               onClick={onLab}
             >
               ▶ Anim lab
+            </button>
+          )}
+          {onStage && (
+            <button
+              className={`quiet dev-link${stageActive ? ' on' : ''}`}
+              title="Compose a battle scene: add props, place them, save it"
+              onClick={onStage}
+            >
+              ▦ Stage lab
             </button>
           )}
           {onReset && (

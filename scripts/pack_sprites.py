@@ -55,6 +55,8 @@ Run:  python scripts/pack_sprites.py
 
 import hashlib
 import json
+import os
+import time
 
 from math import ceil
 from PIL import Image, ImageDraw
@@ -254,6 +256,9 @@ OUTLINE_DEFAULT = {3: 2, 2: 1, 1: 0}
 
 
 def outline_width(name: str) -> int:
+    # Paper art draws its own keyline. See PAPER_COLOURS.
+    if is_paper(name):
+        return 0
     return OUTLINE.get(name, OUTLINE_DEFAULT[spec_of(name)])
 
 # Above this many distinct colours, art is treated as a painted render whose
@@ -261,6 +266,54 @@ def outline_width(name: str) -> int:
 # drawn. Deliberately far from both cases: the guide caps a sprite at 64 colours
 # and the painted sheets run to six figures. See key_flat_background.
 PIXEL_ART_COLOURS = 512
+
+# Art style v4, "paper": sticker-style painted art with soft edges.
+#
+# Detected by the SAME measurement that already tells painted renders from pixel
+# art -- colour count -- rather than by canvas size, because the paper generator
+# has no fixed canvas and never will: a sticker is whatever shape it is drawn.
+# Every pixel-art step is skipped for it, and each of those steps would damage
+# it rather than merely being unnecessary:
+#
+#   outline     it already carries a drawn white die-cut keyline; a second
+#               1-2px ring drawn around that reads as a double border
+#   unmatte     written to strip a matte off hard-edged art, it eats the soft
+#               antialiased edge this style is made of
+#   binary alpha  the whole look depends on ~700k semi-transparent pixels
+#   nearest-neighbour  it is drawn ABOVE display size and scales down, so it
+#               wants smoothing; `pixelArt: false` is what the renderer reads
+#
+# What still applies: content-box cropping, foot anchoring, the animation
+# packer's shared crop box, and the stature rule.
+PAPER_COLOURS = 4096
+
+# Paper art's stature, as a fraction of its own canvas.
+#
+# Pixel art carried this in the style guide's body band (164-184 of 256). The
+# paper generator has no such convention yet -- it fills the frame -- so a
+# straight `content / canvas` reading puts Benjamin at 0.92 against the pixel
+# roster's 0.66, and he would render 39% larger than the character he replaces.
+# Declaring it keeps the cast the same size on the boards while the paper style
+# is being evaluated. It belongs in the style guide once that guide has a paper
+# section; until then it lives here so the number is in one place.
+PAPER_STATURE = 0.66
+# Named single-frame poses an actor may ship beside their board sprite.
+EXTRA_POSES = ('pain',)
+# The grid statures are expressed against, shared with content.ts's BASE_CANVAS.
+BASE_DENSITY = 128
+
+
+def is_paper(name: str) -> bool:
+    """Is this actor's source art the painted sticker style rather than pixel art?"""
+    src = source_image(name)
+    if src is None:
+        return False
+    with Image.open(src) as im:
+        rgba = im.convert('RGBA')
+        seen = {px[:3] for px in rgba.getdata() if px[3] > ALPHA_FLOOR}
+        if len(seen) > PAPER_COLOURS:
+            return True
+    return False
 # What counts as art when mirroring folders that are copied rather than packed.
 IMAGE_SUFFIXES = {'.png', '.jpg', '.jpeg', '.webp'}
 
@@ -269,8 +322,14 @@ ACTORS = ART / 'actors'
 CREATURES = ART / 'enemies' / 'creatures'
 BOSSES = ART / 'enemies' / 'bosses'
 SCENERY = ART / 'background'
+# Hit sparks, bursts and the like: strips that play ON a target rather than
+# belonging to any one actor, so they live outside art/actors/ and are measured
+# once into a shared registry. Grid comes from the `_<cols>x<rows>` suffix, the
+# same convention animation clips already use.
+EFFECTS = ART / 'effects'
 OUT_ROOT = Path('public/sprites')
 OUT_SCENERY = Path('public/background')
+OUT_EFFECTS = Path('public/effects')
 METRICS_TS = Path('src/engine/sprites.generated.ts')
 
 # Characters whose art predates the style guide and has no _LQ/native pair yet.
@@ -323,8 +382,13 @@ def spec_of(name: str) -> int:
     # before this, a 256 sprite was measured against the 128 grid and came out
     # at 1.63 of canvas against Benjamin's 0.66, which would have drawn him two
     # and a half times everyone's height.
-    src = (CREATURES if is_creature(name) else ACTORS) / name / f'{name}.png'
-    if src.exists():
+    # Through `source_image`, which knows a creature is a FLAT file while an
+    # actor is a folder. Building the path here assumed the folder shape for
+    # both, so a creature's canvas was never actually read -- every one of them
+    # fell through to the default below and only matched by luck while that
+    # default was v2. The 128px mobs then audited against the 256px band.
+    src = source_image(name)
+    if src is not None and src.exists():
         with Image.open(src) as im:
             found = BY_CANVAS.get(im.width)
         if found:
@@ -514,6 +578,42 @@ def publish_scenery() -> list[str]:
     return written
 
 
+def publish_effects() -> list[dict]:
+    """
+    Copy every effect strip into public/ and measure it.
+
+    Cropped to content on the way, because these arrive with generous empty
+    margins -- the impact burst was 8% ink on a 2172x724 canvas -- and the crop
+    is what makes the published frame size mean the effect's own size rather
+    than the generator's framing.
+    """
+    out = []
+    if not EFFECTS.is_dir():
+        return out
+    OUT_EFFECTS.mkdir(parents=True, exist_ok=True)
+    for src in sorted(EFFECTS.glob('*.png')):
+        name, grid = parse_grid(src.stem)
+        cols, rows = grid or (1, 1)
+        sheet = Image.open(src).convert('RGBA')
+        frames = split_sheet(sheet, (cols, rows))
+        boxes = [b for b in (content_box(f) for f in frames) if b]
+        if not boxes:
+            continue
+        # ONE crop box across every frame, so the effect does not jitter: each
+        # frame is a different shape and cropping them individually would
+        # re-centre the burst on every step.
+        box = (min(b[0] for b in boxes), min(b[1] for b in boxes),
+               max(b[2] for b in boxes), max(b[3] for b in boxes))
+        w, h = box[2] - box[0], box[3] - box[1]
+        strip = Image.new('RGBA', (w * len(frames), h))
+        for i, f in enumerate(frames):
+            strip.alpha_composite(f.crop(box), (i * w, 0))
+        strip.save(OUT_EFFECTS / f'{name}.png', optimize=True)
+        out.append({'id': name, 'src': f'/effects/{name}.png',
+                    'frames': len(frames), 'aspect': round(w / h, 6)})
+    return out
+
+
 def expected_outputs() -> list[str]:
     """Every file public/ should contain, according to art/."""
     out = []
@@ -523,10 +623,17 @@ def expected_outputs() -> list[str]:
     for name in characters():
         folder = OUT_ROOT / name
         out.append((folder / f'{name}.png').as_posix())
-        if (ACTORS / name / f'{name}_icon.png').exists():
-            out.append((folder / f'{name}_icon.png').as_posix())
+        # Always expected now: an actor without a hand-cropped source icon gets
+        # a derived one (see `prepare`), and listing it conditionally meant the
+        # derived file was written and then immediately pruned as stale.
+        out.append((folder / f'{name}_icon.png').as_posix())
+        for pose in EXTRA_POSES:
+            if (ACTORS / name / f'{name}_{pose}.png').exists():
+                out.append((folder / f'{name}_{pose}.png').as_posix())
         for clip in load_manifest(name).get('clips', {}):
             out.append((folder / f'{name}_{clip}.png').as_posix())
+    for e in publish_effects():
+        out.append((OUT_EFFECTS / f'{e["id"]}.png').as_posix())
     if SCENERY.is_dir():
         for src in SCENERY.rglob('*'):
             if src.is_file() and src.suffix.lower() in IMAGE_SUFFIXES:
@@ -574,17 +681,56 @@ def load_manifest(name: str) -> dict:
     try:
         return json.loads(manifest_path(name).read_text(encoding='utf-8'))
     except (OSError, ValueError):
+        # A malformed read is indistinguishable from "no manifest yet" here, and
+        # THAT is what made losing a stamp possible: a reader catching a
+        # half-written file got {} and the merge below then wrote a manifest
+        # with the other half missing. `save_manifest` publishes atomically now,
+        # so a reader can only ever see a complete previous version.
         return {}
 
 
 def save_manifest(name: str, **fields) -> None:
-    """Merge fields into an actor's manifest. Read-modify-write, because the
-    fingerprint and the clip catalogue are written at different points in a run."""
+    """
+    Merge fields into an actor's manifest.
+
+    Read-modify-write, because the fingerprint and the clip catalogue are
+    written at different points in a run.
+
+    Published ATOMICALLY -- written to a temporary file and renamed over the
+    real one. `os.replace` is atomic on both POSIX and Windows, so a concurrent
+    reader sees either the whole old manifest or the whole new one, never a
+    half-written file.
+
+    That mattered in practice, not in theory. The dev server repacks whenever
+    art changes, so a manual run and a watcher run can overlap; one of them read
+    a torn file, got nothing, and wrote back a manifest containing only the
+    clips. The stamp it dropped is the one field that authorises the NEXT pack,
+    so the actor became permanently unpackable until their output folder was
+    deleted by hand. It happened three times.
+    """
     data = load_manifest(name)
     data.update(fields)
     path = manifest_path(name)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2, sort_keys=True), encoding='utf-8')
+    tmp = path.with_suffix(f'.json.{os.getpid()}.tmp')
+    tmp.write_text(json.dumps(data, indent=2, sort_keys=True), encoding='utf-8')
+    try:
+        # Windows refuses to replace a file another process currently has open,
+        # which for a manifest read on every pack is a matter of timing rather
+        # than of anything being wrong. Retrying briefly costs nothing and turns
+        # a lost write into a slightly later one; POSIX never takes this path.
+        for attempt in range(20):
+            try:
+                os.replace(tmp, path)
+                return
+            except PermissionError:
+                if attempt == 19:
+                    raise
+                time.sleep(0.05)
+    finally:
+        # Never leave a temp file in art/. The dev server watches this tree, and
+        # a stray .tmp is both clutter and something for the watcher to trip on.
+        tmp.unlink(missing_ok=True)
 
 
 def content_box(img: Image.Image):
@@ -649,6 +795,13 @@ def audit(name: str, ref: Image.Image, native: Image.Image | None) -> list[str]:
     `k` on the way out, so the same checks read v1 and v2 art without either
     spec's numbers being hard-coded here.
     """
+    # Paper art is measured, not linted: the guide's canvas, ground line, margin,
+    # binary alpha and body band are all pixel-art rules, and reporting a sticker
+    # against them would be five notes on one deliberate decision. It gets its
+    # own section of the style guide when the style is settled.
+    if is_paper(name):
+        return []
+
     s, k = spec(name), upscale(name)
     # A boss is authored on its own larger canvas by design (the guide's Giant
     # class), so the grid every other check is measured against comes from the
@@ -1131,6 +1284,55 @@ def parse_grid(clip: str) -> tuple[str, tuple[int, int] | None]:
     return (m.group(1), (int(m.group(2)), int(m.group(3)))) if m else (clip, None)
 
 
+def gutter_cuts(
+    sheet: Image.Image, cols: int, rows: int
+) -> tuple[list[int], list[int]]:
+    """
+    Where to cut a sheet whose frames are NOT on an even grid.
+
+    A uniform slice assumes the generator laid the cells out exactly. Benjamin's
+    16-frame attack proves that assumption wrong: its rows measure 307, 304, 302
+    and 271 px with 6, 14 and 13 px between them, so a 313.5 px slice takes the
+    bottom of each row -- his FEET -- and drops it onto the top of the row
+    below. The result reads as a character whose boots appear over his head.
+
+    So find the actual empty bands and cut down the middle of them.
+
+    Resolved PER AXIS, and that matters: this same sheet has three clean gaps
+    between its rows and only two between its columns, because its last two
+    columns touch. Insisting on both axes would fall back to the even slice
+    and keep the bug, when the axis that actually needed fixing was readable
+    all along. An axis that cannot be read falls back on its own.
+    """
+    alpha = sheet.getchannel('A').point(lambda v: 255 if v >= ALPHA_FLOOR else 0)
+    px = alpha.load()
+    W, H = sheet.size
+
+    def bands(n: int, length: int, occupied) -> list[int] | None:
+        """Boundaries for `n` frames along one axis, or None if they are unclear."""
+        if n <= 1:
+            return [0, length]
+        gaps, run = [], None
+        for i in range(length):
+            if not occupied(i) and run is None:
+                run = i
+            elif occupied(i) and run is not None:
+                gaps.append((run, i))
+                run = None
+        # Leading and trailing empty space is margin, not a gutter.
+        inner = [g for g in gaps if g[0] > 0 and g[1] < length]
+        if len(inner) != n - 1:
+            return None
+        return [0] + [(a + b) // 2 for a, b in inner] + [length]
+
+    def even(n: int, length: int) -> list[int]:
+        return [round(i * length / n) for i in range(n + 1)]
+
+    xs = bands(cols, W, lambda x: any(px[x, y] for y in range(H))) or even(cols, W)
+    ys = bands(rows, H, lambda y: any(px[x, y] for x in range(W))) or even(rows, H)
+    return (xs, ys)
+
+
 def split_sheet(sheet: Image.Image, grid: tuple[int, int] | None = None) -> list[Image.Image]:
     """
     Cut a sheet into frames, inferring the grid from the image's own dimensions.
@@ -1147,8 +1349,10 @@ def split_sheet(sheet: Image.Image, grid: tuple[int, int] | None = None) -> list
     else:
         fw = fh = gcd(sheet.width, sheet.height)
         cols, rows = sheet.width // fw, sheet.height // fh
+
+    xs, ys = gutter_cuts(sheet, cols, rows)
     return [
-        key_flat_background(sheet.crop((c * fw, r * fh, (c + 1) * fw, (r + 1) * fh)))
+        key_flat_background(sheet.crop((xs[c], ys[r], xs[c + 1], ys[r + 1])))
         for r in range(rows)
         for c in range(cols)
     ]
@@ -1361,6 +1565,16 @@ def build_animations(name: str) -> dict:
     """
     folder = ACTORS / name / 'animations'
     if not folder.is_dir():
+        # Clear the manifest's clip list as well as returning nothing.
+        #
+        # Returning early LEFT the previous clips recorded, so deleting an
+        # actor's animations folder did not remove their animations: the
+        # manifest still listed them, `expected_outputs` still whitelisted the
+        # strips so the prune spared them, and `write_metrics` rebuilt `idle`
+        # from the manifest. Four characters kept playing pixel-art idles for a
+        # whole session after their source art had been replaced with stills.
+        if load_manifest(name).get('clips'):
+            save_manifest(name, clips={})
         return {}
 
     ink = outline_ink(reference(name)) if outline_width(name) else None
@@ -1504,9 +1718,21 @@ def is_ours(name: str, board_out: Path) -> bool:
     that, because after any normal run the output is always newer than the
     input. The fingerprint recorded at write time can.
     """
-    prev = load_manifest(name).get('stamp')
+    manifest = load_manifest(name)
+    prev = manifest.get('stamp')
     if not prev:
-        return False
+        # No stamp at all is ambiguous, and which way it resolves matters.
+        #
+        # An EMPTY manifest means this actor has never been packed, so anything
+        # sitting in the output folder got there some other way -- exactly the
+        # dropped-in upload this guard exists to protect. Refuse.
+        #
+        # A manifest that exists but has no stamp is our own partial state: we
+        # have packed this actor before and the fingerprint was lost. Refusing
+        # there was a trap door, because the only code path that writes a stamp
+        # is the one the refusal skips, so the actor could never be packed again
+        # without deleting their output by hand. Proceed and re-stamp.
+        return bool(manifest)
     if 'sha256' in prev:
         return prev['sha256'] == stamp_of(board_out)['sha256']
     # An mtime-era stamp, from before the format changed. Its timestamp is
@@ -1534,14 +1760,22 @@ def prepare_creature(name: str) -> tuple[int, list[str]]:
     notes = audit(name, ref, None)
     box = content_box(ref)
     board = ref.crop(box)
+    # The same ceiling the actor path applies. Without it a paper creature
+    # shipped at its full 1147x1212 source -- 640 KB for something drawn on
+    # screen at eighty pixels.
+    if board.height > BOARD_HEIGHT:
+        r = BOARD_HEIGHT / board.height
+        board = board.resize((max(1, round(board.width * r)), BOARD_HEIGHT), Image.LANCZOS)
 
     board_path = out / f'{name}.png'
-    board.save(board_path)
+    board.save(board_path, optimize=True)
 
     # Portrait for the team list. Grown by a whole factor so it stays crisp at
     # the 26-56px the panels draw it at, same rule as the hand-made ones.
     icon = derive_icon(ref)
-    if icon.height and icon.height * 2 <= ICON_SIZE:
+    if icon.height > ICON_SIZE:
+        icon = icon.resize((ICON_SIZE, ICON_SIZE), Image.LANCZOS)
+    elif icon.height and icon.height * 2 <= ICON_SIZE:
         factor = max(1, ICON_SIZE // icon.height)
         icon = icon.resize((icon.width * factor, icon.height * factor), Image.NEAREST)
     icon.save(out / f'{name}_icon.png')
@@ -1585,7 +1819,13 @@ def prepare(name: str) -> tuple[int, list[str]]:
     hq_path = src / f'{name}_HQ.png'
     # Any v2-or-later spec ships its own canvas as the board; only v1 has the
     # _LQ/_HQ split below.
-    if spec_of(name) >= 2:
+    if is_paper(name):
+        # Ships as drawn, cropped to its own edge, smoothed on the way down.
+        # `BOARD_HEIGHT` still caps it below, which is where the 1254px source
+        # becomes a sensible delivery size.
+        board = ref.crop(box)
+        pixel_art = False
+    elif spec_of(name) >= 2:
         board = ref.crop(box)
         pixel_art = True
     elif hq_path.exists():
@@ -1621,6 +1861,29 @@ def prepare(name: str) -> tuple[int, list[str]]:
             factor = ICON_SIZE // icon.height
             icon = icon.resize((icon.width * factor, icon.height * factor), Image.NEAREST)
         icon.save(out / f'{name}_icon.png')
+    else:
+        # `derive_icon` already documents itself as the fallback a hand-cropped
+        # icon beats; until now only creatures reached it, so an actor without
+        # one simply shipped no icon and fell back to their role glyph. Paper art
+        # arrives as a single sticker with no separate headshot, so the fallback
+        # is the normal case for it rather than the exception.
+        derive_icon(board).save(out / f'{name}_icon.png')
+
+    # Extra stills: one-off poses a clip cannot express, published beside the
+    # board sprite under the same name. `pain` is the first -- a hit reaction is
+    # a single drawing held for a moment, not a sequence, and packing it as a
+    # one-frame clip would put it through the whole strip machinery to say so.
+    for pose in EXTRA_POSES:
+        pose_src = src / f'{name}_{pose}.png'
+        if not pose_src.exists():
+            continue
+        art = key_flat_background(Image.open(pose_src).convert('RGBA'))
+        art = add_outline(art, outline_width(name))
+        art = art.crop(content_box(art))
+        if art.height > BOARD_HEIGHT:
+            r = BOARD_HEIGHT / art.height
+            art = art.resize((round(art.width * r), BOARD_HEIGHT), Image.LANCZOS)
+        art.save(out / f'{name}_{pose}.png')
 
     clips = build_animations(name)
 
@@ -1668,6 +1931,9 @@ def write_metrics() -> None:
         fields = [f"src: '/sprites/{name}/{name}.png'"]
         if (folder / f'{name}_icon.png').exists():
             fields.append(f"icon: '/sprites/{name}/{name}_icon.png'")
+        for pose in EXTRA_POSES:
+            if (folder / f'{name}_{pose}.png').exists():
+                fields.append(f"{pose}: '/sprites/{name}/{name}_{pose}.png'")
         fields.append(f'aspect: {img.width} / {img.height}')
         fields.append(f'pxH: {img.height}')
         fields.append(f'anchorX: {foot_anchor(img):.3f}')
@@ -1677,7 +1943,14 @@ def write_metrics() -> None:
         # it: stature is the RATIO of the two, and reading a 128px actor's height
         # against the 64px grid would draw them at twice everyone else's size.
         # Null for pre-guide art with no native basis.
-        if source_image(name) is not None:
+        if is_paper(name):
+            # Declared rather than measured. The paper generator fills its frame,
+            # so `content / canvas` reads 0.92 against the pixel roster's 0.66 and
+            # would draw this character 39% larger than the one it replaces. See
+            # PAPER_STATURE.
+            fields.append(f'nativePx: {round(PAPER_STATURE * BASE_DENSITY)}')
+            fields.append(f'nativeCanvas: {BASE_DENSITY}')
+        elif source_image(name) is not None:
             b = content_box(reference(name))
             fields.append(f'nativePx: {round((b[3] - b[1]) / upscale(name))}')
             fields.append(f'nativeCanvas: {density_grid(name)}')
@@ -1686,7 +1959,8 @@ def write_metrics() -> None:
             fields.append(f'nativeCanvas: {NATIVE}')
         # Nearest-neighbour only suits art drawn LARGER than its file. _HQ is
         # drawn smaller, so it needs smoothing.
-        fields.append(f'pixelArt: {"false" if (ACTORS / name / f"{name}_HQ.png").exists() else "true"}')
+        smoothed = is_paper(name) or (ACTORS / name / f'{name}_HQ.png').exists()
+        fields.append(f'pixelArt: {"false" if smoothed else "true"}')
 
         packed = catalogue.get(name, {})
         clip = packed.get(default_idle(name, packed))
@@ -1709,6 +1983,14 @@ def write_metrics() -> None:
         for name, clips in sorted(catalogue.items())
     }
     clips_json = json.dumps(lab, indent=2, sort_keys=True)
+    effects_json = json.dumps({e['id']: e for e in publish_effects()}, indent=2, sort_keys=True)
+    # Every scenery image, so the stage lab can offer them without a second
+    # list anyone has to remember to update.
+    scenery = sorted(
+        f'/background/{q.relative_to(SCENERY).as_posix()}'
+        for q in (SCENERY.rglob('*.png') if SCENERY.is_dir() else [])
+    )
+    scenery_json = json.dumps(scenery, indent=2)
     METRICS_TS.parent.mkdir(parents=True, exist_ok=True)
     METRICS_TS.write_text(
         f'''// GENERATED by scripts/pack_sprites.py -- do not edit by hand.
@@ -1732,6 +2014,8 @@ export interface SpriteMetrics extends Omit<SpriteSheet, 'scale' | 'nativePx'> {
    */
   nativePx: number | null;
   nativeCanvas: number;
+  /** A held single-frame hit reaction, when the actor ships one. */
+  pain?: string;
   /** True when the shipped sheet is native-grid art needing nearest-neighbour. */
   pixelArt: boolean;
   /**
@@ -1747,6 +2031,23 @@ export const SPRITE_METRICS: Record<SpriteId, SpriteMetrics> = {{
 
 /** Every packed clip, for the dev animation lab. Battle uses `idle` above. */
 export const ANIMATION_CLIPS: Record<string, Record<string, AnimationClip>> = {clips_json};
+
+/**
+ * Impact effects -- hit sparks and bursts that play ON a target rather than
+ * belonging to any one actor. Authored in art/effects/, keyed by file name.
+ */
+export interface EffectStrip {{
+  id: string;
+  src: string;
+  frames: number;
+  /** width / height of ONE frame. */
+  aspect: number;
+}}
+
+export const EFFECTS: Record<string, EffectStrip> = {effects_json};
+
+/** Every published scenery image, for the stage lab's prop picker. */
+export const SCENERY_IMAGES: string[] = {scenery_json};
 
 export interface AnimationClip {{
   src: string;

@@ -19,6 +19,8 @@ export interface SpriteMetrics extends Omit<SpriteSheet, 'scale' | 'nativePx'> {
    */
   nativePx: number | null;
   nativeCanvas: number;
+  /** A held single-frame hit reaction, when the actor ships one. */
+  pain?: string;
   /** True when the shipped sheet is native-grid art needing nearest-neighbour. */
   pixelArt: boolean;
   /**
@@ -29,51 +31,110 @@ export interface SpriteMetrics extends Omit<SpriteSheet, 'scale' | 'nativePx'> {
 }
 
 export const SPRITE_METRICS: Record<SpriteId, SpriteMetrics> = {
-  aethis: { src: '/sprites/aethis/aethis.png', icon: '/sprites/aethis/aethis_icon.png', aspect: 70 / 97, pxH: 97, anchorX: 0.436, nativePx: 97, nativeCanvas: 128, pixelArt: true, idle: { src: '/sprites/aethis/aethis_idle.png', frames: 8, aspect: 0.707071, pxH: 99, anchorX: 0.436, restFill: 0.984848, footPad: 0.0 } },
-  backdrop_bat: { src: '/sprites/backdrop_bat/backdrop_bat.png', icon: '/sprites/backdrop_bat/backdrop_bat_icon.png', aspect: 116 / 94, pxH: 94, anchorX: 0.349, nativePx: 94, nativeCanvas: 256, pixelArt: true },
-  benjamin: { src: '/sprites/benjamin/benjamin.png', icon: '/sprites/benjamin/benjamin_icon.png', aspect: 223 / 188, pxH: 188, anchorX: 0.466, nativePx: 188, nativeCanvas: 256, pixelArt: true, idle: { src: '/sprites/benjamin/benjamin_idle.png', frames: 13, aspect: 1.25, pxH: 192, anchorX: 0.504, restFill: 0.984375, footPad: 0.0 } },
+  aethis: { src: '/sprites/aethis/aethis.png', icon: '/sprites/aethis/aethis_icon.png', aspect: 239 / 320, pxH: 320, anchorX: 0.444, nativePx: 84, nativeCanvas: 128, pixelArt: false },
+  backdrop_bat: { src: '/sprites/backdrop_bat/backdrop_bat.png', icon: '/sprites/backdrop_bat/backdrop_bat_icon.png', aspect: 114 / 92, pxH: 92, anchorX: 0.346, nativePx: 92, nativeCanvas: 128, pixelArt: true },
+  benjamin: { src: '/sprites/benjamin/benjamin.png', icon: '/sprites/benjamin/benjamin_icon.png', pain: '/sprites/benjamin/benjamin_pain.png', aspect: 333 / 320, pxH: 320, anchorX: 0.584, nativePx: 84, nativeCanvas: 128, pixelArt: false, idle: { src: '/sprites/benjamin/benjamin_idle.png', frames: 2, aspect: 0.928571, pxH: 224, anchorX: 0.573, restFill: 0.810268, footPad: 0.0 } },
   brax: { src: '/sprites/brax/brax.png', icon: '/sprites/brax/brax_icon.png', aspect: 224 / 211, pxH: 211, anchorX: 0.493, nativePx: 211, nativeCanvas: 256, pixelArt: true, idle: { src: '/sprites/brax/brax_idle.png', frames: 8, aspect: 1.07109, pxH: 211, anchorX: 0.496, restFill: 0.976303, footPad: 0.0 } },
-  caspian: { src: '/sprites/caspian/caspian.png', aspect: 356 / 320, pxH: 320, anchorX: 0.404, nativePx: 887, nativeCanvas: 256, pixelArt: true, idle: { src: '/sprites/caspian/caspian_idle.png', frames: 6, aspect: 1.083333, pxH: 96, anchorX: 0.409, restFill: 0.973958, footPad: 0.0 } },
+  caspian: { src: '/sprites/caspian/caspian.png', icon: '/sprites/caspian/caspian_icon.png', aspect: 356 / 320, pxH: 320, anchorX: 0.406, nativePx: 84, nativeCanvas: 128, pixelArt: false, idle: { src: '/sprites/caspian/caspian_idle.png', frames: 6, aspect: 1.086957, pxH: 92, anchorX: 0.41, restFill: 0.972826, footPad: 0.0 } },
   false_lead: { src: '/sprites/false_lead/false_lead.png', icon: '/sprites/false_lead/false_lead_icon.png', aspect: 228 / 205, pxH: 205, anchorX: 0.533, nativePx: 205, nativeCanvas: 256, pixelArt: true },
-  footlight_skitter: { src: '/sprites/footlight_skitter/footlight_skitter.png', icon: '/sprites/footlight_skitter/footlight_skitter_icon.png', aspect: 116 / 87, pxH: 87, anchorX: 0.509, nativePx: 87, nativeCanvas: 256, pixelArt: true },
-  kael: { src: '/sprites/kael/kael.png', icon: '/sprites/kael/kael_icon.png', aspect: 113 / 92, pxH: 92, anchorX: 0.478, nativePx: 92, nativeCanvas: 128, pixelArt: true, idle: { src: '/sprites/kael/kael_idle.png', frames: 8, aspect: 1.212766, pxH: 94, anchorX: 0.482, restFill: 0.984043, footPad: 0.0 } },
-  maxine: { src: '/sprites/maxine/maxine.png', icon: '/sprites/maxine/maxine_icon.png', aspect: 83 / 108, pxH: 108, anchorX: 0.602, nativePx: 108, nativeCanvas: 128, pixelArt: true, idle: { src: '/sprites/maxine/maxine_idle.png', frames: 8, aspect: 0.831776, pxH: 107, anchorX: 0.545, restFill: 0.953271, footPad: 0.0 } },
-  playbill_mimic: { src: '/sprites/playbill_mimic/playbill_mimic.png', icon: '/sprites/playbill_mimic/playbill_mimic_icon.png', aspect: 92 / 89, pxH: 89, anchorX: 0.516, nativePx: 89, nativeCanvas: 256, pixelArt: true },
-  rebar: { src: '/sprites/rebar/rebar.png', icon: '/sprites/rebar/rebar_icon.png', aspect: 106 / 82, pxH: 82, anchorX: 0.500, nativePx: 82, nativeCanvas: 128, pixelArt: true, idle: { src: '/sprites/rebar/rebar_idle.png', frames: 5, aspect: 1.247059, pxH: 85, anchorX: 0.5, restFill: 0.964706, footPad: 0.0 } },
-  understudy_blue: { src: '/sprites/understudy_blue/understudy_blue.png', icon: '/sprites/understudy_blue/understudy_blue_icon.png', aspect: 92 / 95, pxH: 95, anchorX: 0.370, nativePx: 95, nativeCanvas: 256, pixelArt: true },
-  understudy_green: { src: '/sprites/understudy_green/understudy_green.png', icon: '/sprites/understudy_green/understudy_green_icon.png', aspect: 93 / 96, pxH: 96, anchorX: 0.371, nativePx: 96, nativeCanvas: 256, pixelArt: true },
-  understudy_orange: { src: '/sprites/understudy_orange/understudy_orange.png', icon: '/sprites/understudy_orange/understudy_orange_icon.png', aspect: 92 / 97, pxH: 97, anchorX: 0.370, nativePx: 97, nativeCanvas: 256, pixelArt: true },
-  understudy_red: { src: '/sprites/understudy_red/understudy_red.png', icon: '/sprites/understudy_red/understudy_red_icon.png', aspect: 94 / 97, pxH: 97, anchorX: 0.367, nativePx: 97, nativeCanvas: 256, pixelArt: true },
-  understudy_yellow: { src: '/sprites/understudy_yellow/understudy_yellow.png', icon: '/sprites/understudy_yellow/understudy_yellow_icon.png', aspect: 93 / 97, pxH: 97, anchorX: 0.366, nativePx: 97, nativeCanvas: 256, pixelArt: true },
-  veyra: { src: '/sprites/veyra/veyra.png', aspect: 240 / 320, pxH: 320, anchorX: 0.433, nativePx: 1170, nativeCanvas: 256, pixelArt: true, idle: { src: '/sprites/veyra/veyra_idle.png', frames: 8, aspect: 0.773109, pxH: 119, anchorX: 0.446, restFill: 0.978992, footPad: 0.0 } },
+  footlight_skitter: { src: '/sprites/footlight_skitter/footlight_skitter.png', icon: '/sprites/footlight_skitter/footlight_skitter_icon.png', aspect: 114 / 85, pxH: 85, anchorX: 0.509, nativePx: 85, nativeCanvas: 128, pixelArt: true },
+  kael: { src: '/sprites/kael/kael.png', icon: '/sprites/kael/kael_icon.png', aspect: 345 / 320, pxH: 320, anchorX: 0.406, nativePx: 84, nativeCanvas: 128, pixelArt: false },
+  maxine: { src: '/sprites/maxine/maxine.png', icon: '/sprites/maxine/maxine_icon.png', aspect: 274 / 320, pxH: 320, anchorX: 0.589, nativePx: 84, nativeCanvas: 128, pixelArt: false },
+  playbill_mimic: { src: '/sprites/playbill_mimic/playbill_mimic.png', icon: '/sprites/playbill_mimic/playbill_mimic_icon.png', aspect: 90 / 87, pxH: 87, anchorX: 0.517, nativePx: 87, nativeCanvas: 128, pixelArt: true },
+  rebar: { src: '/sprites/rebar/rebar.png', icon: '/sprites/rebar/rebar_icon.png', aspect: 369 / 320, pxH: 320, anchorX: 0.500, nativePx: 84, nativeCanvas: 128, pixelArt: false },
+  understudy_blue: { src: '/sprites/understudy_blue/understudy_blue.png', icon: '/sprites/understudy_blue/understudy_blue_icon.png', aspect: 303 / 320, pxH: 320, anchorX: 0.421, nativePx: 84, nativeCanvas: 128, pixelArt: false },
+  understudy_green: { src: '/sprites/understudy_green/understudy_green.png', icon: '/sprites/understudy_green/understudy_green_icon.png', aspect: 303 / 320, pxH: 320, anchorX: 0.421, nativePx: 84, nativeCanvas: 128, pixelArt: false },
+  understudy_orange: { src: '/sprites/understudy_orange/understudy_orange.png', icon: '/sprites/understudy_orange/understudy_orange_icon.png', aspect: 303 / 320, pxH: 320, anchorX: 0.421, nativePx: 84, nativeCanvas: 128, pixelArt: false },
+  understudy_red: { src: '/sprites/understudy_red/understudy_red.png', icon: '/sprites/understudy_red/understudy_red_icon.png', aspect: 303 / 320, pxH: 320, anchorX: 0.422, nativePx: 84, nativeCanvas: 128, pixelArt: false },
+  understudy_yellow: { src: '/sprites/understudy_yellow/understudy_yellow.png', icon: '/sprites/understudy_yellow/understudy_yellow_icon.png', aspect: 302 / 320, pxH: 320, anchorX: 0.421, nativePx: 84, nativeCanvas: 128, pixelArt: false },
+  veyra: { src: '/sprites/veyra/veyra.png', icon: '/sprites/veyra/veyra_icon.png', aspect: 239 / 320, pxH: 320, anchorX: 0.435, nativePx: 84, nativeCanvas: 128, pixelArt: false, idle: { src: '/sprites/veyra/veyra_idle.png', frames: 8, aspect: 0.765217, pxH: 115, anchorX: 0.443, restFill: 0.978261, footPad: 0.0 } },
 };
 
 /** Every packed clip, for the dev animation lab. Battle uses `idle` above. */
 export const ANIMATION_CLIPS: Record<string, Record<string, AnimationClip>> = {
-  "aethis": {
-    "idle": {
-      "anchorX": 0.436,
-      "aspect": 0.707071,
-      "footPad": 0.0,
-      "frames": 8,
-      "loops": true,
-      "normalised": 1.0,
-      "pxH": 99,
-      "restFill": 0.984848,
-      "src": "/sprites/aethis/aethis_idle.png"
-    }
-  },
   "benjamin": {
-    "idle": {
-      "anchorX": 0.504,
-      "aspect": 1.25,
+    "attack": {
+      "anchorX": 0.573,
+      "aspect": 0.928571,
       "footPad": 0.0,
-      "frames": 13,
+      "frames": 4,
+      "loops": false,
+      "normalised": 1.8959,
+      "pxH": 224,
+      "restFill": 0.810268,
+      "settlesInto": "idle",
+      "src": "/sprites/benjamin/benjamin_attack.png"
+    },
+    "idle": {
+      "anchorX": 0.573,
+      "aspect": 0.928571,
+      "footPad": 0.0,
+      "frames": 2,
       "loops": true,
       "normalised": 1.0,
-      "pxH": 192,
-      "restFill": 0.984375,
+      "pxH": 224,
+      "restFill": 0.810268,
       "src": "/sprites/benjamin/benjamin_idle.png"
+    },
+    "perfect_form": {
+      "anchorX": 0.573,
+      "aspect": 0.928571,
+      "footPad": 0.0,
+      "frames": 4,
+      "loops": false,
+      "normalised": 2.0805,
+      "pxH": 224,
+      "restFill": 0.810268,
+      "settlesInto": "idle",
+      "src": "/sprites/benjamin/benjamin_perfect_form.png"
+    },
+    "quick_cut": {
+      "anchorX": 0.573,
+      "aspect": 0.928571,
+      "footPad": 0.0,
+      "frames": 4,
+      "loops": false,
+      "normalised": 1.8959,
+      "pxH": 224,
+      "restFill": 0.810268,
+      "settlesInto": "idle",
+      "src": "/sprites/benjamin/benjamin_quick_cut.png"
+    },
+    "rally": {
+      "anchorX": 0.573,
+      "aspect": 0.928571,
+      "footPad": 0.0,
+      "frames": 4,
+      "loops": false,
+      "normalised": 1.628,
+      "pxH": 224,
+      "restFill": 0.810268,
+      "settlesInto": "idle",
+      "src": "/sprites/benjamin/benjamin_rally.png"
+    },
+    "ready": {
+      "anchorX": 0.573,
+      "aspect": 0.928571,
+      "footPad": 0.0,
+      "frames": 2,
+      "loops": false,
+      "normalised": 1.1094,
+      "pxH": 224,
+      "restFill": 0.810268,
+      "settlesInto": "idle",
+      "src": "/sprites/benjamin/benjamin_ready.png"
+    },
+    "sunder": {
+      "anchorX": 0.573,
+      "aspect": 0.928571,
+      "footPad": 0.0,
+      "frames": 4,
+      "loops": false,
+      "normalised": 2.0434,
+      "pxH": 224,
+      "restFill": 0.810268,
+      "settlesInto": "idle",
+      "src": "/sprites/benjamin/benjamin_sunder.png"
     }
   },
   "brax": {
@@ -91,70 +152,70 @@ export const ANIMATION_CLIPS: Record<string, Record<string, AnimationClip>> = {
   },
   "caspian": {
     "idle": {
-      "anchorX": 0.409,
-      "aspect": 1.083333,
+      "anchorX": 0.41,
+      "aspect": 1.086957,
       "footPad": 0.0,
       "frames": 6,
       "loops": true,
       "normalised": 1.0,
-      "pxH": 96,
-      "restFill": 0.973958,
+      "pxH": 92,
+      "restFill": 0.972826,
       "src": "/sprites/caspian/caspian_idle.png"
-    }
-  },
-  "kael": {
-    "idle": {
-      "anchorX": 0.482,
-      "aspect": 1.212766,
-      "footPad": 0.0,
-      "frames": 8,
-      "loops": true,
-      "normalised": 1.0,
-      "pxH": 94,
-      "restFill": 0.984043,
-      "src": "/sprites/kael/kael_idle.png"
-    }
-  },
-  "maxine": {
-    "idle": {
-      "anchorX": 0.545,
-      "aspect": 0.831776,
-      "footPad": 0.0,
-      "frames": 8,
-      "loops": true,
-      "normalised": 1.0,
-      "pxH": 107,
-      "restFill": 0.953271,
-      "src": "/sprites/maxine/maxine_idle.png"
-    }
-  },
-  "rebar": {
-    "idle": {
-      "anchorX": 0.5,
-      "aspect": 1.247059,
-      "footPad": 0.0,
-      "frames": 5,
-      "loops": true,
-      "normalised": 1.0,
-      "pxH": 85,
-      "restFill": 0.964706,
-      "src": "/sprites/rebar/rebar_idle.png"
     }
   },
   "veyra": {
     "idle": {
-      "anchorX": 0.446,
-      "aspect": 0.773109,
+      "anchorX": 0.443,
+      "aspect": 0.765217,
       "footPad": 0.0,
       "frames": 8,
       "loops": true,
       "normalised": 1.0,
-      "pxH": 119,
-      "restFill": 0.978992,
+      "pxH": 115,
+      "restFill": 0.978261,
       "src": "/sprites/veyra/veyra_idle.png"
     }
   }
 };
+
+/**
+ * Impact effects -- hit sparks and bursts that play ON a target rather than
+ * belonging to any one actor. Authored in art/effects/, keyed by file name.
+ */
+export interface EffectStrip {
+  id: string;
+  src: string;
+  frames: number;
+  /** width / height of ONE frame. */
+  aspect: number;
+}
+
+export const EFFECTS: Record<string, EffectStrip> = {
+  "impact": {
+    "aspect": 1.041758,
+    "frames": 3,
+    "id": "impact",
+    "src": "/effects/impact.png"
+  }
+};
+
+/** Every published scenery image, for the stage lab's prop picker. */
+export const SCENERY_IMAGES: string[] = [
+  "/background/battle_screens/battle_screen_1.png",
+  "/background/paper_stage/backdrop.png",
+  "/background/paper_stage/bird_blue.png",
+  "/background/paper_stage/bird_yellow.png",
+  "/background/paper_stage/bush.png",
+  "/background/paper_stage/cloud.png",
+  "/background/paper_stage/column_l.png",
+  "/background/paper_stage/column_r.png",
+  "/background/paper_stage/curtain_l.png",
+  "/background/paper_stage/curtain_r.png",
+  "/background/paper_stage/stage.png",
+  "/background/paper_stage/top.png",
+  "/background/paper_stage/tree.png",
+  "/background/screens/main_screen_stage.png"
+];
 
 export interface AnimationClip {
   src: string;

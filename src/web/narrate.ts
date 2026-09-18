@@ -17,6 +17,20 @@ export interface Floater {
   kind: 'damage' | 'heal';
   at: Pos;
   /**
+   * Which way this number is thrown, as a fraction of a small arc.
+   *
+   * A multi-hit puts six numbers on one target within a second, and before this
+   * they all rose from the same pixel in the same direction -- six labels
+   * stacked one behind another, which reads as one number flickering rather
+   * than as six blows. Scattering them turns the volley into something you can
+   * count at a glance.
+   *
+   * Assigned where the floater is made rather than rolled in the renderer,
+   * because a render can happen many times for one floater and the number must
+   * not jump between frames.
+   */
+  spray: { x: number; rise: number; tilt: number };
+  /**
    * Whose board `at` is a coordinate ON.
    *
    * Both sides use column 2 -- the party's front rank and the enemy's are the

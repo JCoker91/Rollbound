@@ -40,6 +40,42 @@ export const clipKey = (who: string, clip: string): string => `${who}/${clip}`;
 
 /** CSS identifier for a clip's keyframes. Slashes are not legal in one. */
 export const clipAnimName = (who: string, clip: string): string => `clip-${who}-${clip}`;
+/** The companion track that squashes and leans the drawing. See `poseKeyframes`. */
+export const poseAnimName = (who: string, clip: string): string => `pose-${who}-${clip}`;
+
+/** An ability's name as a clip name: `Quick Cut` -> `quick_cut`. */
+export const abilitySlug = (ability: string): string =>
+  ability
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+
+/**
+ * Which clip an actor plays for a given ability.
+ *
+ * Per-ability first, `attack` as the fallback. The lookup is by NAME, so
+ * authoring a new animation is entirely a matter of what the file is called --
+ * drop `benjamin_quick_cut_4x1.png` into the animations folder and Quick Cut
+ * starts using it, with no registry to update and no code to touch. The packer
+ * already derives clip names from file names, so nothing in the pipeline had to
+ * learn what an ability is.
+ *
+ * Falling back rather than requiring one per ability is what keeps this
+ * incremental: a character with forty abilities and one `attack` sheet plays
+ * exactly as they do today, and every sheet added after that upgrades one
+ * ability without disturbing the rest.
+ */
+export function abilityClipName(
+  clips: Record<string, unknown> | undefined,
+  ability: string | undefined,
+): string {
+  if (!clips) return 'attack';
+  if (ability) {
+    const slug = abilitySlug(ability);
+    if (slug && clips[slug]) return slug;
+  }
+  return 'attack';
+}
 
 export const tuningFor = (who: string, clip: string): ClipTuning | undefined =>
   ANIMATION_TUNING[clipKey(who, clip)];
@@ -107,6 +143,61 @@ export function frameTransform(i: number, frames: number, t?: FrameTune): string
   return `translate(${+x.toFixed(4)}%, ${+y.toFixed(4)}%)`;
 }
 
+/**
+ * Squash, stretch and lean for one frame, as a transform.
+ *
+ * Identity when nothing is authored, which matters: the overwhelming majority
+ * of frames tune nothing, and emitting `scale(1) skewX(0deg) skewY(0deg)` on
+ * every one of them would put a composited transform on every sprite in the
+ * cast for no reason at all.
+ */
+export function poseTransform(t?: FrameTune): string {
+  const parts: string[] = [];
+  if (t?.scale != null && t.scale !== 1) parts.push(`scale(${+t.scale.toFixed(4)})`);
+  if (t?.skewX) parts.push(`skewX(${+t.skewX.toFixed(3)}deg)`);
+  if (t?.skewY) parts.push(`skewY(${+t.skewY.toFixed(3)}deg)`);
+  return parts.length ? parts.join(' ') : 'none';
+}
+
+/**
+ * The companion keyframes that pose the drawing, on a SEPARATE element.
+ *
+ * Why not fold this into `frameTransform`: that transform's whole job is to
+ * slide an N-frame-wide strip sideways so that frame `i` fills the window, and
+ * the offset it uses is measured in strip-widths. Multiply that element by
+ * `scale(1.2)` and the offset scales with it, so the strip lands a fifth of a
+ * frame off and the clip shows two half-drawings. Squash and frame-selection
+ * genuinely cannot share an element.
+ *
+ * So the strip keeps selecting frames and a wrapper does the posing, on an
+ * identical set of stops. Both are driven from the same `steps`, so they cannot
+ * drift: one authored timeline, two tracks reading it.
+ *
+ * Returns '' when no frame in the clip poses anything, and the caller then
+ * leaves the animation off entirely rather than running an empty track.
+ */
+export function poseKeyframes(name: string, steps: Step[]): string {
+  if (!steps.length) return '';
+  if (!steps.some((s) => s.tune?.scale != null || s.tune?.skewX || s.tune?.skewY)) return '';
+  const total = steps.reduce((sum, s) => sum + s.hold, 0);
+
+  const stops: string[] = [];
+  let at = 0;
+  for (const step of steps) {
+    const pct = +((at / total) * 100).toFixed(4);
+    // `step-end` for the same reason the strip uses it: a pose belongs to a
+    // drawing, and easing between two drawings' poses would smear one onto the
+    // other. An animator who wants a pose to ease authors it across frames.
+    stops.push(
+      `  ${pct}% { transform: ${poseTransform(step.tune)}; animation-timing-function: step-end; }`,
+    );
+    at += step.hold;
+  }
+  const last = steps[steps.length - 1];
+  stops.push(`  100% { transform: ${poseTransform(last.tune)}; }`);
+  return `@keyframes ${name} {\n${stops.join('\n')}\n}`;
+}
+
 /** The `@keyframes` rule for one clip. */
 export function clipKeyframes(name: string, frames: number, steps: Step[]): string {
   if (!steps.length) return '';
@@ -138,6 +229,8 @@ export function keyframesFor(clips: { who: string; clip: string; frames: number 
     seen.add(name);
     const steps = clipTimeline(frames, tuningFor(who, clip), orderFor(who, clip));
     out.push(clipKeyframes(name, frames, steps));
+    const pose = poseKeyframes(poseAnimName(who, clip), steps);
+    if (pose) out.push(pose);
   }
   return out.join('\n\n');
 }

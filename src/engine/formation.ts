@@ -35,6 +35,79 @@ export interface Slot {
   yPct: number;
 }
 
+/** Continuous motion for a stage piece. See `StageLayer.motion`. */
+export interface StageMotion {
+  /** Seconds for one crossing. */
+  seconds: number;
+  /** How far it travels horizontally, in percent of the stage. 0 stays put. */
+  travel?: number;
+  /** Vertical bob, in percent of the stage. */
+  bob?: number;
+  /** Seconds for one bob. Independent of the crossing, on purpose. */
+  bobSeconds?: number;
+  /** Gentle tilt as it moves, in degrees. */
+  sway?: number;
+  /** Seconds to wait before starting, so two copies do not fly in lockstep. */
+  delay?: number;
+}
+
+/** One piece of a layered stage. See `EncounterDef.layers`. */
+export interface StageLayer {
+  src: string;
+  /** 0 = painted back wall, 1 = nearest the audience. Drives drift and order. */
+  depth: number;
+  /** Left edge, percent of the stage. Omit to fill the whole width. */
+  x?: number;
+  /** Top edge, percent. Omit with `bottom` to pin to the floor instead. */
+  y?: number;
+  bottom?: number;
+  right?: number;
+  /** Height as a percent of the stage. Omit to fill. */
+  h?: number;
+  /**
+   * Width as a percent of the stage, INDEPENDENT of `h`.
+   *
+   * Omitted means the aspect ratio is kept, which is what a prop wants. Set it
+   * and the piece stretches -- a hedge widened to run the length of the stage,
+   * a backdrop squashed to fit a shallower set. Deliberately separate from `h`
+   * rather than a single `scale`, because the two are different decisions: how
+   * big a thing is, and whether it has been pulled out of shape.
+   */
+  w?: number;
+  /** Mirrored horizontally, for a piece used on both sides. */
+  flip?: boolean;
+  /**
+   * Drawn IN FRONT of the Performers rather than behind them.
+   *
+   * The actors are not the top of the stack -- a curtain leg hangs between the
+   * audience and the boards, and anyone who walks behind it is hidden. Without
+   * this every piece would have to be scenery, which is the same as saying the
+   * stage has no front.
+   */
+  front?: boolean;
+  /**
+   * Cast a drop shadow, so the piece reads as a cutout standing in front of
+   * what is behind it rather than as paint on the same surface.
+   *
+   * Scaled by `depth` at render time: a prop near the audience throws a longer,
+   * softer shadow than one against the back cloth. That is the whole trick for
+   * selling depth in a flat scene -- the parallax says the layers are apart,
+   * and the shadows say which way round.
+   */
+  shadow?: boolean;
+  /**
+   * Continuous motion, for a piece that is never still -- a bird crossing the
+   * stage, a cloud drifting, a banner swinging.
+   *
+   * Composed from two INDEPENDENT loops rather than one authored path: a
+   * horizontal pass and a vertical bob, on their own clocks. That is what makes
+   * a bird read as flying rather than as a sprite sliding along a line -- the
+   * two cycles drift against each other, so no two passes look identical, and
+   * it needs no keyframes generated per prop.
+   */
+  motion?: StageMotion;
+}
+
 export interface EncounterDef {
   name: string;
   /**
@@ -49,6 +122,28 @@ export interface EncounterDef {
   enemyLevel?: number;
   /** Backdrop image, drawn behind both formations. */
   background: string;
+  /**
+   * A layered stage, drawn back to front INSTEAD of the flat `background`.
+   *
+   * The flat image stays the fallback and the default: one painting is the
+   * right answer for a backdrop nothing moves in front of. Layers exist for a
+   * stage whose props are meant to read as props -- cutouts on stands with a
+   * gap between them and the painted cloth behind, which is what the theatre
+   * this game is set in would actually build.
+   *
+   * `depth` drives the ambient drift: 0 is the painted back wall and does not
+   * move, 1 is the closest thing to the audience. Positions are percentages of
+   * the stage so a layer set survives any render size.
+   */
+  layers?: StageLayer[];
+  /**
+   * Id of a scene authored in the stage lab (`art/scenes/<id>.json`).
+   *
+   * Takes precedence over `layers`, which stays as the in-source fallback: a
+   * scene the lab has never touched still renders, and one it has is not stuck
+   * behind a code edit.
+   */
+  scene?: string;
   /** Five, in roster order. */
   partySlots: Slot[];
   /** Up to seven, filled in the order enemies are supplied. */
@@ -152,34 +247,40 @@ const slot = (col: number, row: number, xPct: number, yPct: number): Slot => ({ 
  * roadmap item -- the mechanic is here, the screen to drive it is not.
  */
 /*
- * THE PARTY IS A 3x3 GRID -- nine slots for five Performers.
+ * THE PARTY IS A 2-1-2 -- five slots for five Performers.
  *
  * Columns are rank, and always were: `withinReach` counts the defender's
  * occupied columns, so column 2 is whoever the enemy's `range: 1` can touch.
- * What is new is that ROWS are mechanical too -- `scope: 'row'` and
- * `scope: 'column'` cut the grid along either axis, so how the party is spread
- * across nine slots decides how much of it one attack catches.
+ * Rows are mechanical too -- `scope: 'row'` and `scope: 'column'` cut the
+ * formation along either axis -- so how the party is spread decides how much of
+ * it one attack catches. Columns ask "who can reach me", rows ask "how many of
+ * us does this catch", and the tension between them is the formation puzzle.
  *
- * That is the whole reason to have a grid rather than three ranks. Before, `y`
- * was pure staging: moving a Performer up or down changed nothing any rule
- * could read, so a "grid" was a 3x1 with decorative stacking. Now the two axes
- * ask different questions -- columns ask "who can reach me", rows ask "how many
- * of us does this catch" -- and the tension between them is the formation
- * puzzle. Bunch up to stay out of reach and one row-attack hits three of you.
+ * It was a 3x3 with four slots empty, and the argument for the empty slots was
+ * that repositioning needs somewhere to go. That stopped being true when
+ * repositioning became a SWAP with any slot on the board: a full formation is
+ * navigable now because you trade places rather than step into a gap. What the
+ * spare slots were actually buying was a front rank with three positions, and
+ * nothing ever wants three Performers in front -- so they were four squares of
+ * board that existed to make a rule work that no longer needs them.
  *
- * FOUR SLOTS ARE EMPTY, and they have to be: repositioning is a wildcard action
- * every Performer has (see `REPOSITION`), and a full board is a rigid body with
- * nowhere to go. Nine and five is what makes the grid navigable.
+ * Two, one, two. It is the shape the party already plays as: a pair holding the
+ * line, a pair behind them, and one in the middle who can be reached by things
+ * that reach past the front without being exposed to everything.
+ *
+ * Rows 0 and 2 for the pairs, 1 for the centre, so the three horizontal lines
+ * still mean something: `row` 0 and `row` 2 each catch a front and a back
+ * Performer, and `row` 1 catches the one in the middle. A pair sharing rows 0
+ * and 1 would have left row 2 empty and made one of the three cuts free.
  */
 export const PARTY_GRID_COLS = 3;
-export const PARTY_GRID_ROWS = 3;
 
 /*
- * Nine draw positions. Rows are held between 0.57 and 0.83 of the stage:
- * the painted floor ends around 0.88 where the footlights sit, and a slot on
- * the lip puts a Performer half into the curtain. The old five-slot layout ran
- * 0.61-0.84 for the same reason, and three rows have to fit in that band
- * rather than widen it.
+ * Five draw positions, unchanged from the nine they were chosen out of.
+ *
+ * Rows are held between 0.57 and 0.83 of the stage: the painted floor ends
+ * around 0.88 where the footlights sit, and a slot on the lip puts a Performer
+ * half into the curtain.
  *
  * `x` drifts left as `y` grows so each rank reads as a shallow arc rather than
  * a column, which is what keeps the formation looking staged instead of
@@ -187,17 +288,13 @@ export const PARTY_GRID_ROWS = 3;
  */
 export const PARTY_SLOTS_ALL: Slot[] = [
   // front (col 2) -- nearest the enemy line
-  slot(2, 0, 0.44, 0.57),
-  slot(2, 1, 0.42, 0.70),
-  slot(2, 2, 0.40, 0.83),
-  // middle
-  slot(1, 0, 0.30, 0.59),
-  slot(1, 1, 0.28, 0.72),
-  slot(1, 2, 0.26, 0.82),
-  // back
-  slot(0, 0, 0.16, 0.61),
-  slot(0, 1, 0.14, 0.73),
-  slot(0, 2, 0.12, 0.83),
+  slot(2, 0, 0.415, 0.665),
+  slot(2, 2, 0.355, 0.825),
+  // middle (col 1) -- one slot, the centre
+  slot(1, 1, 0.305, 0.735),
+  // back (col 0)
+  slot(0, 0, 0.255, 0.645),
+  slot(0, 2, 0.195, 0.805),
 ];
 
 /** One slot by grid coordinate, for the renderer's empty-slot markers. */
@@ -207,8 +304,8 @@ export const partySlotAt = (col: number, row: number): Slot | undefined =>
 /**
  * Every slot a side's board has, occupied or not.
  *
- * The party's is the full 3x3 because a Performer can be repositioned into any
- * of it. The enemy block is whatever the encounter deployed into and is not a
+ * The party's is all five because a Performer can be repositioned into any of
+ * them. The enemy block is whatever the encounter deployed into and is not a
  * grid -- enemies do not move, so nothing needs to name a slot they are not
  * standing in. It is derived from the encounter rather than listed here for
  * exactly that reason: a boss layout is a different shape from a corridor one.
@@ -228,13 +325,11 @@ export const slotsOf = (side: Side): Slot[] => (side === 'player' ? PARTY_SLOTS_
  * battle they can now be moved instead, which is the stopgap for that screen.
  */
 export const STANDARD_PARTY_SLOTS: Slot[] = [
-  partySlotAt(2, 1)!, // front, centre
   partySlotAt(2, 0)!, // front, top
-  partySlotAt(1, 1)!, // middle, centre
-  partySlotAt(1, 2)!, // middle, bottom
-  partySlotAt(0, 1)!, // back, centre
+  partySlotAt(2, 2)!, // front, bottom
+  partySlotAt(1, 1)!, // middle
   partySlotAt(0, 0)!, // back, top
-  partySlotAt(0, 2)!, // back, bottom -- for a seventh
+  partySlotAt(0, 2)!, // back, bottom
 ];
 
 /**
@@ -281,11 +376,39 @@ export const STANDARD_ENEMY_SLOTS: Slot[] = [
   // the block earlier pushed it left until the two sides looked interlocked
   // instead of facing each other across a stage; the space between them is
   // what makes the formation read as two formations.
-  slot(3, 0, 0.60, 0.64),
-  slot(3, 1, 0.58, 0.82),
-  slot(4, 0, 0.75, 0.6),
-  slot(4, 1, 0.73, 0.74),
-  slot(4, 2, 0.71, 0.9),
-  slot(5, 0, 0.90, 0.64),
-  slot(5, 1, 0.88, 0.8),
+  slot(3, 0, 0.595, 0.745),
+  slot(3, 1, 0.575, 0.825),
+  slot(4, 0, 0.685, 0.705),
+  slot(4, 1, 0.665, 0.785),
+  slot(4, 2, 0.645, 0.845),
+  slot(5, 0, 0.765, 0.665),
+  slot(5, 1, 0.745, 0.755),
 ];
+
+/**
+ * Where a Performer steps to when they take their turn -- CENTRE STAGE, not the
+ * front corner of their own block.
+ *
+ * It used to be derived from the party's own extents, which put it at the front
+ * edge of the formation: technically forward, but reading as a character taking
+ * half a step into the person in front of them rather than walking out to
+ * perform. The two sides face each other across the middle of the boards, so
+ * that middle is where the acting happens.
+ *
+ * Each side steps ACROSS the middle, toward the other.
+ *
+ * They used to stop just short of it -- the party's mark at 0.465 and the
+ * enemy's at 0.535 -- which kept each one inside its own half. With the party
+ * standing around x 0.26-0.42 and the enemy block at 0.59-0.70, that read as a
+ * Performer shuffling a little way out of formation rather than crossing the
+ * boards to reach somebody. Going past centre puts them next to what they are
+ * acting on, which is the point of stepping out at all.
+ *
+ * Still offset from each other so the two sides never occupy the same mark, and
+ * still held back from the footlights: a figure at the very front of a stage is
+ * cropped by the apron and stands in front of its own shadow.
+ */
+export const DOWNSTAGE: Record<Side, { x: number; y: number }> = {
+  player: { x: 0.545, y: 0.80 },
+  enemy: { x: 0.455, y: 0.80 },
+};

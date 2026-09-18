@@ -1,21 +1,6 @@
 {
-  "clips": {
-    "idle": {
-      "anchorX": 0.436,
-      "aspect": 0.707071,
-      "footPad": 0.0,
-      "frames": 8,
-      "loops": true,
-      "normalised": 1.0,
-      "pxH": 99,
-      "restFill": 0.984848,
-      "size": 40793,
-      "src": "/sprites/aethis/aethis_idle.png",
-      "trimmed": 0
-    }
-  },
   "stamp": {
-    "sha256": "27b6b217ec4a5420cc6458d4f22c8b48e4807bbe0c5ee87936307ba49b81a993",
-    "size": 8758
+    "sha256": "ea3554e66dc91e69cbc62abe5a3a7ee113ca5689b59831889feb9e97b0a06de7",
+    "size": 137396
   }
 }

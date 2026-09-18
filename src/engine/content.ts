@@ -15,8 +15,10 @@ import {
   STANDARD_ENEMY_SLOTS,
   STANDARD_PARTY_SLOTS,
   type EncounterDef,
+  type StageLayer,
 } from './formation.ts';
 import { SPRITE_METRICS, type SpriteId } from './sprites.generated.ts';
+import { hitSplitFor } from './hitSplits.ts';
 import { aligned } from './elements.ts';
 
 /**
@@ -226,7 +228,7 @@ const DRILL_DIE: DieSpec[] = [
  *
  * Not authored on any kit, and deliberately not authorable: it is injected into
  * every player character in `createBattle`, so a new Performer cannot ship
- * without it and nobody has to remember. The party is a 3x3 grid with four
+ * without it and nobody has to remember. The party is a 2-1-2 of five
  * empty slots (see `PARTY_SLOTS_ALL`), and a grid you cannot move around is a
  * seating chart.
  *
@@ -806,6 +808,9 @@ export const ROSTER: CharacterDef[] = [
             stats: ['attack', 'physicalDefense', 'magicalDefense'],
             percent: 20, of: 'targetBase', turns: 3,
           },
+          // The split is authored in the animation lab and lives in
+          // hitSplits.json -- see the fold at the bottom of this file. Stating
+          // one here would pin it and stop the lab from tuning it.
           { do: 'damage', power: 2.0 },
         ],
       },
@@ -1772,11 +1777,97 @@ export function sceneFor(stage: number): { encounter: EncounterDef; enemies: Cha
   };
 }
 
+/*
+ * The paper stage, assembled from nine loose pieces.
+ *
+ * They do NOT arrive pre-registered -- each was drawn on its own canvas with
+ * its own margins, so every position and height here is authored rather than
+ * measured. That is more work than dropping in one painting, but it is also
+ * what makes the stage a set: the same pieces lay out a different scene, and a
+ * prop standing in front of the cloth can be moved independently of it.
+ *
+ * Ordered back to front. `depth` doubles as the drift rate, so the painted back
+ * wall sits still while the curtains nearest the audience travel furthest.
+ *
+ * Props stand ON the boards, so they are pinned by `bottom` rather than `y`:
+ * the floor edge is the line they share, and pinning to the top would leave
+ * them floating whenever the stage changed aspect.
+ */
+const PAPER_STAGE: StageLayer[] = [
+  /*
+   * Built like a real set, back to front: painted cloth, then the flying
+   * pieces, then the boards, then the soft goods, then the architecture.
+   *
+   * Everything sits LOW in the frame on purpose. The playing surface is the
+   * bottom half of the picture, so a composition centred in the frame leaves
+   * the scenery floating in the sky above the boards -- which is exactly what
+   * it did on the first pass. Props are pinned by `bottom` for the same
+   * reason: the floor line is the one edge they share with the cast.
+   */
+  { src: '/background/paper_stage/backdrop.png', depth: 0 },
+
+  // Flown in from above, so the rods run UP out of frame rather than down to a
+  // stand. Pinned by `y` because the top of the rod is the edge they hang from.
+  { src: '/background/paper_stage/cloud.png', depth: 0.1, x: 22, y: -6, h: 26, shadow: true },
+  { src: '/background/paper_stage/cloud.png', depth: 0.1, right: 23, y: -9, h: 26, shadow: true },
+
+  // The boards, without a valance -- that hangs at the very front now.
+  { src: '/background/paper_stage/stage.png', depth: 0 },
+
+  // Cutouts standing ON the boards.
+  { src: '/background/paper_stage/tree.png', depth: 0.34, x: 4, bottom: 30, h: 30, shadow: true },
+  { src: '/background/paper_stage/tree.png', depth: 0.34, right: 5, bottom: 30, h: 30, flip: true, shadow: true },
+  { src: '/background/paper_stage/bush.png', depth: 0.5, x: 16, bottom: 29, h: 10, shadow: true },
+  { src: '/background/paper_stage/bush.png', depth: 0.5, right: 17, bottom: 29, h: 10, shadow: true },
+  { src: '/background/paper_stage/bush.png', depth: 0.5, x: 45, bottom: 31, h: 7, shadow: true },
+
+  // Architecture, in front of the Performers: a column stands between the
+  // audience and the stage, so anyone behind one is hidden by it.
+  // Legs hang in FRONT of the scenery and run clear off the edge of the screen,
+  // so the picture is closed at the sides by cloth rather than by a hard crop.
+  // Part of the architecture rather than the set, so they live outside the
+  // camera with the columns -- see the `proscenium` overlay.
+  { src: '/background/paper_stage/curtain_l.png', depth: 1, x: -6, y: -3, h: 112, front: true, shadow: true },
+  { src: '/background/paper_stage/curtain_r.png', depth: 1, right: -6, y: -3, h: 112, front: true, shadow: true },
+  { src: '/background/paper_stage/column_l.png', depth: 1, x: -1, y: -2, h: 104, front: true, shadow: true },
+  { src: '/background/paper_stage/column_r.png', depth: 1, right: -1, y: -2, h: 104, front: true, shadow: true },
+  { src: '/background/paper_stage/top.png', depth: 1, x: -1, y: -1, h: 20, front: true, shadow: true },
+];
+
 export const CURTAIN_CALL: EncounterDef = {
   name: 'Curtain Call',
   background: '/background/battle_screens/battle_screen_1.png',
+  // Authored in the stage lab and stored at art/scenes/<id>.json. The constant
+  // above is the fallback and the seed -- a scene file wins where one exists,
+  // so composing in the lab does not mean editing this source file.
+  scene: 'curtain_call',
+  layers: PAPER_STAGE,
   partySlots: STANDARD_PARTY_SLOTS,
   enemySlots: STANDARD_ENEMY_SLOTS,
 };
 
 export const ENCOUNTERS: EncounterDef[] = [CURTAIN_CALL];
+
+
+/*
+ * Fold the lab-authored damage splits into the roster, once, at load.
+ *
+ * Applied HERE rather than looked up wherever damage resolves, so that every
+ * consumer -- the battle, the sim, the generated rules text, the star sheets --
+ * sees one ability with one shape. A lookup scattered across those would be
+ * four chances for the sheet to promise something the engine does not do,
+ * which is the exact drift `describe.ts` exists to prevent.
+ *
+ * An ability that already states its own `hits` in this file keeps them: source
+ * beats data, so a split can still be pinned where it matters and the lab
+ * cannot quietly retune it.
+ */
+for (const def of ROSTER) {
+  for (const ability of def.abilities) {
+    const shares = hitSplitFor(def.id, ability.name);
+    if (!shares) continue;
+    for (const fx of ability.effects ?? []) {
+      if (fx.do === 'damage' && fx.hits == null) fx.hits = shares;
+    }
+  }
+}

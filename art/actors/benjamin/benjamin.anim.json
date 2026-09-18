@@ -1,8 +1,224 @@
 {
+  "attack": {
+    "impacts": [
+      {
+        "frame": 2,
+        "effect": "impact",
+        "at": "each",
+        "scale": 1.15,
+        "dy": 0
+      },
+      {
+        "frame": 3,
+        "effect": "impact",
+        "at": "each"
+      }
+    ],
+    "placement": {
+      "scale": 1.17
+    },
+    "frames": [
+      {
+        "hold": 1.3,
+        "dx": -5.5
+      },
+      {
+        "dx": -1.5
+      },
+      {
+        "hold": 1.75
+      },
+      {
+        "hold": 1.5
+      }
+    ],
+    "stepMs": 242
+  },
   "idle": {
     "placement": {
-      "dx": -8
+      "dx": 7
     },
-    "stepMs": 176
+    "stepMs": 1500,
+    "frames": [
+      {
+        "hold": 3.2
+      },
+      {
+        "hold": 0.1
+      }
+    ]
+  },
+  "perfect_form": {
+    "impacts": [
+      {
+        "frame": 1,
+        "effect": "impact",
+        "at": "each",
+        "scale": 2,
+        "dy": 0,
+        "dx": 0
+      },
+      {
+        "frame": 2,
+        "effect": "impact",
+        "at": "each",
+        "scale": 1,
+        "dx": 50,
+        "dy": 0
+      },
+      {
+        "frame": 3,
+        "effect": "impact",
+        "at": "each",
+        "scale": 1
+      },
+      {
+        "frame": 4,
+        "effect": "impact",
+        "at": "each",
+        "scale": 0.7,
+        "dx": -20,
+        "dy": 20,
+        "delay": 0
+      },
+      {
+        "frame": 5,
+        "effect": "impact",
+        "at": "each",
+        "dy": -20,
+        "dx": -30
+      },
+      {
+        "frame": 6,
+        "effect": "impact",
+        "at": "each",
+        "scale": 1.6,
+        "dx": 18,
+        "dy": 12
+      }
+    ],
+    "placement": {
+      "scale": 1.07
+    },
+    "frames": [
+      {
+        "hold": 4
+      },
+      {},
+      {
+        "hold": 2
+      },
+      {
+        "hold": 1.5
+      }
+    ],
+    "order": [
+      0,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      2
+    ],
+    "stepMs": 259
+  },
+  "quick_cut": {
+    "impacts": [
+      {
+        "frame": 1,
+        "effect": "impact",
+        "at": "each",
+        "scale": 1.15,
+        "dy": -8
+      },
+      {
+        "frame": 2,
+        "effect": "impact",
+        "at": "each"
+      }
+    ],
+    "placement": {
+      "scale": 1.17
+    },
+    "frames": [
+      {
+        "hold": 1.3,
+        "dx": -5.5
+      },
+      {
+        "dx": -1.5
+      },
+      {
+        "hold": 1.75
+      },
+      {
+        "hold": 1.5
+      }
+    ],
+    "stepMs": 242
+  },
+  "rally": {
+    "placement": {
+      "scale": 1.205,
+      "dx": -3,
+      "dy": 0.5
+    },
+    "frames": [
+      {},
+      {
+        "hold": 1.25,
+        "scale": 1.05
+      },
+      {
+        "hold": 6,
+        "dx": -4
+      },
+      {
+        "dx": 1.5
+      }
+    ],
+    "stepMs": 193
+  },
+  "ready": {
+    "placement": {
+      "dx": -6
+    },
+    "frames": [
+      {
+        "hold": 2
+      },
+      {
+        "hold": 2
+      }
+    ],
+    "stepMs": 232
+  },
+  "sunder": {
+    "stepMs": 150,
+    "frames": [
+      {
+        "hold": 1.6
+      },
+      {
+        "hold": 0.7
+      },
+      {
+        "hold": 1
+      },
+      {
+        "hold": 1.6
+      }
+    ],
+    "impacts": [
+      {
+        "frame": 1,
+        "effect": "impact",
+        "at": "each",
+        "scale": 1.2,
+        "dy": -6
+      }
+    ]
   }
 }

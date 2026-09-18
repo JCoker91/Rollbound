@@ -1058,3 +1058,592 @@ button.big em {
   border-radius: 6px;
   padding: 8px;
 }
+
+
+/* --- animation lab: impact effects ------------------------------------- */
+.lab-impacts {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 4px;
+}
+
+.lab-impacts-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.75;
+}
+
+/*
+ * One impact, as a card.
+ *
+ * It was a single four-column row holding eleven controls, with number inputs
+ * `4.5ch` wide -- too narrow to show `1200`, so the one field whose value is
+ * four digits was the one you could not read. Everything fought for the same
+ * horizontal space in a 340px panel and nothing had room.
+ *
+ * Three bands instead: what it is and where it lands, then the numbers that
+ * tune it, then what those numbers resolve to. Each band is short enough to
+ * scan, and the numbers get a grid that wraps instead of a row that crushes.
+ */
+.lab-impact {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.lab-impact-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* The effect picker earns the space; the placement select takes what is left
+   and the remove button never moves. */
+.lab-impact-head select:first-child { flex: 0 0 auto; }
+.lab-impact-head select:nth-child(2) { flex: 1 1 auto; min-width: 0; }
+.lab-impact-head .lab-impact-drop { margin-left: auto; }
+
+/*
+ * The tuning numbers.
+ *
+ * `auto-fit` with a floor wide enough for a label and four digits, so the panel
+ * decides how many fit rather than the row being fixed at a count that is wrong
+ * at some widths. Every field is the same size: they are read as a set, and one
+ * narrower than the others reads as less important than it is.
+ */
+.lab-impact-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
+  gap: 5px;
+}
+
+.lab-impact-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+  min-width: 0;
+}
+
+.lab-impact-grid label span {
+  opacity: 0.62;
+  letter-spacing: 0.04em;
+}
+
+.lab-impact-grid input {
+  width: 100%;
+  min-width: 0;
+  padding: 3px 5px;
+  font: inherit;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(0, 0, 0, 0.32);
+  color: inherit;
+}
+
+.lab-impact-grid input:focus-visible {
+  outline: 2px solid #7fd7ff;
+  outline-offset: -1px;
+}
+
+/* What the settings above work out to, in words. Quiet -- it is a readout, not
+   a control, and it must not look like something to click. */
+.lab-impact-foot {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  opacity: 0.55;
+  font-variant-numeric: tabular-nums;
+}
+
+.lab-impact-drop {
+  line-height: 1;
+  padding: 2px 8px;
+  flex: 0 0 auto;
+}
+
+/* --- stage lab ---------------------------------------------------------- */
+.stage-lab {
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  gap: 14px;
+  padding: 14px;
+  height: 100%;
+  min-height: 0;
+}
+
+@media (max-width: 900px) {
+  .stage-lab { grid-template-columns: 1fr; }
+}
+
+.stage-lab-view {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  overflow: hidden;
+  background: #0b0810;
+  border-radius: 10px;
+}
+
+/* The same 1672/941 box the battle frame uses, so a percentage authored here
+   means the same thing there. Getting that wrong would make the lab a liar. */
+.stage-lab-frame {
+  position: relative;
+  aspect-ratio: 1672 / 941;
+  width: 100%;
+  max-height: 100%;
+  overflow: hidden;
+  touch-action: none;
+}
+
+.stage-lab-layer {
+  position: absolute;
+  cursor: grab;
+  user-select: none;
+}
+.stage-lab-layer:active { cursor: grabbing; }
+.stage-lab-layer.picked { outline: 2px dashed #7fd7ff; outline-offset: -2px; }
+
+/* Where the cast actually stands. A stage judged without them is judged
+   against the wrong thing. */
+.stage-lab-mark {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  margin: -5px 0 0 -5px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+}
+.stage-lab-mark.player { background: #6fd08c; }
+.stage-lab-mark.enemy { background: #e2705f; }
+
+.stage-lab-side {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: auto;
+  min-height: 0;
+  font-size: 13px;
+}
+.stage-lab-side h3 {
+  margin: 6px 0 0;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.75;
+}
+.stage-lab-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.stage-lab-check { display: flex; align-items: center; gap: 6px; }
+
+.stage-lab-props {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  gap: 6px;
+}
+.stage-lab-props button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 5px 3px;
+  font-size: 10px;
+  line-height: 1.1;
+}
+.stage-lab-props img { height: 34px; width: auto; max-width: 100%; object-fit: contain; }
+
+.stage-lab-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.stage-lab-list li { display: grid; grid-template-columns: 1fr auto auto auto; gap: 3px; }
+.stage-lab-list li.picked .pick { outline: 1px solid #7fd7ff; }
+.stage-lab-list .pick { text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stage-lab-list em { opacity: 0.6; font-style: normal; }
+
+.stage-lab-props-edit { display: flex; flex-direction: column; gap: 8px; }
+
+/* A mark is a handle, not decoration: it is what you grab to move a slot. */
+.stage-lab-mark {
+  cursor: grab;
+  pointer-events: auto;
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+}
+.stage-lab-mark:active { cursor: grabbing; }
+.stage-lab-mark b {
+  position: absolute;
+  top: 14px;
+  font: 9px/1 ui-monospace, monospace;
+  color: #fff;
+  text-shadow: 0 1px 2px #000;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+/*
+ * Scene identity: the file name, the display name, and the stretch of the
+ * ladder the set dresses.
+ *
+ * The id field is deliberately a plain text input rather than a "new scene"
+ * button. Saving under a name that does not exist yet IS creating one, so a
+ * separate mode would be a second path to the same write -- and the lab
+ * previously had no path at all, which meant building a second set destroyed
+ * the first.
+ */
+.stage-lab-id,
+.stage-lab-name {
+  min-width: 0;
+  flex: 1 1 7rem;
+  font: inherit;
+  padding: 0.25rem 0.4rem;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(0, 0, 0, 0.3);
+  color: inherit;
+}
+
+/* Monospace, because it is a file name and the underscores matter. */
+.stage-lab-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85em;
+}
+
+.stage-lab-stages {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin-top: 0.4rem;
+  font-size: 0.9em;
+}
+
+/* Wide enough for four digits and no wider: these are stage numbers, and a
+   full-width field invites pasting something that is not one. */
+.stage-lab-stages input {
+  width: 4.5rem;
+  font: inherit;
+  padding: 0.2rem 0.35rem;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(0, 0, 0, 0.3);
+  color: inherit;
+}
+
+/*
+ * The band the battle camera actually keeps.
+ *
+ * The lab frames the whole 16:9 set. The battle rests at 1.44x and shows a
+ * window 1/1.44 of that, centred on its eye at 62% -- which works out to 18.9%
+ * down to 88.4%. Everything outside is composed in the lab and never seen in
+ * play, which is how a valance and a row of footlights can both be carefully
+ * placed and both be invisible.
+ *
+ * The numbers are the resting camera's, not a guess: they were measured off the
+ * running battle. If `--cam-zoom`'s 1.44 base or the 62% eye ever change, this
+ * has to change with them -- there is no way to derive it here, because the
+ * battle's crop also depends on the player's window shape.
+ *
+ * Shaded OUTSIDE rather than boxed inside: the eye reads a dimmed margin as
+ * "this part is gone" without a border competing with the artwork.
+ */
+.stage-lab-safe {
+  position: absolute;
+  left: 0;
+  right: 0;
+  /* top/bottom come from the battle's constants, set inline. */
+  z-index: 300;
+  pointer-events: none;
+  outline: 1px dashed rgba(255, 255, 255, 0.5);
+  /* A huge spread shadow is what dims everything outside the box without
+     needing two more elements to cover the margins. */
+  box-shadow: 0 0 0 100vmax rgba(6, 8, 14, 0.55);
+}
+
+.stage-lab-safe-label {
+  position: absolute;
+  top: 2px;
+  left: 4px;
+  font-size: 0.65rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.72);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+}
+
+/* The picked mark, so arrow-key nudging has something to point at. */
+.stage-lab-mark.picked {
+  outline: 2px solid #ffd42a;
+  outline-offset: 2px;
+}
+
+/*
+ * The preview viewport: the battle's window onto the set.
+ *
+ * Only does anything while previewing. The rest of the time it is a plain
+ * wrapper so the frame lays out exactly as it always has -- a mode that
+ * restructured the editor even when off would be a mode that could break it.
+ *
+ * The aspect ratio, the frame's height and its offset are all computed from the
+ * shared camera constants, not typed in here: they are what the resting zoom
+ * works out to, and hardcoding them is how the old safe-area overlay went stale
+ * the first time the zoom changed.
+ */
+/*
+ * Outside preview this must occupy the grid area the frame used to, or the
+ * editor collapses.
+ *
+ * `.stage-lab-view` centres its item with `place-items: center`, which sizes it
+ * to its CONTENT. Dropping a plain wrapper in between made that content a frame
+ * asking for `width: 100%` of the wrapper, which was asking the frame how wide
+ * it was -- circular, resolved to zero, and the whole stage vanished along with
+ * every hit target on it. Taking the area and centring the frame inside
+ * reproduces exactly what the frame did on its own.
+ */
+.stage-lab-viewport {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.stage-lab-viewport.previewing {
+  display: block;
+  position: relative;
+  width: 100%;
+  height: auto;
+  max-height: 100%;
+  overflow: hidden;
+  border-radius: 4px;
+  /* A hard edge, because the whole point is to see where the picture stops. */
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18), 0 10px 30px rgba(0, 0, 0, 0.45);
+}
+
+.stage-lab-viewport.previewing .stage-lab-frame {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  /* height and top are set inline from the camera constants. */
+  aspect-ratio: auto;
+  max-height: none;
+  cursor: default;
+}
+
+/* Nothing in a preview is a handle. */
+.stage-lab-viewport.previewing .stage-lab-layer {
+  cursor: default;
+  pointer-events: none;
+}
+
+/* Where a crossing starts and ends, and whether the camera will ever see it. */
+.stage-lab-travel {
+  margin: 2px 0 6px;
+  font-size: 0.8em;
+}
+
+.stage-lab-travel b {
+  font-variant-numeric: tabular-nums;
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.stage-lab-travel .warn {
+  color: #ffb45c;
+  font-style: normal;
+}
+
+/*
+ * Centre of the stage.
+ *
+ * Above the scenery but below the marks, because it is a reference line and not
+ * a thing you interact with. Hairlines in a colour that survives both the sky
+ * and the boards -- a mid-cyan reads on the blue backdrop and on the brown
+ * floor, where white vanishes into the footlights and black into the curtains.
+ */
+.stage-lab-centre {
+  position: absolute;
+  inset: 0;
+  z-index: 320;
+  pointer-events: none;
+}
+
+.stage-lab-centre .v,
+.stage-lab-centre .h {
+  position: absolute;
+  background: rgba(125, 226, 255, 0.55);
+}
+
+.stage-lab-centre .v {
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  transform: translateX(-0.5px);
+}
+
+.stage-lab-centre .h {
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 1px;
+  transform: translateY(-0.5px);
+}
+
+/*
+ * Where a Performer stands while their ability plays.
+ *
+ * A ring rather than a filled dot: the point is the spot underneath it, and a
+ * solid marker hides exactly the pixel being judged. Sized larger than a
+ * formation mark because it matters more -- this is the position the camera
+ * pushes in on, so a prop overlapping it is a prop that will be looked at.
+ */
+.stage-lab-act {
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  margin: -11px 0 0 -11px;
+  border-radius: 50%;
+  border: 2px dashed rgba(255, 255, 255, 0.85);
+  z-index: 330;
+  /* A handle, not a label. It carried `pointer-events: none` while it was a
+     read-only indicator, and leaving that in place made it undraggable while
+     looking exactly like something you could drag. */
+  cursor: grab;
+  touch-action: none;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55), inset 0 0 0 1px rgba(0, 0, 0, 0.45);
+}
+
+.stage-lab-act:active { cursor: grabbing; }
+
+/* The label under it is not a target -- grabbing the word rather than the ring
+   would move the mark from an offset nobody intended. */
+.stage-lab-act b { pointer-events: none; }
+
+.stage-lab-act.player { border-color: #7de29a; }
+.stage-lab-act.enemy { border-color: #ef7a6a; }
+
+.stage-lab-act b {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 2px;
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: inherit;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.95);
+  white-space: nowrap;
+}
+
+.stage-lab-act.player b { color: #7de29a; }
+.stage-lab-act.enemy b { color: #ef7a6a; }
+
+/*
+ * The practice dummy.
+ *
+ * A silhouette, not a borrowed character: the question it answers is whether an
+ * effect reads and lands where it was aimed, and a real sprite would put its own
+ * art in the way of that while implying the effect belongs to it.
+ *
+ * Sized to the figure height, because `scale` on an impact is a fraction of the
+ * TARGET's height -- judged against anything else the number would mean one
+ * thing here and another in a battle.
+ */
+.lab-dummy {
+  position: relative;
+  display: block;
+  border-radius: 6px 6px 3px 3px;
+  /*
+   * Opaque enough to read against the stage backdrop, which is the whole point
+   * -- the first version was a faint dashed outline and vanished into the
+   * castle wall it was standing in front of, so the effect had nothing legible
+   * to land on. Neutral grey on purpose: it must not tint the effect being
+   * judged, and every effect colour has to show against it.
+   */
+  background: linear-gradient(180deg, rgba(96, 108, 132, 0.92), rgba(62, 70, 88, 0.92));
+  border: 2px solid rgba(214, 226, 248, 0.75);
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.5), inset 0 0 26px rgba(0, 0, 0, 0.45);
+}
+
+/* A head, so the height reads as a figure rather than as a post -- which is
+   what makes a `dy` nudge mean "chest" or "feet" at a glance. */
+.lab-dummy::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 4%;
+  width: 46%;
+  aspect-ratio: 1;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: rgba(110, 124, 150, 0.95);
+  border: 2px solid rgba(214, 226, 248, 0.7);
+}
+
+.lab-dummy-fig { align-self: flex-end; }
+
+/* The burst itself. Unscoped `.impact-burst` already carries the sprite-sheet
+   animation; this only supplies the positioning context the battle gets from a
+   unit's own box. */
+.lab-dummy .impact-burst {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  background-repeat: no-repeat;
+  pointer-events: none;
+  z-index: 2;
+  animation: burst-pop var(--fx-ms, 380ms) steps(var(--fx-frames, 3)) 1 forwards;
+}
+
+/* The drawing a step shows, beside the step number. Quiet, because the step is
+   the thing effects are keyed to and the drawing is context. */
+.lab-tune-idx em {
+  font-style: normal;
+  opacity: 0.55;
+  font-size: 0.82em;
+  margin-left: 1px;
+}
+
+
+/* Damage split editor, beside the impacts the blows land on. */
+.lab-split-rows {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.lab-split-rows label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.lab-split-rows input { width: 3.6rem; }
+
+/* The blow's index, so a share lines up with the impact that carries it. */
+.lab-split-rows b {
+  min-width: 1.1em;
+  text-align: center;
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+}
+
+.lab-split-warn { color: #ffb45c; }

@@ -1,6 +1,7 @@
 import { describeDie } from './dice.ts';
 import type { Ability, Effect, ModStat, Passive, VersusPower } from './types.ts';
 import { DEFAULT_MODIFIER_TURNS } from './combat.ts';
+import { splitPower } from './battle.ts';
 import { STRONG_RESIST, WEAK_RESIST, strongAgainst, weakTo } from './elements.ts';
 
 const cap = (s: string): string => s[0]!.toUpperCase() + s.slice(1);
@@ -107,8 +108,27 @@ function describeEffect(a: Ability, fx: Effect, sameTargetAsPrevious: boolean): 
       const type = fx.damageType ?? a.damageType ?? 'physical';
       const element = fx.element ?? a.element;
       const kind = type === 'true' ? 'true' : element ? `${cap(element)} ${type}` : type;
+      /*
+       * A multi-hit says so, and says how it divides.
+       *
+       * The total is what the sheet leads with, because that is the number a
+       * player compares against every other ability. How it splits comes after,
+       * and only when it is uneven -- "six hits" already tells you an even
+       * volley divides evenly, while "50/50/100" is the whole point of an
+       * uneven one and cannot be inferred.
+       */
+      const hits = fx.hits?.length && fx.hits.length > 1 ? fx.hits : null;
+      const split = hits
+        ? (() => {
+            const shares = splitPower(fx.power, hits);
+            const even = shares.every((v) => Math.abs(v - shares[0]!) < 1e-9);
+            return even
+              ? `, over ${hits.length} hits`
+              : `, over ${hits.length} hits of ${shares.map((v) => pct(v)).join(' / ')}`;
+          })()
+        : '';
       return (
-        `deals ${pct(fx.power)} of ATK as ${kind} damage to ${name}` +
+        `deals ${pct(fx.power)} of ATK as ${kind} damage to ${name}${split}` +
         `${versusClause(fx.versus)}${perFrostClause(fx.perFrost)}`
       );
     }

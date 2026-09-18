@@ -549,22 +549,26 @@ export function canTarget(ability: Ability, from: Unit, centre: Pos, units: Unit
   const scope = ability.scope ?? 'one';
   if (scope === 'self') return samePos(centre, from.pos);
   if (scope === 'all') return true;
-  // A slot ability aims at the caster's OWN side, at a slot rather than a unit,
-  // and only ONE STEP -- orthogonally adjacent, never diagonal.
-  //
-  // Free placement made the grid a menu: every turn you could put anyone
-  // anywhere, so the formation had no state worth defending and no cost to
-  // being wrong. One step makes position something you hold or give up over
-  // several turns, and it prices the corners -- a centre slot has four
-  // neighbours, an edge three, a corner two, so where you stand decides how
-  // much the die you spend is worth.
-  //
-  // Orthogonal only, because the diagonal is the move that would undo that: it
-  // crosses a rank and a file at once, which is the one step that changes both
-  // "who can reach me" and "what line catches me" for a single die.
+  /*
+   * A slot ability aims at the caster's OWN formation, at a slot rather than a
+   * unit, and at ANY of them.
+   *
+   * This used to be one orthogonal step. The reasoning was that free placement
+   * makes the grid a menu -- put anyone anywhere every turn and the formation
+   * has no state worth defending and no cost to being wrong -- and that one
+   * step prices the corners, since a centre slot has four neighbours and a
+   * corner two. That is a real argument and it is being overruled on purpose:
+   * with marks now placed by hand per scene, adjacency stopped reading off the
+   * board at all. A player could not tell which squares were one step away
+   * because the squares are wherever the scene author put them, so the rule was
+   * enforcing a cost nobody could see in order to protect a decision nobody
+   * could make deliberately.
+   *
+   * What still prices the move is unchanged and is the part that was always
+   * doing the work: it costs a die and the whole action, so repositioning is
+   * the attack you did not make.
+   */
   if (scope === 'slot') {
-    const step = Math.abs(centre.x - from.pos.x) + Math.abs(centre.y - from.pos.y);
-    if (step !== 1) return false;
     return slotsOf(from.side).some((sl) => sl.col === centre.x && sl.row === centre.y);
   }
   // A line is aimed by naming any slot on it, so the depth check is the same

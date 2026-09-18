@@ -807,6 +807,12 @@ owns it: the thing that *is* Benjamin should always be affordable.
 lands with the buff already up (§2). It is worded that way for the same reason: the phrasing is the
 execution order.
 
+**The ult lands as six hits, and that is presentation reaching back into the rules.** Its 200% is
+divided into six even blows (`hits`), each mitigated, rolled for critical and logged on its own.
+The split lives in `src/engine/hitSplits.ts` and the frame each blow lands on lives in the clip
+tuning — both authored in the animation lab, because a volley is tuned by watching it. Nothing about
+the ability's cost or total power changed; what changed is that the finisher now reads like one.
+
 **The rhythm.** Turn one Rally, turn two Sunder, turn three Perfect Form — and because a modifier
 applied on a turn covers that turn and the two after it, turn four is spare before Rally needs
 reapplying. Each Performer acts once per turn, so the loop is forced to be sequential; he cannot
@@ -1290,20 +1296,34 @@ Reckoning landing 10 + 2 chained against 10 alone.
 - Modifiers refresh within an ability and stack across abilities, resolved to a flat amount at
   cast time from a named source (§6)
 - Enemy intent is revealed each round; activation odds stay hidden
-- **Positioning is a team-building axis, and the party is a 3x3 grid.** Nine slots for five, with
+- **Positioning is a team-building axis, and the party is a 2-1-2.** Five slots for five, with
   BOTH axes mechanical: columns are rank (enemy `range` reads the party's frontmost *occupied* one,
   so hiding everyone in the back just makes the back the front), and rows are what `scope: 'row'`
   and `scope: 'column'` cut along. The two pull against each other -- the column that keeps you out
   of reach is the column a column-attack cuts through -- and that tension is the formation puzzle.
   A tank is valuable for standing somewhere before it has a single tank ability.
+  The pairs sit on rows 0 and 2 with the centre on row 1, so all three horizontal cuts catch
+  somebody; a pair sharing rows 0 and 1 would have made one of the three free.
 - **Repositioning is a wildcard action everyone has**, not a kit ability: any single die plus the
   Performer's action, the same price as their basic. Moving is *the attack you did not make*. It
   swaps with any occupant so it can never fizzle under commit-and-lock, and it carries no symbol --
   the cheapest action in the game must not also be the best chain opener.
-- **One step, orthogonally.** Centre slots offer four moves, edges three, corners two. Free
-  placement made the grid a menu -- anyone anywhere every turn, so the formation had no state worth
-  defending. The diagonal is excluded specifically: it crosses a rank AND a file for one die, which
-  changes both "who can reach me" and "what line catches me" at once.
+- **Any slot on your own side.** A reposition swaps with whoever is standing there, and the whole
+  board is in range.
+  > **It was a 3x3 with four empty slots and one orthogonal step.** Both were the same argument:
+  > free placement makes the grid a menu, and a step rule prices the corners. Two things overruled
+  > it. The empty slots existed so a move had somewhere to go, which stopped being true once a
+  > reposition became a *swap* -- and what they were really buying was a three-wide front rank,
+  > which nothing ever wants. And once acting marks are placed by hand per scene, adjacency stopped
+  > reading off the board at all: a player cannot tell which slots are one step away when the slots
+  > are wherever the scene author put them. The rule charged a cost nobody could see to protect a
+  > decision nobody could make on purpose. What prices the move is what always did -- a die and the
+  > whole action.
+- **A multi-hit ability divides its power by ratio** (`hits`), and each blow is a real strike:
+  mitigated, rolled for critical and logged on its own. `[1, 1, 2]` is a quarter, a quarter and a
+  half; shares are normalised against their own total, so an author writes whichever form reads
+  better. The split and the frame each blow lands on are both authored in the animation lab, because
+  tuning a volley is something you do by watching it.
 - **Enemies keep a fixed block and do not move.** Only the party is a grid. The two sides share one
   positional *language* (`row` and `column` work on either) without sharing a layout, which is what
   lets a boss encounter be a different shape from a corridor one.

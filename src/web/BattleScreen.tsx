@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { useEffect, useMemo, useReducer, useRef, useState, type CSSProperties } from 'react';
 import {
   createBattle,
   ENEMY_DIE,
@@ -57,6 +57,7 @@ import {
 } from '../engine/describe.ts';
 import {
   columnRank,
+  DOWNSTAGE,
   PARTY_SLOTS_ALL,
   STANDARD_PARTY_SLOTS,
   type Slot,
@@ -77,14 +78,30 @@ import {
   type Unit,
 } from '../engine/types.ts';
 import { Avatar, ElementIcon, SymbolIcon, themeOf } from './Avatar.tsx';
+import { ANIMATION_CLIPS, EFFECTS } from '../engine/sprites.generated.ts';
+import { impactTimes, type Impact } from './animationData.ts';
+import { sceneActs, sceneIdForStage, sceneLayers, sceneSlots } from './sceneData.ts';
+import {
+  centreOn,
+  clampCentre,
+  FRAME_ASPECT,
+  focusZoomFor,
+  PUSH_ZOOM,
+  REST_EYE,
+  REST_ZOOM,
+} from './camera.ts';
+import { LayerImg } from './stageLayer.tsx';
 import { crispCss } from './crisp.ts';
 import {
   clipAnimName,
   clipBox,
   clipDuration,
   clipTimeline,
+  abilityClipName,
   keyframesFor,
   orderFor,
+  poseAnimName,
+  poseKeyframes,
   stepMsFor,
   placementFor,
   tuningFor,
@@ -136,7 +153,19 @@ const DIE_PIPS = ['', '⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
  * -- `UnitChip` derives sprite height from it exactly as the old tile grid did,
  * so the roster's relative statures carry over untouched.
  */
-const SLOT_H = 0.155;
+// Down from 0.155: the cast was filling the boards edge to edge, which left no
+// stage for them to be standing on. A smaller figure on a visible set reads
+// better than a large one crowding the frame.
+const SLOT_H = 0.132;
+/**
+ * Enemies render smaller than Performers.
+ *
+ * Not a balance statement -- a mob is a mob. It is that the pixel bestiary is
+ * drawn at a different density from the paper cast, so at one slot height the
+ * Understudies loom over the party they are supposed to be trash against.
+ * Comes out when the enemy art is redrawn to match.
+ */
+const ENEMY_SCALE = 0.78;
 
 /**
  * Sprites further up the stage are further away. A gentle scale keeps the two
@@ -153,8 +182,12 @@ const pk = (p: Pos): string => `${p.x},${p.y}`;
  * holds and offsets differ by clip -- that is the point of them.
  */
 const IDLE_KEYFRAMES = keyframesFor(
-  ROSTER.flatMap((d) =>
-    d.sprite?.idle ? [{ who: d.id, clip: 'idle', frames: d.sprite.idle.frames }] : [],
+  // EVERY packed clip, not just the one the board idles with. A clip the board
+  // can reach without a matching keyframe rule is worse than one it cannot
+  // reach at all: the animation name resolves to nothing, so the strip sits on
+  // frame 0 and the character simply stands there mid-swing with no error.
+  Object.entries(ANIMATION_CLIPS).flatMap(([who, clips]) =>
+    Object.entries(clips).map(([clip, info]) => ({ who, clip, frames: info.frames })),
   ),
 );
 
@@ -194,22 +227,171 @@ const stat = (n: number): string => String(Math.round(n * 10) / 10);
 
 /** Must match the floater CSS animation length. */
 const FLOATER_MS = 1500;
+/**
+ * How long a Performer's turn on the boards lasts: step out, act, step back.
+ *
+ * Shared with `--strike-ms` in styles.css. Long enough for a 16-frame attack
+ * clip to play at the pace its sheet is tuned to, with the step at either end.
+ */
+const STRIKE_MS = 1150;
+/** How long the walk downstage takes, and the walk back. Shared with the CSS. */
+const STEP_OUT_MS = 260;
+const STEP_BACK_MS = 320;
+// The clip plays between the two hold keyframes of `stage-strike`, which sit at
+// 22% and 72%. Kept here so the derived beat leaves the clip enough of that
+// window rather than the walk eating into it.
+const PERFORM_WINDOW = 0.5;
+/**
+ * The pause at the mark, after arriving and before performing.
+ *
+ * Without it the swing begins the instant the feet stop, and the two motions
+ * read as one continuous slither rather than as a character taking position and
+ * then acting. A full second is long for a transition and deliberately so: it
+ * is the moment the turn belongs to somebody, and reading who is about to do
+ * what is the thing the whole staging exists for.
+ *
+ * It is load-bearing, not decoration -- `beatOf` builds the beat out of it, and
+ * both the walk keyframes and the impact schedule are derived from that. Change
+ * it and everything downstream follows.
+ */
+const SETTLE_MS = 1000;
+
+/**
+ * The shape of one performance: how long it runs, and when the clip starts.
+ *
+ * Everything that has to agree about a beat derives from HERE, because for a
+ * long time the pieces each did their own arithmetic and quietly disagreed.
+ * `stage-strike` walks the performer out over the first 22% and holds them at
+ * the mark until 72%, and the clip is meant to play inside that hold -- but the
+ * clip carried no delay, so it started on the same frame as the walk and the
+ * character swung the whole way to their mark. The impacts, meanwhile, were
+ * offset by the walk the clip was not waiting for, so the spark arrived long
+ * after the blade.
+ *
+ * One function, three consumers: the `--beat` the walk runs on, the delay on
+ * the clip, and the schedule the impacts fire from. They cannot drift apart
+ * because there is only one of them.
+ */
+function beatOf(id: string, clipName: string): {
+  clipMs: number;
+  beat: number;
+  leadIn: number;
+  holdStart: number;
+  holdEnd: number;
+} {
+  const c = ANIMATION_CLIPS[id]?.[clipName];
+  const clipMs = c
+    ? clipDuration(
+        clipTimeline(c.frames, tuningFor(id, clipName), orderFor(id, clipName)),
+        stepMsFor(id, clipName),
+      )
+    : 0;
+  /*
+   * The beat is the SUM of its parts, not a multiple of the clip.
+   *
+   * It used to be `clip / PERFORM_WINDOW`, which made the walk a fixed
+   * PROPORTION of the beat -- so a long clip stretched the walk along with it.
+   * Benjamin's retuned Quick Cut runs 1343ms, which forced a 3-second beat and
+   * a 660ms glide to the mark at either end: the character appeared to drift
+   * out on ice before doing anything. The walk is a walk. It takes as long as a
+   * walk takes, whatever happens afterwards.
+   */
+  const leadIn = STEP_OUT_MS + SETTLE_MS;
+  const beat = Math.max(STRIKE_MS, leadIn + clipMs + STEP_BACK_MS);
+  return {
+    clipMs,
+    beat,
+    leadIn,
+    holdStart: STEP_OUT_MS / beat,
+    // Where the walk home begins. Derived rather than fixed at 72%, because the
+    // hold has to stretch to hold whatever clip is playing.
+    holdEnd: (beat - STEP_BACK_MS) / beat,
+  };
+}
+
+/**
+ * `stage-strike`, generated for one beat.
+ *
+ * The walk-out and walk-home keyframes have to sit at real proportions of THIS
+ * beat, and a keyframe selector cannot take a `var()` -- percentages in an
+ * `@keyframes` block are literals. So the rule is emitted per beat instead,
+ * which is the same thing the clips themselves already do.
+ */
+function strikeKeyframes(holdStart: number, holdEnd: number): string {
+  const a = +(holdStart * 100).toFixed(3);
+  const b = +(holdEnd * 100).toFixed(3);
+  return `@keyframes stage-strike {
+  0% { transform: translate(0, 0); }
+  ${a}%, ${b}% { transform: translate(var(--sx, 0), var(--sy, 0)); }
+  100% { transform: translate(0, 0); }
+}`;
+}
+/**
+ * How far the camera slides the performer off centre while they act.
+ *
+ * A centred subject is a subject with nothing to act ON: the enemy they are
+ * swinging at sits outside the frame, so the shot shows a character doing
+ * something to nobody. Pushing them toward the side their BACK is on opens the
+ * space in front of them, which is where the target is -- the same reason a
+ * camera operator leads a moving subject rather than centring it.
+ *
+ * Applied before the scale in `scale(z) translate(x, y)`, so the screen shift
+ * is this multiplied by the zoom. At 2.6x, 7% of the stage moves the performer
+ * roughly a fifth of the frame -- off centre, still comfortably inside it.
+ */
+const LOOK_ROOM = 7;
+
+/**
+ * Turning a slot's position into a camera origin.
+ *
+ * Slots are fractions of the FRAME; `transform-origin` is a percentage of the
+ * STAGE. They are not the same box -- the frame is 16:9 and height-led, the
+ * stage cell is whatever shape the window leaves -- so a unit at 30% across the
+ * frame is nowhere near 30% across the stage, and aiming at one using the other
+ * points the camera consistently off-centre.
+ *
+ * Derived from the frame's own sizing rule (`height: 100%; width: auto` at
+ * `FRAME_ASPECT`) rather than measured, so it cannot be perturbed by the
+ * ambient sway that is also sitting on that element.
+ */
+function frameToStage(stageW: number, stageH: number): { ox: number; sx: number } {
+  if (!stageW || !stageH) return { ox: 0, sx: 1 };
+  const sx = Math.min(1, (stageH * FRAME_ASPECT) / stageW);
+  return { ox: (1 - sx) / 2, sx };
+}
+/** How far down the frame the boards begin, as a fraction. */
+const FLOOR_TOP = 0.56;
+/**
+ * How long a hit reaction is held before the character returns to their idle
+ * stance. Shared with `stage-flinch` in styles.css.
+ *
+ * Long enough to read as a reaction rather than a flicker, short enough that a
+ * character taking fire from several enemies is not frozen in a pose through
+ * the whole volley.
+ */
+const PAIN_MS = 1000;
+/** How long an impact burst is on screen. Matches `burst-pop` in styles.css. */
+const BURST_MS = 380;
 
 /*
  * How long one resolved action stays on screen.
  *
- * Paced for READING, not for animation. Every step writes a new line into the
- * message box -- "Benjamin uses Quick Cut!" -- and at the old 620ms the next
- * unit had already overwritten it before the sentence could be finished, so a
- * five-action round was a blur of text nobody could follow. A beat is roughly
- * how long it takes to read a short sentence and glance at the damage floater
- * it explains.
+ * A short breath ADDED to however long the action itself took, rather than a
+ * fixed interval that the action has to fit inside.
  *
- * The enemy beat is slightly longer because their actions are the ones you did
- * NOT choose, so they are the ones actually worth reading.
+ * It used to be the whole thing: a flat 1500ms between steps no matter what was
+ * playing. That was already wrong before the pause at the mark grew -- Quick
+ * Cut runs past two seconds, so the next Performer walked on while Benjamin was
+ * still mid-swing. Two clocks, one of them guessing at the other.
+ *
+ * Reading still sets the floor. `STRIKE_MS` is the shortest a beat may be, and
+ * it is roughly how long it takes to read "Benjamin uses Quick Cut!" and glance
+ * at the floater it explains; anything with a longer animation simply takes
+ * longer, and the queue waits for it.
  */
-const BEAT_MS = 1500;
-const ENEMY_BEAT_MS = 1700;
+const AFTER_BEAT_MS = 180;
+/** How long a reposition holds the screen. It has no clip and no walk. */
+const MOVE_MS = 520;
 /** The pause on handing the turn between sides, with the box cleared. */
 const HANDOVER_MS = 800;
 /** Between pressing Commit and the first action landing. */
@@ -258,15 +440,123 @@ export function BattleScreen({
 
   const [sel, setSel] = useState<Selection>(NO_SELECTION);
   const [hover, setHover] = useState<Pos | null>(null);
+  /*
+   * Who the camera is looking at, when nobody is performing.
+   *
+   * Hovering a roster row beats whatever is selected: the hover is a live
+   * question ("who is that?") and the selection is a standing one, so the
+   * transient intent wins for as long as it lasts and the shot falls back to
+   * the selection when the pointer leaves.
+   */
+  const [rosterHover, setRosterHover] = useState<Unit | null>(null);
+  /* The stage's own shape, which decides how frame coordinates map onto it. */
+  const stageRef = useRef<HTMLDivElement>(null);
+  const [stageBox, setStageBox] = useState({ w: 0, h: 0 });
   const [preview, setPreview] = useState<Ability | null>(null);
   /** A hovered innate passive, shown in the same slot as an ability's rules. */
   const [previewPassive, setPreviewPassive] = useState<Passive | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  /*
+   * The resting zoom, live.
+   *
+   * It existed only as a constant in camera.ts, which is a knob for whoever is
+   * editing the source and nobody else -- and "how close should the camera sit"
+   * is a judgement you make by looking at the stage, not by reading a number.
+   *
+   * Kept in localStorage so a value you dialled in survives the reload that
+   * every scene or clip save triggers; without that, tuning it would mean
+   * re-dialling after each save. Read through a try/catch because a blocked
+   * storage throws rather than returning nothing.
+   */
+  const [restZoom, setRestZoom] = useState(() => {
+    try {
+      const v = Number(localStorage.getItem('sb.restZoom'));
+      return Number.isFinite(v) && v >= 1 && v <= 4 ? v : REST_ZOOM;
+    } catch {
+      return REST_ZOOM;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('sb.restZoom', String(restZoom));
+    } catch {
+      // A viewer with storage blocked still gets the slider, just not the memory.
+    }
+  }, [restZoom]);
   const [narration, setNarration] = useState<string | null>(null);
   const [showLog, setShowLog] = useState(false);
 
-  const [pulse, setPulse] = useState<{ id: string; dx: number } | null>(null);
+  // `clip` rides along so the sprite knows WHICH animation this beat is, not
+  // merely that one is happening -- an actor can have a different sheet per
+  // ability, and only the turn knows which ability was used.
+  /*
+   * `act` is the difference between walking out and swinging.
+   *
+   * They used to be one flag, so the attack clip was mounted for the whole beat
+   * and simply held its first drawing through the walk and the pause. That put
+   * the character into their windup pose the instant they set off, which reads
+   * as a frozen sprite sliding across the boards rather than as somebody
+   * walking to their mark. The idle keeps playing until `act` turns true.
+   */
+  const [pulse, setPulse] = useState<{
+    id: string;
+    dx: number;
+    clip: string;
+    act: boolean;
+  } | null>(null);
+  /**
+   * Who is currently holding a hit reaction, cleared on a timer.
+   *
+   * Deliberately NOT `hits`, which is a monotonic counter whose only job is to
+   * be a React key -- bumping it remounts the sprite so a CSS flinch replays.
+   * It never returns to zero, so reading it as "is hurt right now" leaves the
+   * first character to take a hit stuck in their pain pose for the rest of the
+   * fight. A reaction is a moment, so it needs a clock of its own.
+   */
+  /** Who is mid-reaction, and which way they are turning. */
+  const [flinching, setFlinching] = useState<Record<string, 'a' | 'b'>>({});
+  /*
+   * The hit reaction, held back until the blow actually lands.
+   *
+   * The engine resolves an action in one go, at the top of the beat -- so if
+   * the reaction fired when the damage did, the target spun the instant the
+   * attacker set off walking, a second and a half before the sword reached
+   * them. The numbers were right and the staging was nonsense.
+   *
+   * Parked here instead and fired by `lunge` on the same schedule as the impact
+   * sparks, which are already keyed to the frame the animator marked. One
+   * clock for "this is the moment of contact", not two.
+   */
+  const pendingHit = useRef<((n: number, of?: number) => void) | null>(null);
+
+  /*
+   * Where one number is thrown.
+   *
+   * Random, but bounded: far enough apart that six of them read as six, close
+   * enough that every one still clearly belongs to the body it came off. The
+   * rise varies too, so numbers thrown at the same moment do not travel in
+   * lockstep and arrive as a row.
+   */
+  const spray = () => ({
+    x: (Math.random() * 2 - 1) * 26,
+    rise: 0.75 + Math.random() * 0.5,
+    tilt: (Math.random() * 2 - 1) * 14,
+  });
+  /** Impact effects currently playing, keyed so each one animates once. */
+  const [bursts, setBursts] = useState<
+    { id: number; on: string | null; at?: { x: number; y: number }; impact: Impact }[]
+  >([]);
+  /** Ids damaged by the action just resolved. Written by `withHitReactions`. */
+  /*
+   * The battle root, purely so the pointer-follow has a shared place to write.
+   *
+   * Carried for the focus class and nothing else now; the pointer-follow that
+   * used to write camera offsets here is gone.
+   */
+  const rootRef = useRef<HTMLDivElement>(null);
+  const lastHurt = useRef<string[]>([]);
   const [hits, setHits] = useState<Record<string, number>>({});
   const [floaters, setFloaters] = useState<Floater[]>([]);
   const floaterId = useRef(0);
@@ -292,6 +582,41 @@ export function BattleScreen({
 
   const encounter = battle.encounter;
   const over = battle.outcome !== 'ongoing';
+
+  /*
+   * Which set this stage is dressed with.
+   *
+   * A scene that claims this stage number wins over the one named on the
+   * encounter. The encounter's own `scene` stays the fallback, so an encounter
+   * nothing has been authored for still has a set to stand on -- but assigning
+   * scenes to stretches of the ladder is the normal way to dress the game, and
+   * it belongs with the scenes rather than in the roster file.
+   *
+   * Resolved in the WEB layer on purpose. The engine is pure and runs headless,
+   * and scene files are loaded through a Vite glob that does not exist outside
+   * a browser build -- so `sceneFor` can only ever name a default, and which
+   * set actually gets painted is a rendering decision.
+   *
+   * Declared HERE, high up, because `board` is read during render by the
+   * `targets` memo -- the slot-scoped branch walks the marks to find empty
+   * squares. It used to be declared with the rest of the staging, hundreds of
+   * lines below that memo, which put it in the temporal dead zone: picking a
+   * `scope: 'slot'` ability threw `Cannot access 'board' before initialization`
+   * and took the screen down. Nothing else touched it during render, so the
+   * only ability in the game that could reach it was the only one that broke.
+   */
+  const sceneId = sceneIdForStage(stage) ?? encounter.scene;
+  const stageLayers = sceneLayers(sceneId) ?? encounter.layers;
+  /*
+   * Where a Performer stands to act. The scene's own marks if it has any, the
+   * global default otherwise -- a set with a platform across the middle wants
+   * its acting positions somewhere the rules could never guess.
+   */
+  const acts = sceneActs(sceneId) ?? DOWNSTAGE;
+  const board = sceneSlots(sceneId, 'board') ?? PARTY_SLOTS_ALL;
+  const foeSlots = sceneSlots(sceneId, 'enemy') ?? encounter.enemySlots;
+  const marks = { board, enemySlots: foeSlots };
+
   const players = battle.units.filter((u) => u.side === 'player');
   const enemies = battle.units.filter((u) => u.side === 'enemy');
 
@@ -383,7 +708,7 @@ export function BattleScreen({
     // the whole point of it -- so its candidates are the board rather than the
     // units standing on it.
     if ((sel.ability.scope ?? 'one') === 'slot') {
-      for (const sl of PARTY_SLOTS_ALL) {
+      for (const sl of board) {
         const at = { x: sl.col, y: sl.row };
         if (canTarget(sel.ability, sel.unit, at, battle.units)) out.add(pk(at));
       }
@@ -550,6 +875,7 @@ export function BattleScreen({
    * and no name matching.
    */
   function withHitReactions(act: () => void) {
+    lastHurt.current = [];
     const before = new Map(battle.units.map((u) => [u.def.id, u.hp]));
     // Where the log stood before the action, so the events it appends can be
     // read back. The HP diff below still decides the NUMBER -- it catches
@@ -581,34 +907,261 @@ export function BattleScreen({
 
     const hurt = changed.filter((c) => c.delta < 0);
     if (hurt.length > 0) {
-      setHits((h) => {
-        const next = { ...h };
-        for (const c of hurt) next[c.unit.def.id] = (next[c.unit.def.id] ?? 0) + 1;
-        return next;
-      });
+      // Whoever this action actually damaged, for the impact effects to land
+      // on. Read from the HP diff rather than the ability's declared targets,
+      // so a spark only ever appears where something was really hit -- a miss,
+      // an immunity or a shielded blow produces none.
+      //
+      // Nothing VISIBLE happens here. The counter that drives the flinch, and
+      // the floaters, are both deferred to `pendingHit` below so they land with
+      // the blow rather than with the engine resolving it.
+      lastHurt.current = hurt.map((c) => c.unit.def.id);
     }
 
-    const spawned = changed.map((c) => {
-      const hit = c.delta < 0 ? style.get(c.unit.def.name) : undefined;
-      return {
+    /*
+     * The blows of a multi-hit, each as its own batch of floaters.
+     *
+     * Built from the LOG rather than from the HP diff, because the diff can
+     * only ever say what an action did in TOTAL -- it is one subtraction. The
+     * log carries every strike separately with its own amount, element and
+     * critical, and `hit` says which blow it belonged to. That is exactly the
+     * grouping needed to land six numbers on six impact frames.
+     */
+    type Floater = (typeof spawned)[number];
+    const byHit = new Map<number, Floater[]>();
+    /* How much of a unit's loss the indexed blows already account for. */
+    const indexed = new Map<string, number>();
+    const unitByName = new Map(battle.units.map((u) => [u.def.name, u]));
+
+    for (const e of battle.log.slice(logMark)) {
+      if (e.t !== 'damage' || e.hit == null) continue;
+      const u = unitByName.get(e.target);
+      if (!u) continue;
+      const list = byHit.get(e.hit) ?? [];
+      list.push({
         id: floaterId.current++,
-        amount: Math.abs(c.delta),
-        kind: c.delta < 0 ? ('damage' as const) : ('heal' as const),
-        at: { ...c.unit.pos },
-        side: c.unit.side,
-        element: hit?.element,
-        crit: hit?.crit,
-      };
-    });
-    setFloaters((f) => [...f, ...spawned]);
-    const ids = new Set(spawned.map((f) => f.id));
-    window.setTimeout(() => setFloaters((f) => f.filter((n) => !ids.has(n.id))), FLOATER_MS);
+        amount: e.amount,
+        kind: 'damage' as const,
+        at: { ...u.pos },
+        side: u.side,
+        element: e.element,
+        crit: e.crit,
+        spray: spray(),
+      });
+      byHit.set(e.hit, list);
+      indexed.set(u.def.id, (indexed.get(u.def.id) ?? 0) + e.amount);
+    }
+
+    /*
+     * One floater for everything the blows did not describe.
+     *
+     * A unit whose whole loss came from indexed strikes is already covered and
+     * must not also get a lump sum; anyone else -- healed, burned, hit by a
+     * plain single strike -- still gets the net change the screen has always
+     * shown.
+     */
+    const spawned = changed
+      .filter((c) => !(c.delta < 0 && indexed.get(c.unit.def.id) === Math.abs(c.delta)))
+      .map((c) => {
+        const hit = c.delta < 0 ? style.get(c.unit.def.name) : undefined;
+        return {
+          id: floaterId.current++,
+          amount: Math.abs(c.delta),
+          kind: c.delta < 0 ? ('damage' as const) : ('heal' as const),
+          at: { ...c.unit.pos },
+          side: c.unit.side,
+          element: hit?.element,
+          crit: hit?.crit,
+          spray: spray(),
+        };
+      });
+    const hurtIds = hurt.map((c) => c.unit.def.id);
+
+    /*
+     * Everything the player should see AT THE MOMENT OF CONTACT.
+     *
+     * `n` is which blow this is and `of` how many the animation stages, so a
+     * multi-hit releases one batch of numbers per impact frame and turns its
+     * target the opposite way each time.
+     *
+     * When the two counts disagree -- more blows than impacts, which is what
+     * happens the moment somebody raises the hit count without drawing new
+     * impacts -- the leftovers all land on the final impact. Better to show
+     * every number late than to silently drop damage that was really dealt.
+     */
+    const float = (batch: typeof spawned) => {
+      if (!batch.length) return;
+      const ids = new Set(batch.map((f) => f.id));
+      setFloaters((f) => [...f, ...batch]);
+      window.setTimeout(() => setFloaters((f) => f.filter((x) => !ids.has(x.id))), FLOATER_MS);
+    };
+
+    pendingHit.current = (n: number, of = 1) => {
+      if (hurtIds.length > 0) {
+        setHits((h) => {
+          const next = { ...h };
+          for (const i of hurtIds) next[i] = (next[i] ?? 0) + 1;
+          return next;
+        });
+        const dir = n % 2 === 0 ? 'a' : ('b' as const);
+        setFlinching((f) => ({ ...f, ...Object.fromEntries(hurtIds.map((i) => [i, dir])) }));
+        // Per unit, so a later blow landing on somebody else cannot cut this
+        // one short. A repeat hit on the SAME unit restarts it, which is what
+        // the alternating direction is there to make legible.
+        window.setTimeout(() => {
+          setFlinching((f) => {
+            const next = { ...f };
+            for (const i of hurtIds) delete next[i];
+            return next;
+          });
+        }, PAIN_MS);
+      }
+      // The unindexed changes -- heals, burns, plain single strikes -- belong
+      // to the action rather than to any one blow, so they fly on the first.
+      if (n === 0) float(spawned);
+
+      const last = n >= of - 1;
+      for (const [hit, batch] of byHit) {
+        if (hit === n || (last && hit > n)) float(batch);
+      }
+    };
   }
 
-  /** A short shove toward the enemy line, so a static sprite reads as striking. */
-  function lunge(id: string, side: Unit['side']) {
-    setPulse({ id, dx: side === 'player' ? 1 : -1 });
-    window.setTimeout(() => setPulse(null), 340);
+  /**
+   * The performance beat: step downstage, act, and slide back to the mark.
+   *
+   * A Performer who acts from where they are standing reads as a sprite being
+   * nudged. Stepping out to the front of the boards and returning reads as
+   * somebody taking their turn in the middle of a stage, which is the thing
+   * this game is about -- and it also gives an attack clip a clear place to
+   * play where nobody is standing in front of it.
+   *
+   * Long enough to carry a 16-frame clip. `STRIKE_MS` is shared with the CSS so
+   * the class comes off exactly when the animation ends rather than mid-step.
+   */
+  /** The middle of a group of units, in stage fractions. */
+  function centroidOf(ids: string[]): { x: number; y: number } {
+    const slots = ids
+      .map((id) => battle.units.find((u) => u.def.id === id))
+      .filter((u): u is Unit => !!u)
+      .map((u) => slotAt(u.pos, u.side, marks))
+      .filter((sl): sl is Slot => !!sl);
+    if (slots.length === 0) return { x: 0.5, y: 0.6 };
+    return {
+      x: slots.reduce((n, sl) => n + sl.xPct, 0) / slots.length,
+      y: slots.reduce((n, sl) => n + sl.yPct, 0) / slots.length,
+    };
+  }
+
+  /** Runs one performance and returns how long it will take. */
+  function lunge(id: string, side: Unit['side'], targets: string[] = [], ability?: Ability): number {
+    /*
+     * Repositioning is not a performance.
+     *
+     * Stepping downstage exists to give an action a stage to happen on -- the
+     * performer walks out, does the thing where everyone can see it, and walks
+     * back. A move IS the walk. Sending the character to the centre mark and
+     * back before they change rank means two journeys for one decision, and the
+     * one the player actually asked for is the one that gets buried.
+     */
+    if (ability?.kind === 'move') {
+      const react = pendingHit.current;
+      pendingHit.current = null;
+      react?.(0);
+      return MOVE_MS;
+    }
+    /*
+     * The beat lasts as long as the clip needs, not a fixed 1150ms.
+     *
+     * A constant meant that retiming an attack in the lab silently broke it:
+     * at 129ms a frame Benjamin's 16-frame swing runs 2064ms, so the beat cut
+     * him off at frame 8 and his frame-10 impact was scheduled 363ms after he
+     * had already walked home. Deriving it means the animator sets the pace and
+     * the staging follows, which is the only order that cannot drift.
+     */
+    const clipName = abilityClipName(ANIMATION_CLIPS[id], ability?.name);
+    const clip = ANIMATION_CLIPS[id]?.[clipName];
+    const steps = clip
+      ? clipTimeline(clip.frames, tuningFor(id, clipName), orderFor(id, clipName))
+      : [];
+    const { beat, leadIn } = beatOf(id, clipName);
+
+    setPulse({ id, dx: side === 'player' ? 1 : -1, clip: clipName, act: false });
+    // The swing begins when the walk and the pause are done, not when the turn
+    // does. Guarded on the id so a beat that has already been replaced by the
+    // next one cannot reach back and start an animation on the wrong actor.
+    window.setTimeout(
+      () => setPulse((p) => (p && p.id === id ? { ...p, act: true } : p)),
+      leadIn,
+    );
+    window.setTimeout(() => setPulse(null), beat);
+
+    /*
+     * Schedule this clip's impacts onto whoever the ability actually hit.
+     *
+     * Timed off the clip's own played timeline rather than a fixed fraction of
+     * the beat, so retiming the swing moves the spark with it and a two-hit
+     * ability lands two bursts at the two frames its drawings connect on.
+     *
+     * NOT offset by the step out. The clip and the walk start on the same
+     * frame -- measured: the sprite is at `ct` 0 while its transform is still
+     * at 0 -- so the performer swings as they stride, and the clip's own
+     * timeline already IS the beat's timeline.
+     *
+     * There used to be a `beat * 0.22 +` here, on the theory that the clip only
+     * began once the performer reached the mark. It never did, so the term was
+     * pure double-count: it pushed Benjamin's spark 300ms past the drawing that
+     * was supposed to connect. At 16 frames and 2064ms that error was buried
+     * inside a swing still in progress; at 4 frames and 683ms it put the spark
+     * on the recovery pose, after the blade had finished its arc.
+     *
+     * The spark belongs to the SWORD, not to the feet. Keyed straight off the
+     * frame the animator marked, it lands on the drawing where the blade passes
+     * through, which is the only thing the impact is meant to agree with.
+     */
+    /*
+     * The hit reaction rides the impacts.
+     *
+     * Taken out of the ref here so it fires exactly once per beat however this
+     * function returns -- an ability with no clip, no impacts or no surviving
+     * target still has to make its target flinch, it just has nothing to
+     * synchronise with and lands on the lead-in instead.
+     */
+    const react = pendingHit.current;
+    pendingHit.current = null;
+    const marks = clip ? impactTimes(id, clipName, steps, stepMsFor(id, clipName)) : [];
+
+    if (!clip || targets.length === 0 || marks.length === 0) {
+      if (react) window.setTimeout(() => react(0), leadIn);
+      if (!clip || targets.length === 0) return beat;
+    }
+
+    marks.forEach(({ at, impact }, n) => {
+      window.setTimeout(() => {
+        react?.(n, marks.length);
+        const key = Date.now() + Math.random();
+        // `centre` is ONE burst at the middle of everyone affected, so an area
+        // ability reads as a single event rather than five simultaneous ones.
+        // The point is the mean of their slots, which is where the group
+        // visually is -- not the mean of the whole side.
+        const spawned =
+          impact.at === 'centre'
+            ? [{ id: key, on: null, at: centroidOf(targets), impact }]
+            : targets.map((on, i) => ({ id: key + i, on, impact }));
+        setBursts((b) => [...b, ...spawned]);
+        const ids = new Set(spawned.map((x) => x.id));
+        // Cleared when it has finished PLAYING, which is now per impact. A
+        // fixed wait would cut a slow burst off or leave a fast one lingering.
+        window.setTimeout(
+          () => setBursts((b) => b.filter((x) => !ids.has(x.id))),
+          impact.ms ?? BURST_MS,
+        );
+        // Offset by the lead-in, because the clip does not start until the
+        // performer has reached the mark and taken their beat. `at` is a time
+        // within the CLIP; this turns it into a time within the turn.
+      }, leadIn + at);
+    });
+    return beat;
   }
 
   // ----------------------------------------------------------------- handlers
@@ -617,6 +1170,8 @@ export function BattleScreen({
     setSel({ unit: u, ability: null, dice: [] });
     setError(null);
   }
+
+
 
   function chooseAbility(a: Ability) {
     if (sel.ability?.name === a.name) {
@@ -722,6 +1277,20 @@ export function BattleScreen({
     playerTimer.current = window.setTimeout(stepPlan, COMMIT_LEAD_MS);
   }
 
+  /**
+   * Show a held reaction now, because nothing is going to perform it.
+   *
+   * The null-step branches still resolve real HP changes -- end-of-phase
+   * regeneration, a burn ticking down -- and those have no swing to land on.
+   * Without this they would set a reaction nobody ever fires, and the next
+   * action to call `lunge` would play it against the wrong moment.
+   */
+  function flushHit() {
+    const react = pendingHit.current;
+    pendingHit.current = null;
+    react?.(0);
+  }
+
   /** Resolve one queued action, then the next, then hand over to the enemies. */
   function stepPlan() {
     const held: { step: PlannedAction | null } = { step: null };
@@ -731,6 +1300,7 @@ export function BattleScreen({
     const step = held.step;
 
     if (!step) {
+      flushHit();
       startEnemyPhase(battle);
       setNarration(null);
       bump();
@@ -738,10 +1308,10 @@ export function BattleScreen({
       return;
     }
 
-    lunge(step.unit.def.id, step.unit.side);
+    const beat = lunge(step.unit.def.id, step.unit.side, lastHurt.current, step.ability ?? undefined);
     setNarration(actionLine(step.unit, step.ability, step.target, battle.units));
     bump();
-    playerTimer.current = window.setTimeout(stepPlan, BEAT_MS);
+    playerTimer.current = window.setTimeout(stepPlan, beat + AFTER_BEAT_MS);
   }
 
   function stepEnemy() {
@@ -752,18 +1322,19 @@ export function BattleScreen({
     const step = held.step;
 
     if (!step) {
+      flushHit();
       finishEnemyPhase(battle);
-      setBusy(false);
+        setBusy(false);
       setNarration(null);
       bump();
       if (battle.outcome === 'ongoing' && battle.phase === 'player') playDiceRoll(battle.dice);
       return;
     }
 
-    lunge(step.unit.def.id, step.unit.side);
+    const beat = lunge(step.unit.def.id, step.unit.side, lastHurt.current, step.ability ?? undefined);
     setNarration(actionLine(step.unit, step.ability, step.target, battle.units));
     bump();
-    enemyTimer.current = window.setTimeout(stepEnemy, ENEMY_BEAT_MS);
+    enemyTimer.current = window.setTimeout(stepEnemy, beat + AFTER_BEAT_MS);
   }
 
   // ------------------------------------------------------------------ derived
@@ -777,13 +1348,35 @@ export function BattleScreen({
    * abilities is what a Performer is, and a universal action listed among them
    * reads as a fifth thing they chose.
    */
+  /*
+   * Whose sheet the panel shows.
+   *
+   * Hovering a roster row points the camera at somebody; leaving the sheet on
+   * whoever was SELECTED meant the screen answered a different question from
+   * the one the player just asked -- Benjamin's abilities while the camera sits
+   * on Kael.
+   *
+   * It is a PREVIEW, not a change of selection. Nothing about it is actionable:
+   * you cannot spend Benjamin's dice on Kael's abilities, so while the hover
+   * lasts the ability list is inert and nothing reads as castable. The hover
+   * ends the moment the pointer leaves the row, which is before it could reach
+   * the panel -- but a panel that can be clicked into acting on the wrong
+   * character is not one worth shipping, so the guard is explicit rather than
+   * left to the geometry.
+   */
+  const shownUnit = rosterHover ?? sel.unit;
+  const previewing = shownUnit !== sel.unit;
+
   const kitAbilities = useMemo(
-    () => (sel.unit?.def.abilities ?? []).filter((a) => a.kind !== 'move'),
-    [sel.unit],
+    // Whoever the sheet is ABOUT, which is the hovered unit while previewing.
+    // Reading these off the selection was why a preview showed the right name
+    // over the wrong character's abilities.
+    () => (shownUnit?.def.abilities ?? []).filter((a) => a.kind !== 'move'),
+    [shownUnit],
   );
   const boardAction = useMemo(
-    () => (sel.unit?.def.abilities ?? []).find((a) => a.kind === 'move'),
-    [sel.unit],
+    () => (shownUnit?.def.abilities ?? []).find((a) => a.kind === 'move'),
+    [shownUnit],
   );
 
   /**
@@ -823,12 +1416,186 @@ export function BattleScreen({
   const upgradeMasks = nextTier ? masksFor({ cost: nextTier.cost } as Ability) : [];
   const upgradeReady = nextTier != null && upgradeMasks.length > 0 && diceCover(nextTier.cost);
 
+
+
+  // A lab-authored scene wins over the encounter's in-source layer list, and
+  // over the default marks: a set and the places people stand on it are one
+  // decision, so they travel together.
+
   const hoveredUnit = hover ? battle.units.find((u) => alive(u) && pk(u.pos) === pk(hover)) : undefined;
+  // Whose mark the camera should be looking at. Falls back to the player side
+  // so the origin is a real point even between turns, which keeps the ambient
+  // sway anchored rather than snapping when a turn starts.
+  const pulseSide: Unit['side'] =
+    battle.units.find((u) => u.def.id === pulse?.id)?.side ?? 'player';
+
+  /*
+   * The camera, as plain custom properties on `.stage`.
+   *
+   * One element carries the whole shot now. The frame pieces used to be a
+   * sibling that had to be handed the same numbers, and keeping two elements
+   * agreeing about a transform was a recurring source of them disagreeing --
+   * about scale, about which box a percentage meant, about whether the mouse
+   * moved them. They are scenery inside the frame now, so there is nothing left
+   * to synchronise.
+   */
+  /*
+   * Who the camera has its eye on, and how hard it is looking.
+   *
+   * Three states in priority order, because they answer different questions and
+   * the more specific one has to win:
+   *   performing  -- the turn has decided; nothing else may argue with it
+   *   focused     -- somebody is hovered or picked, so show me them
+   *   resting     -- the whole set
+   *
+   * Resolved as ONE value rather than as separate zoom and origin decisions, so
+   * the shot can never end up pushed in on nobody.
+   */
+  /*
+   * `busy`, not just `pulse`.
+   *
+   * A resolving phase is a sequence of beats with gaps between them, and
+   * `pulse` is only true during a beat. Keying off it alone meant the whole
+   * focus treatment -- scrim, dimmed cast, closed-down vignette -- snapped on
+   * and off in the hand-over between every action, which reads as flickering
+   * rather than as a camera. While the battle is playing itself out, the
+   * performance owns the shot and nothing else may dress it.
+   *
+   * Aiming releases it too, and that one is not a nicety. A focus shot is 5.7x
+   * on one character with everyone else dimmed and blurred, which measured out
+   * as all five enemies off screen -- so the moment you chose an ability you
+   * could no longer see, let alone click, anything to aim it at. The camera
+   * pulls back to show the board for exactly as long as you are choosing a
+   * target, which is the one moment the board is what matters.
+   */
+  /*
+   * The camera answers a LOOK, and only a look.
+   *
+   * Selecting used to focus too, and that made the zoom fight the thing it was
+   * meant to serve: you picked a character, the camera pushed in to 5.7x, and
+   * then the moment you chose an ability it had to pull straight back out
+   * because at that zoom the enemies are off screen and unclickable. In and out
+   * on every action, and the zoom-out arrived exactly when you were trying to
+   * concentrate.
+   *
+   * The two gestures are not the same kind of thing. Hovering a roster row is a
+   * question -- "who is that?" -- which is transient, ends by itself, and is
+   * worth a hard push-in. Selecting is a working state that has to survive
+   * while you choose an ability and pick a target, and a working state must not
+   * take the view away. Selection still reads: the row highlights and the slot
+   * outlines. It just does not move the camera.
+   *
+   * Still nothing during a beat or a resolving phase -- the performance owns
+   * the shot -- and nothing while aiming, because that is the one moment the
+   * whole board is the thing you need to see.
+   */
+  const focusUnit = pulse || busy || sel.ability ? null : rosterHover;
+
+  const focusSlot = focusUnit ? slotFor(focusUnit, board, foeSlots) : undefined;
+  const map = frameToStage(stageBox.w, stageBox.h);
+  // Frame fractions -> stage percentages. Vertically the frame IS the stage's
+  // height, so only the horizontal axis needs converting.
+  const eyeOf = (p: { x: number; y: number }) => ({ x: map.ox + p.x * map.sx, y: p.y });
+
+  /*
+   * A unit's drawn height, as a fraction of the frame's.
+   *
+   * The same three factors the sprite itself is sized by, so anything measured
+   * against it -- how hard to zoom, how high to start a damage number -- lands
+   * the same way on a character who is scaled down on the boards as on one who
+   * is not.
+   */
+  const figureHeight = (u: Unit, slot: Slot): number =>
+    SLOT_H *
+    (u.side === 'enemy' ? ENEMY_SCALE : 1) *
+    (u.def.sprite?.scale ?? 1) *
+    depthScale(slot.yPct);
+
+  const focusHeight =
+    focusUnit && focusSlot
+      ? SLOT_H *
+        (focusUnit.side === 'enemy' ? ENEMY_SCALE : 1) *
+        (focusUnit.def.sprite?.scale ?? 1) *
+        depthScale(focusSlot.yPct)
+      : 0;
+
+  /*
+   * What goes in the middle of the shot, and how close.
+   *
+   * `zoom: null` during a beat because `.closing-in` owns the push-in value --
+   * an inline zoom would beat the class and the push would never happen.
+   */
+  const shot = pulse
+    ? { zoom: PUSH_ZOOM, inline: false, subject: eyeOf(acts[pulseSide]) }
+    : focusSlot
+      ? {
+          zoom: focusZoomFor(focusHeight),
+          inline: true,
+          // Aim at the middle of the FIGURE, not at the mark under its feet.
+          // The slot is a point on the floor; centring on that puts the
+          // character in the top half of the shot with a screenful of boards
+          // below them.
+          subject: eyeOf({ x: focusSlot.xPct, y: focusSlot.yPct - focusHeight / 2 }),
+        }
+      : { zoom: restZoom, inline: true, subject: eyeOf(REST_EYE) };
+
+  const aim = {
+    x: clampCentre(shot.subject.x, shot.zoom),
+    y: clampCentre(shot.subject.y, shot.zoom),
+  };
+
+  const camera = {
+    ...(shot.inline ? { ['--cam-zoom' as string]: `${shot.zoom}` } : null),
+    /*
+     * The shot, as a translate that brings the subject to the middle.
+     *
+     * Players face right, so their back is to the left and a performance slides
+     * them left to open up what they are swinging at; enemies go the other way.
+     */
+    ['--cam-x' as string]: `${(centreOn(aim.x) * 100 + (pulse ? (pulseSide === 'player' ? -LOOK_ROOM : LOOK_ROOM) : 0)).toFixed(2)}%`,
+    ['--cam-y' as string]: `${(centreOn(aim.y) * 100).toFixed(2)}%`,
+  } as CSSProperties;
+
+  useEffect(() => {
+    const el = stageRef.current;
+    if (!el) return;
+    const read = () => {
+      const r = el.getBoundingClientRect();
+      // The RATIO is what matters and the camera's own scale cancels out of it,
+      // so this needs no correction for whatever zoom is in effect.
+      setStageBox((prev) => (prev.w === r.width && prev.h === r.height ? prev : { w: r.width, h: r.height }));
+    };
+    read();
+    const ro = new ResizeObserver(read);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   return (
-    <div className="game battle">
+    <div
+      className={`game battle ${pulse ? 'in-beat' : ''} ${focusUnit ? 'focusing' : ''}`}
+      ref={rootRef}
+    >
       <style>{IDLE_KEYFRAMES}</style>
-      <div className="stage" style={{ backgroundImage: `url(${encounter.background})` }}>
+      {/* The walk, retimed for whoever is currently performing. */}
+      <style>
+        {(() => {
+          const b = beatOf(pulse?.id ?? '', pulse?.clip ?? 'attack');
+          return strikeKeyframes(b.holdStart, b.holdEnd);
+        })()}
+      </style>
+      <div
+        ref={stageRef}
+        className={`stage ${pulse ? 'closing-in' : ''}`}
+        style={
+          {
+            ...camera,
+            ...(stageLayers ? null : { backgroundImage: `url(${encounter.background})` }),
+            // `.stage-frame` inherits this; a layered encounter paints its own.
+            ...(stageLayers ? { backgroundImage: 'none' } : null),
+          } as CSSProperties
+        }
+      >
         {/* `moving` is aiming-at-SLOTS, which needs the floor readable and
             clickable in a way aiming at bodies does not. */}
         <div
@@ -836,18 +1603,54 @@ export function BattleScreen({
             sel.ability && (sel.ability.scope ?? 'one') === 'slot' ? 'moving' : ''
           }`}
         >
+        {/* Layered stage, rendered INSIDE `.stage-frame` rather than beside it.
+            The frame carries `aspect-ratio: 1672/941` and is letterboxed within
+            the wider stage -- which is exactly the shape this art was drawn for,
+            so on the frame it needs no cropping at all. It also puts the layers
+            in the same stacking context as the Performers, so ordering them
+            against each other is a plain z-index instead of a fight with the
+            frame's own context. */}
+        {stageLayers?.filter((l) => !l.front).map((l, i) => (
+          <LayerImg
+            key={`${l.src}-${i}`}
+            layer={l}
+            zIndex={0}
+            className="stage-layer"
+          />
+        ))}
         {/*
-          Empty squares of the party's 3x3, drawn ONLY while a reposition is
+          A scrim between the set and the cast, raised while focusing.
+
+          Sits at z 60: above every scenery layer, below every Performer at
+          100+. That gap is the whole reason this is an element rather than a
+          `filter` on the layers -- each layer already carries an inline
+          `filter` for its cast shadow, and a stylesheet cannot add to an inline
+          transform-like property, only lose to it.
+
+          Painting a scrim also degrades better than dimming would: it settles
+          over the whole set evenly, including the gaps between pieces, so the
+          stage recedes as one surface rather than as a dozen separately
+          darkened cutouts.
+        */}
+        <div className="stage-scrim" aria-hidden="true" />
+        {/*
+          Empty squares of the party's formation, drawn ONLY while a reposition is
           being aimed.
           
           Permanently visible footprints would turn the stage into a board and
-          the backdrop is a painted theatre, not a battlemap -- and the four
-          gaps are ordinary scenery every other turn. They appear exactly when
-          they become clickable, which is also when the player needs to see the
-          shape of the grid they are moving inside.
+          the backdrop is a painted theatre, not a battlemap. They appear
+          exactly when they become clickable, which is also when the player
+          needs to see the shape of the formation they are moving inside.
+
+          With five slots and five Performers there is normally nothing to draw:
+          a full board means every reposition is a SWAP, and the swap targets
+          are the other Performers themselves. This is not dead code though --
+          the filter is on `alive`, so a slot opens up when somebody falls, and
+          stepping into a dead ally's place is a real move with real
+          consequences for who the enemy can reach.
         */}
         {sel.ability && (sel.ability.scope ?? 'one') === 'slot' &&
-          PARTY_SLOTS_ALL.filter(
+          board.filter(
             (sl) => !battle.units.some((u) => alive(u) && u.side === 'player' && u.pos.x === sl.col && u.pos.y === sl.row),
           ).map((sl) => {
             const at = { x: sl.col, y: sl.row };
@@ -870,13 +1673,16 @@ export function BattleScreen({
                 style={{ left: `${sl.xPct * 100}%`, top: `${sl.yPct * 100}%` }}
                 onMouseEnter={() => setHover(at)}
                 onMouseLeave={() => setHover(null)}
-                onClick={() => aimAt(at)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  aimAt(at);
+                }}
               />
             );
           })}
 
         {battle.units.filter(alive).map((u) => {
-          const slot = slotFor(u, encounter.partySlots, encounter.enemySlots, battle.units);
+          const slot = slotFor(u, board, foeSlots);
           if (!slot) return null;
           const key = pk(u.pos);
           const isTarget = targets.has(key);
@@ -892,6 +1698,16 @@ export function BattleScreen({
             // five enemies all declaring at once marks most of the party, and
             // the useful question is which of them THIS one named.
             hover && threat.byEnemy.get(hoveredEnemyId ?? '')?.targets.has(key) ? 'aimed' : '',
+            // Everyone who is NOT the subject of the shot, while there is one.
+            // Carried on the slot rather than the unit so it composes with the
+            // spent dim instead of replacing it -- two `filter` declarations on
+            // one element means the later wins, and a focused-but-spent
+            // character would pop back to full brightness.
+            focusUnit && focusUnit !== u ? 'unfocused' : '',
+            // Which body the pointer is actually over. Sprites overlap and have
+            // transparent margins, so "the one nearest the cursor" is a genuine
+            // question the player was being left to guess at.
+            hoveredUnit === u ? 'hovered' : '',
           ]
             .filter(Boolean)
             .join(' ');
@@ -907,50 +1723,150 @@ export function BattleScreen({
                 // whoever is behind them.
                 zIndex: 100 + Math.round(slot.yPct * 100),
                 ['--px' as string]: `${(pulse?.id === u.def.id ? pulse.dx : 0) * 18}px`,
+                // Where this unit steps to when it performs, as a delta from its
+                // own slot to the downstage mark on its own side. Container
+                // units, because a percentage transform would be read against
+                // the sprite's own box rather than against the stage.
+                // The clip THIS beat is playing decides its length, so a long
+                // ability holds the mark longer than a short one.
+                ['--beat' as string]: `${beatOf(u.def.id, pulse?.id === u.def.id ? pulse.clip : 'attack').beat}ms`,
+                ['--sx' as string]: `${(acts[u.side].x - slot.xPct) * 100}cqw`,
+                ['--sy' as string]: `${(acts[u.side].y - slot.yPct) * 100}cqh`,
               }}
               onMouseEnter={() => setHover(u.pos)}
               onMouseLeave={() => setHover(null)}
-              onClick={() => (isTarget ? fireAt(u) : selectUnit(u))}
+              // Stops here. The stage's own click clears the selection, and a
+              // click that landed on a body is the opposite of a click on bare
+              // boards -- without this, picking a second character wiped the
+              // first instead of replacing it, because the stage handler reads
+              // the selection as it was when it was last rendered.
+              onClick={(e) => {
+                e.stopPropagation();
+                if (isTarget) fireAt(u);
+                else selectUnit(u);
+              }}
             >
               <UnitChip
                 key={hits[u.def.id] ?? 0}
                 unit={u}
                 phase={battle.phase}
-                slotH={SLOT_H}
+                slotH={SLOT_H * (u.side === 'enemy' ? ENEMY_SCALE : 1)}
                 queued={u.side === 'player' && isPlanned(battle, u)}
                 depth={depthScale(slot.yPct)}
                 facing={u.side === 'player' ? 1 : -1}
                 hit={hits[u.def.id] ?? 0}
+                flinching={flinching[u.def.id] ?? null}
                 striking={pulse?.id === u.def.id}
+                actClip={pulse?.id === u.def.id && pulse.act ? (pulse.clip ?? 'attack') : null}
               />
               {u.pending && <span className="casting">!</span>}
+              {/* Impact effects land ON the target, inside its slot, so they
+                  travel with it and inherit its depth in the painter's order
+                  rather than needing a position of their own. */}
+              {bursts
+                .filter((b) => b.on !== null && b.on === u.def.id)
+                .map((b) => {
+                  const fx = EFFECTS[b.impact.effect];
+                  if (!fx) return null;
+                  return (
+                    <span
+                      key={b.id}
+                      className="impact-burst"
+                      style={
+                        {
+                          width: `calc(${(b.impact.scale ?? 1) * 100}% * ${fx.aspect})`,
+                          aspectRatio: `${fx.aspect}`,
+                          left: `${50 + (b.impact.dx ?? 0)}%`,
+                          top: `${50 + (b.impact.dy ?? 0)}%`,
+                          backgroundImage: `url(${fx.src})`,
+                          backgroundSize: `${fx.frames * 100}% 100%`,
+                          ['--fx-frames' as string]: fx.frames,
+                          ['--fx-end' as string]: `${fx.frames * 100}%`,
+                          ['--fx-ms' as string]: `${b.impact.ms ?? BURST_MS}ms`,
+                        } as CSSProperties
+                      }
+                    />
+                  );
+                })}
             </div>
           );
         })}
 
-        {/* Every declared intent, in ONE layer above all the slots.
-            These were rendered inside each slot, which put them in that slot's
-            stacking context -- and a slot's z-index comes from its depth, so a
-            creature standing nearer covered the label of the one behind it.
-            Above the face was no better: with six enemies staggered for depth,
-            a label over one head lands on another. Only a layer over all of
-            them is free of both, and it costs one extra pass over the units. */}
-        {battle.phase === 'player' &&
-          livingOf(battle, 'enemy').map((u) => {
-            if (!u.intent || u.pending) return null;
-            const slot = slotAt(u.pos, 'enemy', encounter);
-            if (!slot) return null;
+        {/*
+          The outer frame -- legs, columns, valance -- as SCENERY.
+
+          These used to live in their own element outside the stage so they
+          could sit still while the camera moved. That is what a proscenium does
+          in a theatre, and it is not what these pieces are: they are painted
+          flats standing at the edge of the set, and a flat that ignores the
+          camera reads as a sticker on the monitor. Inside the frame they take
+          the sway, the pointer drift and the push-in exactly as the trees do,
+          because they are the same kind of object.
+
+          A wrapper rather than loose images so the focus dim has something to
+          hold: each layer already spends its inline `filter` on a cast shadow,
+          and a stylesheet cannot add to that, only lose to it.
+        */}
+        {stageLayers?.some((l) => l.front) && (
+          <div className="front-layers" aria-hidden="true">
+            {stageLayers
+              .filter((l) => l.front)
+              .map((l, i) => (
+                <LayerImg key={`${l.src}-${i}`} layer={l} zIndex={250 + i} className="stage-layer" />
+              ))}
+          </div>
+        )}
+
+        {/* Area bursts sit on the stage rather than in a slot: there is no
+            single unit for them to ride, and the point they mark is the
+            group's middle. */}
+        {bursts
+          .filter((b) => b.on === null && b.at)
+          .map((b) => {
+            const fx = EFFECTS[b.impact.effect];
+            if (!fx) return null;
             return (
               <span
-                key={u.def.id}
-                className="intent"
-                title={`rolled ${u.intent.roll} — ${u.intent.ability.name}`}
-                style={{ left: `${slot.xPct * 100}%`, top: `${slot.yPct * 100}%` }}
-              >
-                {u.intent.roll}
-              </span>
+                key={b.id}
+                className="impact-burst area"
+                style={
+                  {
+                    left: `${b.at!.x * 100 + (b.impact.dx ?? 0)}%`,
+                    top: `${b.at!.y * 100 + (b.impact.dy ?? 0)}%`,
+                    width: `${(b.impact.scale ?? 1) * SLOT_H * 100 * fx.aspect}cqh`,
+                    aspectRatio: `${fx.aspect}`,
+                    backgroundImage: `url(${fx.src})`,
+                    backgroundSize: `${fx.frames * 100}% 100%`,
+                    ['--fx-frames' as string]: fx.frames,
+                    ['--fx-end' as string]: `${fx.frames * 100}%`,
+                    ['--fx-ms' as string]: `${b.impact.ms ?? BURST_MS}ms`,
+                  } as CSSProperties
+                }
+              />
             );
           })}
+
+        {/*
+          Declared intent is NOT drawn on the stage.
+
+          It was: a small badge at each creature's feet holding the rolled
+          number, with the ability name in a tooltip. That worked at two or
+          three enemies and stopped working at five. The block spans about an
+          eighth of the frame, so five badges plus the escalation and matchup
+          columns beside them landed in the same strip of boards and covered
+          each other and the art underneath.
+
+          The information is worth keeping -- a fight is meant to be plannable,
+          and what each enemy is about to do is most of what you plan against
+          -- so it moved to the enemy roster instead, where every creature
+          already has a row of its own. Rows cannot collide, and there is space
+          for the ability NAME rather than a number you had to hover to decode.
+
+          What stays on the body is what is genuinely positional: the matchup
+          while aiming, escalation, and the frost and sleep marks. Those answer
+          "which of these do I point this at", and that question is about a
+          place on the stage.
+        */}
 
         {/* Escalation, called out on the creature itself.
             The ramp is not random, but BATTLE_DESIGN's rule that a fight must
@@ -964,7 +1880,7 @@ export function BattleScreen({
             badges on top of each other the first time a ramping boss is also
             aimed at, and "usually they do not coincide" is not a layout. */}
         {battle.units.filter(alive).map((u) => {
-          const slot = slotAt(u.pos, u.side, encounter);
+          const slot = slotAt(u.pos, u.side, marks);
           if (!slot) return null;
           const enemy = u.side === 'enemy';
           const mult = enemy ? rampMultiplier(u.def, battle.turn) : 1;
@@ -1049,13 +1965,52 @@ export function BattleScreen({
         })}
 
         {floaters.map((f) => {
-          const slot = slotAt(f.at, f.side, encounter);
+          const slot = slotAt(f.at, f.side, marks);
           if (!slot) return null;
+          /*
+           * Whose body this number came off.
+           *
+           * Searched among ALL units rather than the living, because the number
+           * that kills somebody is still theirs and still has to rise from
+           * where they stood. Falling back to a plain slot height keeps a
+           * floater from collapsing to the floor if the owner cannot be found
+           * at all -- a wrong height is a much smaller problem than a number
+           * that behaves differently from its neighbours.
+           */
+          const owner = battle.units.find(
+            (u) => u.side === f.side && u.pos.x === f.at.x && u.pos.y === f.at.y,
+          );
+          const lift = owner ? figureHeight(owner, slot) : SLOT_H;
           return (
             <span
               key={f.id}
               className={floaterClass(f)}
-              style={{ left: `${slot.xPct * 100}%`, top: `${slot.yPct * 100}%`, zIndex: 900 }}
+              style={
+                {
+                  left: `${slot.xPct * 100}%`,
+                  /*
+                   * Halfway up the body, not at the mark.
+                   *
+                   * A slot's point is on the FLOOR -- it is where the feet go --
+                   * so a number anchored to it started at the boards and rose
+                   * past the character rather than off them. Lifting it by half
+                   * the figure's height puts it at the chest, which is where a
+                   * hit reads as landing.
+                   *
+                   * Derived per unit rather than a fixed nudge, because the
+                   * cast is not one size: a constant that centres Rebar leaves
+                   * Aethis wearing hers as a hat.
+                   */
+                  top: `${(slot.yPct - lift / 2) * 100}%`,
+                  zIndex: 900,
+                  // Thrown off in its own direction. The CSS reads these; the
+                  // values were fixed when the floater was made, so a re-render
+                  // cannot make a number jump mid-flight.
+                  ['--spray-x' as string]: `${f.spray.x}px`,
+                  ['--spray-rise' as string]: `${f.spray.rise}`,
+                  ['--spray-tilt' as string]: `${f.spray.tilt}deg`,
+                } as CSSProperties
+              }
             >
               {f.crit && <b className="crit-flag">CRIT</b>}
               {f.kind === 'damage' ? '-' : '+'}
@@ -1065,6 +2020,12 @@ export function BattleScreen({
         })}
         </div>
       </div>
+
+      {/* Fade to black around the picture. A SIBLING of `.stage`, not a child:
+          the camera transforms the stage, and a vignette that zoomed and swayed
+          with it would read as a hole in the set rather than as the edge of the
+          frame. Ignores the pointer so the stage underneath stays clickable. */}
+      <div className="stage-vignette" aria-hidden="true" />
 
       <div className="hud hud-top">
         <div className="panel bar">
@@ -1105,6 +2066,21 @@ export function BattleScreen({
               <button className={devParty ? 'primary' : ''} onClick={() => setRosterOpen(true)}>
                 {devParty ? `Party (${devParty.length})` : 'Party'}
               </button>
+              {/* How close the camera sits when nothing has its attention.
+                  A slider because the right value is a look, not a number --
+                  and it reads back so the number is there when you want it. */}
+              <label className="dev-zoom" title="Resting camera zoom">
+                zoom
+                <input
+                  type="range"
+                  min={1}
+                  max={3}
+                  step={0.05}
+                  value={restZoom}
+                  onChange={(e) => setRestZoom(Number(e.target.value))}
+                />
+                <b>{restZoom.toFixed(2)}×</b>
+              </label>
               <button onClick={() => setShowLog(true)}>Show log</button>
               <button onClick={() => restart(seed)}>Restart</button>
               <button onClick={() => restart(Math.floor(Math.random() * 100000))}>New seed</button>
@@ -1118,16 +2094,17 @@ export function BattleScreen({
           and which puts each side's list on that side's half of the board. */}
       <div className="hud hud-party">
         <TeamPanel title={`Your team (${livingOf(battle, 'player').length}/${players.length})`}
-          units={players} selected={sel.unit} onSelect={selectUnit} />
+          units={players} selected={sel.unit} onSelect={selectUnit} onPeek={setRosterHover} />
       </div>
 
       <div className="hud hud-foes">
         <TeamPanel title={`Enemies (${livingOf(battle, 'enemy').length}/${enemies.length})`}
-          units={enemies} selected={sel.unit} onSelect={selectUnit} />
+          units={enemies} selected={sel.unit} onSelect={selectUnit} onPeek={setRosterHover}
+          intents={battle.phase === 'player'} />
       </div>
 
       <div className="hud hud-right">
-        {!sel.unit && (
+        {!shownUnit && (
           // The band is the widest thing in the dock and it is empty until
           // something is picked. Saying so beats leaving what reads as a
           // rendering fault.
@@ -1135,7 +2112,7 @@ export function BattleScreen({
             <span>Select a Performer or an enemy to see their sheet.</span>
           </div>
         )}
-        {sel.unit && (
+        {shownUnit && (
           <div className="panel detail">
             {/* Three deliberate sections rather than one flat list.
                 They used to flow through a multi-column box, which split the
@@ -1144,34 +2121,34 @@ export function BattleScreen({
                 layout was deciding what grouped with what, and it had no idea. */}
             <div className="sheet-id">
               <h3 className="portrait-head">
-              {sel.unit.def.sprite ? (
-                <SpritePortrait sheet={sel.unit.def.sprite} height={54} />
+              {shownUnit.def.sprite ? (
+                <SpritePortrait sheet={shownUnit.def.sprite} height={54} />
               ) : (
-                <Avatar def={sel.unit.def} size={40} side={sel.unit.side} />
+                <Avatar def={shownUnit.def} size={40} side={shownUnit.side} />
               )}
-              <span className="who">{sel.unit.def.name}</span>
-              <span className="stars">{'★'.repeat(sel.unit.def.rarity)}</span>
+              <span className="who">{shownUnit.def.name}</span>
+              <span className="stars">{'★'.repeat(shownUnit.def.rarity)}</span>
             </h3>
             <div className="stat-row">
               <span>
-                HP {sel.unit.hp}/{unitMaxHp(sel.unit)}
+                HP {shownUnit.hp}/{unitMaxHp(shownUnit)}
               </span>
-              <span>ATK {stat(unitAttack(sel.unit))}</span>
-              <span>P.DEF {stat(effectiveDefense(sel.unit, 'physical'))}</span>
-              <span>M.DEF {stat(effectiveDefense(sel.unit, 'magical'))}</span>
-              {sel.unit.upgrades > 0 && (
-                <span className="boosted">+{Math.round((statScale(sel.unit) - 1) * 100)}%</span>
+              <span>ATK {stat(unitAttack(shownUnit))}</span>
+              <span>P.DEF {stat(effectiveDefense(shownUnit, 'physical'))}</span>
+              <span>M.DEF {stat(effectiveDefense(shownUnit, 'magical'))}</span>
+              {shownUnit.upgrades > 0 && (
+                <span className="boosted">+{Math.round((statScale(shownUnit) - 1) * 100)}%</span>
               )}
             </div>
             <div className="terrain-note">
-              {ROLE_LABEL[sel.unit.def.role]} · {elementsOf(sel.unit.def).join('/')} ·{' '}
-              {rankLabel(sel.unit, battle)}
+              {ROLE_LABEL[shownUnit.def.role]} · {elementsOf(shownUnit.def).join('/')} ·{' '}
+              {rankLabel(shownUnit, battle)}
             </div>
-            {sel.unit.def.ramp && (
+            {shownUnit.def.ramp && (
               <div className="ramp-note">
-                <strong>Escalation</strong> · +{sel.unit.def.ramp.percent}% damage each turn past
-                turn {sel.unit.def.ramp.after} · now{' '}
-                <em>×{rampMultiplier(sel.unit.def, battle.turn).toFixed(2)}</em>
+                <strong>Escalation</strong> · +{shownUnit.def.ramp.percent}% damage each turn past
+                turn {shownUnit.def.ramp.after} · now{' '}
+                <em>×{rampMultiplier(shownUnit.def, battle.turn).toFixed(2)}</em>
               </div>
             )}
 
@@ -1188,7 +2165,7 @@ export function BattleScreen({
             */}
             <div className="matchups">
               {(() => {
-                const entries = Object.entries(sel.unit!.def.resistances ?? {}) as [Element, number][];
+                const entries = Object.entries(shownUnit!.def.resistances ?? {}) as [Element, number][];
                 const weak = entries.filter(([, v]) => v < 0).sort((a, b) => a[1] - b[1]);
                 const resist = entries.filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
                 if (!weak.length && !resist.length) {
@@ -1232,7 +2209,7 @@ export function BattleScreen({
               same place an ability's do, so the sheet stays a list of names and
               one panel explains whichever you are pointing at.
             */}
-            {(sel.unit.def.passives ?? []).map((pas) => (
+            {(shownUnit.def.passives ?? []).map((pas) => (
               <button
                 key={pas.name ?? pas.kind}
                 className={`passive-chip ${previewPassive === pas ? 'on' : ''}`}
@@ -1257,12 +2234,12 @@ export function BattleScreen({
               so the panel scrolled: the fix and the correct structure happened
               to be the same move.
             */}
-            {boardAction && sel.unit.side === 'player' && (
+            {boardAction && shownUnit.side === 'player' && (
               <button
                 className={`board-chip ${sel.ability === boardAction ? 'on' : ''} ${
-                  matched.has(boardAction.name) ? 'ready' : ''
+                  !previewing && matched.has(boardAction.name) ? 'ready' : ''
                 }`}
-                disabled={!canAct || !matched.has(boardAction.name)}
+                disabled={previewing || !canAct || !matched.has(boardAction.name)}
                 onClick={() => chooseAbility(boardAction)}
                 onMouseEnter={() => setPreview(boardAction)}
                 onMouseLeave={() => setPreview(null)}
@@ -1270,7 +2247,7 @@ export function BattleScreen({
                 onBlur={() => setPreview(null)}
                 title={
                   !canAct
-                    ? `${sel.unit.def.name} is not acting again this round`
+                    ? `${shownUnit.def.name} is not acting again this round`
                     : matched.has(boardAction.name)
                       ? 'Choose a slot to step into'
                       : 'Select any single die'
@@ -1288,13 +2265,13 @@ export function BattleScreen({
                 The badge on the stage is only a number; this is what makes it
                 mean something, and it is why the roll is worth showing at all
                 rather than the ability name. */}
-            {sel.unit.side === 'enemy' && (
+            {shownUnit.side === 'enemy' && (
               <ul className="rolltable">
-                {sel.unit.def.abilities
+                {shownUnit.def.abilities
                   .filter((a) => a.roll)
                   .map((a) => {
                     const [lo, hi] = a.roll!;
-                    const now = sel.unit!.intent?.roll;
+                    const now = shownUnit!.intent?.roll;
                     const live = now !== undefined && now >= lo && now <= hi;
                     return (
                       <li key={a.name} className={live ? 'on' : ''}>
@@ -1320,7 +2297,7 @@ export function BattleScreen({
               disabled anyway -- `ready` needs dice selected for this unit, and a
               committed one has none -- so this is about how they READ.
             */}
-            {sel.unit.side === 'player' && (
+            {shownUnit.side === 'player' && (
               <ul className={`abilities ${canAct ? '' : 'inert'}`}>
                 {kitAbilities.map((a) => {
                   // Three states. `locked` is hopeless: no subset of this roll can
@@ -1328,7 +2305,9 @@ export function BattleScreen({
                   // Plain-but-disabled is the middle -- payable, wrong dice.
                   const ok = affordable.get(a.name) ?? false;
                   const active = sel.ability?.name === a.name;
-                  const ready = matched.has(a.name);
+                  // A previewed sheet shows no ability as castable, because none of
+                  // them is: the dice belong to whoever is selected.
+                  const ready = !previewing && matched.has(a.name);
                   return (
                     // Hover lives on the <li>: disabled buttons swallow mouse events.
                     <li key={a.name} onMouseEnter={() => setPreview(a)} onMouseLeave={() => setPreview(null)}>
@@ -1338,11 +2317,11 @@ export function BattleScreen({
                         disabled={!canAct || !ready}
                         title={
                           !canAct
-                            ? `${sel.unit!.def.name} is not acting again this round`
+                            ? `${shownUnit!.def.name} is not acting again this round`
                             : !ok
                               ? `No dice in this roll can total ${a.cost}`
                               : !ready
-                                ? paysAsWildcard(a, sel.unit!.freeCast)
+                                ? paysAsWildcard(a, shownUnit!.freeCast)
                                   ? 'Select any single die'
                                   : `Select dice totalling ${a.cost}`
                                 : undefined
@@ -1353,9 +2332,9 @@ export function BattleScreen({
                             cast -- printing the sheet's 7 beside a die the
                             player can actually pay with would read as a bug. */}
                         <span
-                          className={`cost${!a.wildcard && paysAsWildcard(a, sel.unit!.freeCast) ? ' charged' : ''}`}
+                          className={`cost${!a.wildcard && paysAsWildcard(a, shownUnit!.freeCast) ? ' charged' : ''}`}
                         >
-                          {paysAsWildcard(a, sel.unit!.freeCast) ? '✳' : a.cost}
+                          {paysAsWildcard(a, shownUnit!.freeCast) ? '✳' : a.cost}
                         </span>
                         <span className="body">
                           <strong>
@@ -1400,11 +2379,15 @@ export function BattleScreen({
               exactly the same thing).
             */}
 
-            {sel.unit.side === 'player' && !over && (
+            {/* Hidden while previewing. The tiers, their costs and whether one
+                is affordable are all derived from the SELECTED unit, so showing
+                them under somebody else's name would be a track that belongs to
+                neither -- and the button behind it spends real dice. */}
+            {shownUnit.side === 'player' && !over && !previewing && (
               <div className="upgrades">
                 <div className="upgrade-track">
-                  {(sel.unit.def.upgrades ?? []).map((t, i) => (
-                    <span key={t.name} className={`pip-tier ${i < sel.unit!.upgrades ? 'on' : ''}`} title={t.name} />
+                  {(shownUnit.def.upgrades ?? []).map((t, i) => (
+                    <span key={t.name} className={`pip-tier ${i < shownUnit!.upgrades ? 'on' : ''}`} title={t.name} />
                   ))}
                   <span className="dim">upgrades</span>
                 </div>
@@ -1416,9 +2399,9 @@ export function BattleScreen({
                   the other two were, so the choice to spend 6 now or hold for 12
                   could not be made from the panel it is made in.
                 */}
-                {(sel.unit.def.upgrades ?? []).map((tier, i) => {
-                  const bought = i < sel.unit!.upgrades;
-                  const isNext = i === sel.unit!.upgrades;
+                {(shownUnit.def.upgrades ?? []).map((tier, i) => {
+                  const bought = i < shownUnit!.upgrades;
+                  const isNext = i === shownUnit!.upgrades;
                   const payable = isNext && upgradeMasks.length > 0;
                   return (
                     <button
@@ -1433,7 +2416,7 @@ export function BattleScreen({
                       ].filter(Boolean).join(' ')}
                       onClick={handleUpgrade}
                       disabled={
-                        !isNext || sel.unit!.hasActed || isPlanned(battle, sel.unit!) || !upgradeReady
+                        !isNext || shownUnit!.hasActed || isPlanned(battle, shownUnit!) || !upgradeReady
                       }
                       title={
                         bought
@@ -1458,22 +2441,22 @@ export function BattleScreen({
               </div>
             )}
 
-            {sel.unit.side === 'enemy' && (
+            {shownUnit.side === 'enemy' && (
               <div className="enemy-kit">
-                {sel.unit.pending && (
+                {shownUnit.pending && (
                   <p className="incoming">
-                    Casting <strong>{sel.unit.pending.ability.name}</strong> — lands next turn
+                    Casting <strong>{shownUnit.pending.ability.name}</strong> — lands next turn
                   </p>
                 )}
-                {sel.unit.def.abilities.map((a) => (
+                {shownUnit.def.abilities.map((a) => (
                   <div key={a.name} className="kit-row">
                     <strong>{a.name}</strong>
-                    {(sel.unit!.cooldowns[a.name] ?? 0) > 0 && <em className="cd">{sel.unit!.cooldowns[a.name]}t</em>}
+                    {(shownUnit!.cooldowns[a.name] ?? 0) > 0 && <em className="cd">{shownUnit!.cooldowns[a.name]}t</em>}
                     <p>{describeAbility(a)}</p>
                     {describeEnemyUsage(a) && <p className="sub">{describeEnemyUsage(a)}</p>}
                   </div>
                 ))}
-                {(sel.unit.def.passives ?? []).map((pas) => (
+                {(shownUnit.def.passives ?? []).map((pas) => (
                   <div key={pas.kind} className="kit-row passive">
                     <strong>{pas.kind}</strong>
                     <p>{describePassive(pas)}</p>
@@ -1497,7 +2480,7 @@ export function BattleScreen({
           slot that appears and disappears is just a slower version of the same
           jump.
         */}
-        {sel.unit && (
+        {shownUnit && (
           <div className="panel inspect">
             {previewPassive ? (
               <div className="rules">
@@ -1533,7 +2516,7 @@ export function BattleScreen({
             )}
 
             {sel.ability && hoveredUnit && targets.has(pk(hoveredUnit.pos)) && (
-              <ForecastPanel battle={battle} source={sel.unit} ability={sel.ability} centre={hoveredUnit.pos} />
+              <ForecastPanel battle={battle} source={sel.unit!} ability={sel.ability} centre={hoveredUnit.pos} />
             )}
           </div>
         )}
@@ -1716,14 +2699,14 @@ export function BattleScreen({
 /**
  * Which slot a unit is standing in, matched by its formation coordinates.
  *
- * The party is looked up in the WHOLE 3x3, never in the encounter's list.
+ * The party is looked up in the WHOLE formation, never in the encounter's list.
  * `encounter.partySlots` is a FILL order -- seven of the nine, the ones units
  * deploy into -- so a Performer who repositioned into either of the other two
  * found no slot and rendered as nothing. Two of the nine squares made you
  * vanish, which is the sort of bug a fill list masquerading as a board causes.
  */
-function slotFor(u: Unit, _partySlots: Slot[], enemySlots: Slot[], _units: Unit[]): Slot | undefined {
-  const pool = u.side === 'player' ? PARTY_SLOTS_ALL : enemySlots;
+function slotFor(u: Unit, board: Slot[], enemySlots: Slot[]): Slot | undefined {
+  const pool = u.side === 'player' ? board : enemySlots;
   return pool.find((s) => s.col === u.pos.x && s.row === u.pos.y);
 }
 
@@ -1740,8 +2723,14 @@ function slotFor(u: Unit, _partySlots: Slot[], enemySlots: Slot[], _units: Unit[
  * col-2 ENEMY at a party slot: the front two enemies' intent dice appeared
  * under the front two Performers.
  */
-function slotAt(p: Pos, side: Side, enc: { partySlots: Slot[]; enemySlots: Slot[] }): Slot | undefined {
-  const pool = side === 'player' ? PARTY_SLOTS_ALL : enc.enemySlots;
+/**
+ * `board` is every party slot, NOT `encounter.partySlots` -- that is a fill
+ * ORDER of seven, and looking a position up in it misses the two corners a
+ * reposition can reach. Passed in rather than read from the constant so a
+ * lab-authored scene can move the marks.
+ */
+function slotAt(p: Pos, side: Side, enc: { board: Slot[]; enemySlots: Slot[] }): Slot | undefined {
+  const pool = side === 'player' ? enc.board : enc.enemySlots;
   return pool.find((s) => s.col === p.x && s.row === p.y);
 }
 
@@ -1787,6 +2776,8 @@ function UnitChip({
   facing,
   hit,
   striking,
+  actClip,
+  flinching = null,
   queued = false,
 }: {
   unit: Unit;
@@ -1798,7 +2789,13 @@ function UnitChip({
   depth: number;
   facing: number;
   hit: number;
+  /** Currently holding a hit reaction. See `PAIN_MS`. */
+  /** Mid-reaction, and which way the tumble turns. Null when untouched. */
+  flinching?: 'a' | 'b' | null;
+  /** Taking their turn: walking out, performing, walking back. Drives the step. */
   striking: boolean;
+  /** The clip to PLAY, once they have arrived and taken their pause. */
+  actClip: string | null;
 }) {
   // Only grey out the side whose turn it is; the idle side's flags are stale.
   // `queued` is distinct from `acted`: one is a promise the player can still take
@@ -1827,7 +2824,31 @@ function UnitChip({
     // `h` is the FIGURE height; the box holding it is larger, by however much
     // this character's widest clip reaches. `clipBox` does that conversion and
     // lands the feet on the slot mark.
-    const box = idle ? clipBox(idle, h, placementFor(unit.def.id, 'idle')) : null;
+    // The performing clip, and only once they are actually performing. The
+    // catalogue carries every packed clip -- `sheet.idle` is just the one the
+    // board loops at rest -- so nothing new had to be generated to reach it.
+    const attack = actClip ? ANIMATION_CLIPS[unit.def.id]?.[actClip] : undefined;
+    /*
+     * An action is booked: stand ready rather than idle.
+     *
+     * A queued action is a promise the player has made and can still take back,
+     * and until now the only sign of it was a marker pinned to the sprite. A
+     * change of STANCE says it with the body -- you can read the whole board's
+     * state at a glance and see who is still deciding.
+     *
+     * Held through the walk as well, which is why the test is `!attack` rather
+     * than `!striking`: a Performer who has drawn their sword to say "I am
+     * going" should not sheathe it to stroll to the mark and draw it again.
+     * They keep the stance from the moment the action is booked right up to the
+     * frame the swing starts.
+     *
+     * Falls through to the idle for anyone without a `ready` sheet, so this
+     * costs nothing for a character who has not been drawn one.
+     */
+    const ready = !attack && (queued || striking) ? ANIMATION_CLIPS[unit.def.id]?.ready : undefined;
+    const clipName = attack ? actClip! : ready ? 'ready' : 'idle';
+    const strip = attack ?? ready ?? idle;
+    const box = strip ? clipBox(strip, h, placementFor(unit.def.id, clipName)) : null;
     // The strip and the still are different files with different heights --
     // Maxine's strip is 105px against her 106px still -- so the rounding step
     // has to come from whichever one is actually being drawn.
@@ -1839,18 +2860,63 @@ function UnitChip({
       sheet.snapPx,
       sheet.pixelated,
     );
-    const body = idle && box ? (
+    // A hit reaction is one drawing held for a moment, so it replaces the strip
+    // entirely rather than playing. Falls through to the normal path for an
+    // actor who ships no `pain` pose.
+    const painting = flinching && sheet.pain && !striking;
+    // One timeline, read by both tracks. Computed here rather than inline in
+    // each so the pose can never end on a different frame than the strip.
+    const clipSteps = strip
+      ? clipTimeline(strip.frames, tuningFor(unit.def.id, clipName), orderFor(unit.def.id, clipName))
+      : [];
+    const { clipMs } = beatOf(unit.def.id, clipName);
+    const poseName = poseKeyframes(poseAnimName(unit.def.id, clipName), clipSteps)
+      ? poseAnimName(unit.def.id, clipName)
+      : '';
+    const body = painting ? (
+      <img
+        className={`sprite ${sheet.pixelated ? 'pixel' : ''}`}
+        src={sheet.pain}
+        alt=""
+        draggable={false}
+        style={{
+          height: '100%',
+          width: 'auto',
+          transform: `translateX(${(0.5 - sheet.anchorX) * 100}%) scaleX(${facing})`,
+        }}
+      />
+    ) : strip && box ? (
       <span
         className="anim-clip"
         style={{ transform: `translate(${box.shiftPct}%, ${box.dropPct}%) scaleX(${facing})` }}
       >
+        {/* The pose track: per-frame squash, stretch and lean.
+            A wrapper rather than something folded into the strip's own
+            transform, because that transform is measured in strip-widths and
+            scaling it would slide the clip off its own frames. Left without an
+            animation entirely when no frame poses anything, which is almost
+            every clip. */}
+        <span
+          className="anim-pose"
+          style={{
+            animationName: poseName || undefined,
+            animationDuration: poseName ? `${clipMs}ms` : undefined,
+            animationTimingFunction: 'linear',
+            // Locked to the strip's delay: the pose and the drawing it poses
+            // have to start on the same frame or the squash lands on the wrong
+            // one.
+            ...(poseName && attack
+              ? { animationIterationCount: 1, animationFillMode: 'forwards' as const }
+              : null),
+          }}
+        >
         <img
           className={`sprite anim-strip ${sheet.pixelated ? 'pixel' : ''}`}
-          src={idle.src}
+          src={strip.src}
           alt=""
           draggable={false}
           style={{
-            width: `${idle.frames * 100}%`,
+            width: `${strip.frames * 100}%`,
             // A plain loop, NOT a ping-pong. These sheets are already complete
             // bounce cycles -- the pack step trims them to whole cycles -- so
             // playing one backwards adds a second bounce that is not in the art.
@@ -1858,15 +2924,31 @@ function UnitChip({
             // Driven by generated keyframes rather than `steps()` so that any
             // per-frame holds authored in <actor>.anim.json play in the battle
             // exactly as they did in the lab.
-            animationName: clipAnimName(unit.def.id, 'idle'),
+            animationName: clipAnimName(unit.def.id, clipName),
             animationTimingFunction: 'linear',
-            animationDuration: `${clipDuration(
-              clipTimeline(idle.frames, tuningFor(unit.def.id, 'idle'), orderFor(unit.def.id, 'idle')),
-              stepMsFor(unit.def.id, 'idle'),
-            )}ms`,
-            animationDelay: `${idlePhase(unit.def.id, idle.frames)}ms`,
+            animationDuration: `${clipMs}ms`,
+            // An attack plays ONCE and holds its last drawing; the idle loops.
+            // Staggering the start is only right for a loop -- delaying a
+            // one-shot would leave the actor blank while they were swinging.
+            // An attack plays ONCE, and not until the performer has walked to
+            // their mark and taken a beat -- see `beatOf`. `both` rather than
+            // `forwards` is what holds the clip's FIRST frame through that
+            // lead-in: with `forwards` the strip sits at its untransformed
+            // default during the delay, which ignores any offset authored on
+            // frame 0 and can show the character half a frame off.
+            // No delay: the strip is only swapped in once the performer has
+            // arrived and taken their pause, so the clip starts the moment it
+            // mounts. It used to be mounted for the whole beat with the lead-in
+            // as a delay, which held its first drawing through the walk.
+            ...(attack
+              ? { animationIterationCount: 1, animationFillMode: 'forwards' }
+              // A stance loops like an idle, and takes the same per-character
+              // stagger so a party that all booked an action does not breathe
+              // in lockstep.
+              : { animationDelay: `${idlePhase(unit.def.id, strip.frames)}ms` }),
           }}
         />
+        </span>
       </span>
     ) : (
       <img
@@ -1885,7 +2967,9 @@ function UnitChip({
 
     return (
       <div
-        className={`unit sprite-unit ${unit.side} ${spent} ${hit ? 'hurt' : ''} ${striking ? 'striking' : ''}`}
+        className={`unit sprite-unit ${unit.side} ${spent} ${hit ? 'hurt' : ''} ${
+          flinching === 'b' ? 'spin-b' : ''
+        } ${striking ? 'striking' : ''}`}
         title={title}
         style={{
           // Rounded to whole art pixels, in CSS rather than here: these are
@@ -1896,7 +2980,17 @@ function UnitChip({
           ...(box ? { width: `calc(${crispHeight} * ${idle!.aspect})` } : null),
         }}
       >
-        {body}
+        {/* The hit reaction spins THIS, not the artwork inside it.
+            `paper-spin` animates `transform`, and every candidate element below
+            is already using its own: the pain pose carries `scaleX(facing)`,
+            and the strip carries the offset that picks which frame is showing.
+            An animation does not compose with an inline transform, it replaces
+            it -- so spinning the artwork directly threw the mirror away and
+            every struck enemy finished the flip facing right, and would have
+            dragged an animated sprite off its own frames too.
+            Out here the flip multiplies with the facing instead: it ends on
+            scaleX(1), which leaves whatever mirror the child had intact. */}
+        <span className="hit-spin">{body}</span>
       </div>
     );
   }
@@ -2033,11 +3127,17 @@ function TeamPanel({
   units,
   selected,
   onSelect,
+  onPeek,
+  intents = false,
 }: {
   title: string;
   units: Unit[];
   selected: Unit | null;
   onSelect: (u: Unit) => void;
+  /** Hovering a row points the camera at that unit; null when the pointer leaves. */
+  onPeek?: (u: Unit | null) => void;
+  /** Show each unit's declared intent. Enemies only, and only while planning. */
+  intents?: boolean;
 }) {
   return (
     <div className="card">
@@ -2045,13 +3145,34 @@ function TeamPanel({
       <ul className="roster">
         {units.map((u) => (
           <li key={u.def.id}>
-            <button className={`row ${selected === u ? 'on' : ''} ${alive(u) ? '' : 'dead'}`} onClick={() => onSelect(u)}>
+            <button
+              className={`row ${selected === u ? 'on' : ''} ${alive(u) ? '' : 'dead'}`}
+              onClick={() => onSelect(u)}
+              // Pointer, not mouse: the same gesture on a touch screen should
+              // not leave the camera stuck on whoever was last brushed past.
+              onPointerEnter={() => onPeek?.(u)}
+              onPointerLeave={() => onPeek?.(null)}
+              onFocus={() => onPeek?.(u)}
+              onBlur={() => onPeek?.(null)}
+            >
               {u.def.sprite?.icon ? (
                 <img className="row-icon" src={u.def.sprite.icon} alt="" draggable={false} />
               ) : (
                 <Avatar def={u.def} size={26} side={u.side} />
               )}
-              <span className="nm">{u.def.name}</span>
+              <span className="nm">
+                {u.def.name}
+                {/* What this creature has declared. The ability name is the
+                    useful half -- the roll is kept beside it because it is the
+                    number the rules text refers to, and seeing both is how a
+                    player learns which band does what. */}
+                {intents && alive(u) && u.intent && !u.pending && (
+                  <em className="intent-row" title={`rolled ${u.intent.roll}`}>
+                    {u.intent.ability.name}
+                    <b>{u.intent.roll}</b>
+                  </em>
+                )}
+              </span>
               <StatusChips u={u} />
               {/* Level, on both sides. The enemy's is the whole reason to show
                   it -- how far ahead or behind the stage is running is the

@@ -1,21 +1,7 @@
 {
-  "clips": {
-    "idle": {
-      "anchorX": 0.482,
-      "aspect": 1.212766,
-      "footPad": 0.0,
-      "frames": 8,
-      "loops": true,
-      "normalised": 1.0,
-      "pxH": 94,
-      "restFill": 0.984043,
-      "size": 53503,
-      "src": "/sprites/kael/kael_idle.png",
-      "trimmed": 0
-    }
-  },
+  "clips": {},
   "stamp": {
-    "sha256": "feb866709889d80d0f56e6ec12b148aba063ade7c9c8869f558925702ed4e2cb",
-    "size": 11608
+    "sha256": "3912d4e50dafcbbf3932edd55d79c3e27a1c40f99d66b5065ae5f4ccb2af39cc",
+    "size": 160644
   }
 }

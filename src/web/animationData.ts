@@ -35,6 +35,24 @@ export interface FrameTune {
   dx?: number;
   /** Nudge down, percent of a frame's height. */
   dy?: number;
+  /*
+   * Squash and stretch, applied to the drawing rather than to the strip.
+   *
+   * These are the classic animation cheat: a jump reads as weight if the figure
+   * stretches on the way up and compresses on landing, and doing that with
+   * transforms means one drawing can serve several beats. Anchored at the feet,
+   * so a squash settles into the floor instead of sinking through it.
+   *
+   * They live on their own element for a mechanical reason -- see
+   * `poseKeyframes`. Scaling the STRIP would scale the offset that selects
+   * which frame is showing, and the clip would slide off its own frames.
+   */
+  /** Multiplies the drawing's size. 1 is untouched. */
+  scale?: number;
+  /** Horizontal lean, in degrees. Positive tips the top to the right. */
+  skewX?: number;
+  /** Vertical shear, in degrees. Positive drops the right edge. */
+  skewY?: number;
 }
 
 export type ClipTuning = FrameTune[];
@@ -87,6 +105,83 @@ export interface ClipSettings {
    * the packed strip's frame count is baked into the metrics.
    */
   order?: number[];
+  /**
+   * Effects that land on the TARGET partway through this clip.
+   *
+   * Frame-indexed rather than time-indexed, because the moment a blow connects
+   * is a property of the drawing, not of the clock: retime the clip and the
+   * spark still has to land on the frame where the sword is in the creature.
+   * Indices name SOURCE frames, so they survive a reordered `order` the same
+   * way `frames` tuning does.
+   *
+   * A list, not one entry, because an ability can connect more than once -- a
+   * two-hit swing splitting its power across two contacts needs a burst on
+   * each, at the frame each lands.
+   */
+  impacts?: Impact[];
+}
+
+/**
+ * Where an impact effect lands.
+ *
+ *   each    one burst per affected unit -- a sword landing on the creature it
+ *           hit, and on all five when the ability hits five.
+ *   centre  ONE burst at the middle of everyone affected, for an area effect
+ *           that reads as a single event rather than five simultaneous ones.
+ *
+ * The SIDE is not a choice: an effect lands on whoever the ability actually
+ * affected, so an attack bursts on enemies and a heal on allies without either
+ * having to say so. Making it selectable would let a sheet declare a spark on
+ * the wrong team, which is a bug nobody would think to look for.
+ */
+export type ImpactPlacement = 'each' | 'centre';
+
+/** One effect landing at a given step of a clip. */
+export interface Impact {
+  /**
+   * WHICH PLAYED STEP this fires on -- a position in the order, not a drawing.
+   *
+   * It used to name the source frame, and that made duplicated frames
+   * impossible to tell apart: repeat drawing 1 three times and an impact on
+   * "frame 1" fired on all three, identically, with no way to give the second
+   * showing a different effect. Addressing the position instead makes each
+   * occurrence its own thing, which is the entire reason to duplicate a frame.
+   *
+   * For a clip in natural order the two are the same number, which is why this
+   * change moved no existing data.
+   */
+  frame: number;
+  /** Key into the generated `EFFECTS` registry. */
+  effect: string;
+  /** Default `each`. See `ImpactPlacement`. */
+  at?: ImpactPlacement;
+  /** Size relative to the target's own height. 1 is the target's full height. */
+  scale?: number;
+  /** Nudge from the target's centre, in percent of the target's box. */
+  dx?: number;
+  dy?: number;
+  /**
+   * Milliseconds after the frame starts, for placing a spark WITHIN a drawing.
+   *
+   * Frames are the coarse grid and a three-frame swing only has three of them,
+   * so a volley of sparks landing one after another had nowhere to go. This is
+   * the fine adjustment: several impacts can share a frame and separate
+   * themselves in time.
+   */
+  delay?: number;
+  /**
+   * How long the whole burst plays, in milliseconds. Default `BURST_MS`.
+   *
+   * The sheet is stepped across this span, so per-frame time is this divided by
+   * the effect's frame count -- which is the number an animator actually thinks
+   * in, and why the lab shows both.
+   *
+   * Per impact rather than per effect on purpose. The same three-frame spark
+   * wants to snap on a quick jab and linger on a heavy landing, and making it a
+   * property of the EFFECT would force a second near-identical sheet to say
+   * that. It is the same argument as `scale`, which is already per impact.
+   */
+  ms?: number;
 }
 
 /** One actor's file: clip name → settings. */
@@ -119,6 +214,7 @@ const tuning: Record<string, ClipTuning> = {};
 const placement: Record<string, ClipPlacement> = {};
 const order: Record<string, number[]> = {};
 const stepMs: Record<string, number> = {};
+const impacts: Record<string, Impact[]> = {};
 
 for (const [path, data] of Object.entries(files)) {
   const who = ownerOf(path);
@@ -129,6 +225,7 @@ for (const [path, data] of Object.entries(files)) {
     }
     if (settings?.order?.length) order[key(who, clip)] = settings.order;
     if (settings?.stepMs) stepMs[key(who, clip)] = settings.stepMs;
+    if (settings?.impacts?.length) impacts[key(who, clip)] = settings.impacts;
   }
 }
 
@@ -136,6 +233,51 @@ export const ANIMATION_TUNING: Record<string, ClipTuning> = tuning;
 export const CLIP_PLACEMENT: Record<string, ClipPlacement> = placement;
 export const CLIP_ORDER: Record<string, number[]> = order;
 export const CLIP_STEP_MS: Record<string, number> = stepMs;
+export const CLIP_IMPACTS: Record<string, Impact[]> = impacts;
+
+/**
+ * When each impact of a clip lands, in milliseconds from the clip's start.
+ *
+ * Resolved against the PLAYED timeline rather than the source strip: per-frame
+ * holds stretch some frames and `order` can drop others, so "frame 15" is not
+ * 15 steps in. An impact whose frame is never played simply does not fire,
+ * which is the right answer -- a blow that was edited out should not still
+ * land.
+ */
+export function impactTimes(
+  who: string,
+  clip: string,
+  steps: { source: number; hold: number }[],
+  stepMs: number,
+  /*
+   * An override, for previewing impacts that are not on disk yet.
+   *
+   * The saved catalogue is the right source everywhere except the lab, where
+   * the whole point is to see the edit before committing it -- without this the
+   * practice dummy replayed whatever was last saved and ignored the row you
+   * were dragging, which is worse than showing nothing because it looks like an
+   * answer.
+   */
+  override?: Impact[],
+): { at: number; impact: Impact }[] {
+  const list = override ?? CLIP_IMPACTS[key(who, clip)];
+  if (!list?.length) return [];
+  const out: { at: number; impact: Impact }[] = [];
+  for (const impact of list) {
+    // Walk to the impact's STEP and take the time there. Indexing the played
+    // order rather than searching for a source frame is what lets two copies of
+    // one drawing carry different effects.
+    let t = 0;
+    for (let i = 0; i < steps.length; i++) {
+      if (i === impact.frame) {
+        out.push({ at: t + (impact.delay ?? 0), impact });
+        break;
+      }
+      t += steps[i]!.hold * stepMs;
+    }
+  }
+  return out;
+}
 
 /** Authored pace for one clip, or the default. */
 export function stepMsFor(who: string, clip: string): number {

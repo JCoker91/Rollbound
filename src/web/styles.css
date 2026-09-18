@@ -86,16 +86,91 @@ body {
 
 /* Stage and its overlays share the top cell, stacked in source order. */
 .battle .stage,
+.battle .stage-vignette,
 .battle .hud-top,
 .battle .hud-centre {
   grid-column: 1 / -1;
   grid-row: 1;
 }
 
+/*
+ * Fade to black around the picture.
+ *
+ * Two gradients rather than one: a radial alone darkens the corners but leaves
+ * the middle of each edge bright, and a linear alone bands. Together they close
+ * the frame on all four sides while leaving the centre of the stage untouched.
+ *
+ * Sits in the same grid cell as the stage but is NOT its child, so the camera's
+ * zoom and sway cannot drag it -- a vignette that moves with the shot reads as
+ * a hole in the scenery instead of the edge of the frame.
+ */
+
+/* The push-in target, declared for both so they cannot drift apart. */
+
+.battle .stage-vignette {
+  pointer-events: none;
+  z-index: 5;
+  align-self: stretch;
+  justify-self: stretch;
+  background:
+    radial-gradient(
+      ellipse 78% 86% at 50% 52%,
+      transparent 42%,
+      rgba(6, 4, 10, 0.45) 78%,
+      rgba(4, 2, 7, 0.9) 100%
+    ),
+    linear-gradient(to right, rgba(4, 2, 7, 0.95) 0%, transparent 13%, transparent 87%, rgba(4, 2, 7, 0.95) 100%),
+    linear-gradient(to bottom, rgba(4, 2, 7, 0.9) 0%, transparent 15%, transparent 92%, rgba(4, 2, 7, 0.7) 100%);
+}
+
+/*
+ * The camera.
+ *
+ * A stage that never moves reads as a diorama. Rather than animating more of
+ * the art, the whole set is held very slightly in and drifted -- a sway of a
+ * fraction of a percent, slow enough that you register it as the room being
+ * alive rather than as motion. It costs one transform and no frames.
+ *
+ * `--cam-x` / `--cam-y` are the SHOT: the translate that brings whatever the
+ * camera is looking at into the middle of the frame.
+ *
+ * The base scale is above 1 on purpose: the set is cropped a little on every
+ * side, so a push-in has somewhere to go and the drift never exposes an edge.
+ */
 .battle .stage {
   position: relative;
   display: grid;
   place-items: center;
+  /*
+   * The origin is the CENTRE, always, and the shot is a translate.
+   *
+   * It used to be aimed at whatever the camera was looking at, which is the
+   * opposite of what a scaling origin does: the origin names the one point a
+   * scale does NOT move, so pointing it at a character magnified the stage
+   * around them and left them exactly where they already were. A back-rank
+   * Performer stayed pinned near the edge no matter how far the camera pushed
+   * in. Centring is a translate, and this is it.
+   */
+  transform-origin: 50% 50%;
+  /*
+   * Zoom and look-around live HERE; the ambient sway lives on `.stage-frame`.
+   *
+   * Split deliberately: both are transforms, and two transforms on one element
+   * means the last declaration wins rather than the two composing. Putting them
+   * on parent and child lets the browser multiply them, so the set can drift on
+   * its own clock while the camera is being pushed somewhere by a turn.
+   *
+   * The base scale crops the backdrop on every side on purpose -- a camera can
+   * only look around a scene that is bigger than the window, and at 1.06 a sway
+   * ran straight off the edge of the cloth.
+   */
+  /* `--cam-*` is the shot: the translate that brings whatever the camera is
+     looking at into the middle of the frame. */
+  transform: scale(var(--cam-zoom, 1.7)) translate(var(--cam-x, 0%), var(--cam-y, 0%));
+  transition:
+    transform 780ms cubic-bezier(0.4, 0.05, 0.25, 1),
+    transform-origin 700ms cubic-bezier(0.32, 0.72, 0.24, 1);
+  will-change: transform;
   background-color: #0c0e13;
   /* The frame is letterboxed, and this paints what surrounds it. The image is
      inherited by `.stage-frame`, so it is set here -- but at its natural size
@@ -408,10 +483,18 @@ body {
    * Slower than the lunge on purpose: a lunge is a jab that has to snap back
    * inside one action, a reposition is somebody crossing the stage.
    */
+  /*
+   * All four in ONE declaration, because `transition` is a single property and
+   * a second rule setting it does not add to this -- it replaces it. Splitting
+   * the focus dim into its own `.battle .stage-slot` block did exactly that and
+   * silently removed the walk: positions still swapped, they just teleported.
+   */
   transition:
     transform 220ms cubic-bezier(0.33, 1, 0.68, 1),
     left 420ms cubic-bezier(0.4, 0, 0.2, 1),
-    top 420ms cubic-bezier(0.4, 0, 0.2, 1);
+    top 420ms cubic-bezier(0.4, 0, 0.2, 1),
+    filter 420ms ease,
+    opacity 420ms ease;
   cursor: pointer;
 }
 
@@ -446,7 +529,38 @@ body {
   --ground: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.75));
   --threat: drop-shadow(0 0 0 transparent);
   --mark: drop-shadow(0 0 0 transparent);
-  filter: var(--ground) var(--threat) var(--mark);
+  /* A channel of its own rather than sharing `--mark` with selection: you can
+     hover a character that is already selected, and one cue overwriting the
+     other would make the pointer appear to do nothing. */
+  --hover: drop-shadow(0 0 0 transparent);
+  filter: var(--ground) var(--threat) var(--mark) var(--hover);
+  transition: filter 140ms ease;
+}
+
+/*
+ * Which body the pointer will hit.
+ *
+ * Sprites overlap, and a paper cutout's box is mostly transparent margin, so
+ * "which one am I about to click" was genuinely ambiguous -- the answer arrived
+ * only after clicking. A white rim reads on every character regardless of their
+ * own palette, which a coloured glow does not.
+ *
+ * The lift is small on purpose. It has to say "this one" without moving the
+ * figure off the mark it is standing on, because that mark is what the whole
+ * formation is read from.
+ */
+.stage-slot.hovered .unit {
+  --hover: drop-shadow(0 0 5px rgba(255, 255, 255, 0.95))
+    drop-shadow(0 0 12px rgba(255, 255, 255, 0.5));
+}
+
+.stage-slot.hovered {
+  cursor: pointer;
+  z-index: 200;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stage-slot .unit { transition: none; }
 }
 
 .stage-slot.selected .unit {
@@ -791,6 +905,290 @@ body {
   border-radius: 0;
 }
 
+/* The set breathing, on its own clock and its own element. */
+@keyframes camera-sway {
+  0%, 100% { transform: translate(-0.55%, 0.25%) scale(1.004); }
+  33%      { transform: translate(0.5%, -0.4%) scale(1.012); }
+  66%      { transform: translate(0.35%, 0.35%) scale(1.006); }
+}
+
+/*
+ * Somebody is performing: push in HARD on their mark and hold there.
+ *
+ * A timid push reads as a wobble. The whole point of stepping downstage is that
+ * the turn belongs to one character, so the camera should commit -- at 2.6x a
+ * Performer fills the frame and the rest of the stage falls away, which is what
+ * makes the beat feel like a beat rather than a sprite sliding forward.
+ *
+ * The origin is that character's own mark, set per render, so the push lands on
+ * them rather than on the middle of the boards.
+ */
+.battle .stage.closing-in {
+  --cam-zoom: 2.6;
+  /* `--cam-x` and `--cam-y` are set inline during a pulse -- see LOOK_ROOM.
+     They are not defaulted here, or the class would beat nothing and the
+     pointer-follow's last value would survive into the shot. */
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .battle .stage {
+    transition: none;
+    --cam-zoom: 1.1;
+    --cam-x: 0%;
+    --cam-y: 0%;
+  }
+  .battle .stage.closing-in { --cam-zoom: 1.1; }
+}
+
+/*
+ * A stage built from pieces instead of painted flat.
+ *
+ * Every layer is absolutely positioned and ordered by its own `zIndex`, so the
+ * outer frame can sit ON TOP of the scenery it frames while the actors sit on
+ * top of that -- which is the order a real set is built in, and the reason the
+ * frame's transparent window works without any clipping.
+ *
+ * The drift is ambient rather than driven: nothing in a battle moves the camera,
+ * so a parallax tied to input would sit dead most of the time. A slow sway at a
+ * rate proportional to depth does the same job -- it tells you the pieces are at
+ * different distances -- without asking the player to wiggle the mouse.
+ */
+.battle .stage-frame {
+  /* Visible, so the curtain legs reach past the frame into the letterbox margin
+     the way they are drawn to. `.stage` clips, so nothing leaves the picture. */
+  overflow: visible;
+  animation: camera-sway 24s ease-in-out infinite;
+  will-change: transform;
+}
+
+
+.battle .stage-layer {
+  position: absolute;
+  pointer-events: none;
+  /*
+   * NO `object-fit` here, and none anywhere else either -- `layerBox` in
+   * stageLayer.tsx sets it, so the battle and the lab cannot disagree about it.
+   *
+   * This rule used to say `cover` with `object-position: center bottom`, added
+   * back when layers were stretched across a 2.54:1 stage and needed cropping.
+   * They are not any more: they sit inside `.stage-frame`, which is the
+   * 1672/941 the art was drawn at. What the leftover crop did instead was
+   * silently undo every stretch an author had authored, but only in the game,
+   * which made the stage lab look like it was saving the wrong numbers.
+   */
+}
+
+
+/*
+ * An impact burst: a short strip played once, over the thing it hit.
+ *
+ * Stepped with `steps()` rather than the generated per-frame keyframes the
+ * character clips use. Those exist so an animator can hold and nudge individual
+ * drawings; a three-frame spark has nothing to tune, and a rule per effect per
+ * target would be a lot of CSS to say "play it".
+ *
+ * Above every unit, because a spark behind the creature it is hitting is a
+ * spark nobody sees.
+ */
+.battle .impact-burst {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  background-repeat: no-repeat;
+  pointer-events: none;
+  z-index: 260;
+  /* Duration comes from the impact, so one effect sheet can snap in one place
+     and linger in another. */
+  animation: burst-pop var(--fx-ms, 380ms) steps(var(--fx-frames, 3)) 1 forwards;
+}
+
+@keyframes burst-pop {
+  from { background-position-x: 0%; }
+  to   { background-position-x: var(--fx-end, 300%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .battle .impact-burst { animation-duration: 1ms; }
+}
+
+/*
+ * A held hit reaction, in two parts on two elements.
+ *
+ * Split deliberately. The jolt belongs to the WHOLE unit, shadow included --
+ * something knocked backwards drags its shadow with it. The spin belongs only
+ * to the cutout: a shadow that pinwheels on the floor stops reading as a
+ * shadow. They also want different easings, and two animations on one element
+ * would just mean the later one silently wins the `transform` property.
+ *
+ * The spin is the thing paper can do that a pixel sprite cannot -- and it is
+ * done in two dimensions, not three. `scaleX` run down to zero and out the
+ * other side into NEGATIVE is a full turn about the vertical axis: the cutout
+ * narrows into its own centre line, passes edge-on at exactly zero width, and
+ * opens back out mirrored, which is what a sheet of paper with nothing printed
+ * on its back actually looks like from behind.
+ *
+ * `skewY` is what stops that reading as a squash. A real card turning brings
+ * one vertical edge toward the viewer and pushes the other away, so the near
+ * edge rides higher -- a vertical shear. Its sign flips each half-turn, because
+ * the edge that was coming at you is now going away. Without it the sprite just
+ * looks like it is being stepped on sideways.
+ *
+ * THREE full turns that decelerate, landing square and facing the original
+ * way -- an integer number of turns is what guarantees that, and the last
+ * keyframe is pinned to an exact scaleX(1) so rounding cannot leave a character
+ * mirrored. The first turn takes 184ms, the second 239ms, the third 577ms: hit
+ * hard, then coast.
+ *
+ * The keyframes are GENERATED, not hand-placed, and they are spaced evenly in
+ * ANGLE rather than in time. That is the whole trick. A front-loaded spin
+ * covers a full revolution in its opening fifth, so evenly-spaced time samples
+ * skip past half-turns and the card appears to stutter backwards -- the same
+ * wagon-wheel effect, and for the same reason. Sampling every 30 degrees and
+ * then asking the easing when that angle is reached puts the keyframes where
+ * the motion actually is: crowded at the start, sparse at the end.
+ *
+ * The easing is applied to the ANGLE, never to the matrix: easing the transform
+ * distorts the shape, while easing the angle spins a rigid card. Which is why
+ * the segments themselves interpolate LINEARLY -- the pacing is already baked
+ * into the keyframe positions, and a second easing between each of 37 of them
+ * would pulse visibly.
+ */
+.battle .sprite-unit.hurt {
+  /* Deliberately SHORTER than the spin. The jolt is the moment of contact and
+     wants to be over quickly; stretched across the whole tumble it reads as the
+     character being shoved slowly rather than struck. */
+  animation: stage-flinch 520ms ease-out;
+}
+
+@keyframes stage-flinch {
+  0% { transform: translate(0, 0); }
+  18% { transform: translate(-4%, -2%); }
+  55% { transform: translate(1.5%, 0); }
+  100% { transform: translate(0, 0); }
+}
+
+/*
+ * The flip runs on a WRAPPER, never on the artwork.
+ *
+ * Both things it could have run on are already spending their own `transform`:
+ * the pain pose carries `scaleX(facing)`, the strip carries the offset that
+ * picks which frame is showing. A CSS animation replaces an inline transform
+ * rather than composing with it, so animating the artwork directly threw the
+ * mirror away and every struck enemy finished the flip facing right.
+ *
+ * Because the last keyframe is exactly scaleX(1), the wrapper multiplies
+ * through cleanly: whatever mirror the child carries comes out the far side the
+ * way it went in.
+ */
+.battle .sprite-unit.hurt .hit-spin {
+  /* Matches PAIN_MS in BattleScreen, so the tumble ends exactly when the pain
+     pose is dropped rather than still turning as the sprite swaps back. */
+  animation: paper-spin 1000ms linear both;
+}
+
+/*
+ * Consecutive hits turn opposite ways.
+ *
+ * A two-hit ability landing two identical tumbles reads as one hit played
+ * twice; reversing the second makes the target look knocked back and forth,
+ * which is what two blows from one swing actually do to a sheet of paper.
+ * Driven off the hit COUNT, so it alternates for as long as the hits keep
+ * coming rather than only telling the first two apart.
+ */
+.battle .sprite-unit.hurt.spin-b .hit-spin {
+  animation-name: paper-spin-rev;
+}
+
+@keyframes paper-spin {
+  0% { transform: scaleX(1.0000) scaleY(1.0000) skewY(-0.000deg); }
+  1.399% { transform: scaleX(0.8660) scaleY(1.0247) skewY(-5.933deg); }
+  2.817% { transform: scaleX(0.5000) scaleY(1.0423) skewY(-10.157deg); }
+  4.257% { transform: scaleX(0.0000) scaleY(1.0483) skewY(-11.590deg); }
+  5.719% { transform: scaleX(-0.5000) scaleY(1.0413) skewY(-9.914deg); }
+  7.204% { transform: scaleX(-0.8660) scaleY(1.0235) skewY(-5.652deg); }
+  8.713% { transform: scaleX(-1.0000) scaleY(1.0000) skewY(-0.000deg); }
+  10.247% { transform: scaleX(-0.8660) scaleY(1.0229) skewY(5.503deg); }
+  11.808% { transform: scaleX(-0.5000) scaleY(1.0392) skewY(9.398deg); }
+  13.397% { transform: scaleX(-0.0000) scaleY(1.0446) skewY(10.696deg); }
+  15.016% { transform: scaleX(0.5000) scaleY(1.0380) skewY(9.124deg); }
+  16.667% { transform: scaleX(0.8660) scaleY(1.0216) skewY(5.186deg); }
+  18.35% { transform: scaleX(1.0000) scaleY(1.0000) skewY(0.000deg); }
+  20.069% { transform: scaleX(0.8660) scaleY(1.0209) skewY(-5.016deg); }
+  21.826% { transform: scaleX(0.5000) scaleY(1.0356) skewY(-8.534deg); }
+  23.624% { transform: scaleX(0.0000) scaleY(1.0403) skewY(-9.673deg); }
+  25.464% { transform: scaleX(-0.5000) scaleY(1.0342) skewY(-8.215deg); }
+  27.352% { transform: scaleX(-0.8660) scaleY(1.0194) skewY(-4.647deg); }
+  29.289% { transform: scaleX(-1.0000) scaleY(1.0000) skewY(-0.000deg); }
+  31.282% { transform: scaleX(-0.8660) scaleY(1.0185) skewY(4.444deg); }
+  33.333% { transform: scaleX(-0.5000) scaleY(1.0313) skewY(7.513deg); }
+  35.45% { transform: scaleX(-0.0000) scaleY(1.0352) skewY(8.455deg); }
+  37.639% { transform: scaleX(0.5000) scaleY(1.0297) skewY(7.123deg); }
+  39.907% { transform: scaleX(0.8660) scaleY(1.0166) skewY(3.992deg); }
+  42.265% { transform: scaleX(1.0000) scaleY(1.0000) skewY(0.000deg); }
+  44.723% { transform: scaleX(0.8660) scaleY(1.0156) skewY(-3.734deg); }
+  47.295% { transform: scaleX(0.5000) scaleY(1.0259) skewY(-6.226deg); }
+  50% { transform: scaleX(0.0000) scaleY(1.0287) skewY(-6.892deg); }
+  52.86% { transform: scaleX(-0.5000) scaleY(1.0237) skewY(-5.694deg); }
+  55.904% { transform: scaleX(-0.8660) scaleY(1.0130) skewY(-3.117deg); }
+  59.175% { transform: scaleX(-1.0000) scaleY(1.0000) skewY(-0.000deg); }
+  62.732% { transform: scaleX(-0.8660) scaleY(1.0114) skewY(2.724deg); }
+  66.667% { transform: scaleX(-0.5000) scaleY(1.0180) skewY(4.315deg); }
+  71.132% { transform: scaleX(-0.0000) scaleY(1.0185) skewY(4.441deg); }
+  76.43% { transform: scaleX(0.5000) scaleY(1.0136) skewY(3.270deg); }
+  83.333% { transform: scaleX(0.8660) scaleY(1.0060) skewY(1.431deg); }
+  100% { transform: scaleX(1.0000) scaleY(1.0000) skewY(0.000deg); }
+}
+
+/*
+ * The same tumble, turning the other way.
+ *
+ * Only the shear is negated. `scaleX` sweeping down through zero and out to
+ * negative is symmetric -- it looks identical whichever way the card is going
+ * -- so the skew is the only thing that says which edge is swinging toward the
+ * viewer. Flip it and the spin reverses.
+ *
+ * Generated from `paper-spin` rather than authored, so the two cannot drift.
+ */
+@keyframes paper-spin-rev {
+  0% { transform: scaleX(1.0000) scaleY(1.0000) skewY(0deg); }
+  1.399% { transform: scaleX(0.8660) scaleY(1.0247) skewY(5.933deg); }
+  2.817% { transform: scaleX(0.5000) scaleY(1.0423) skewY(10.157deg); }
+  4.257% { transform: scaleX(0.0000) scaleY(1.0483) skewY(11.59deg); }
+  5.719% { transform: scaleX(-0.5000) scaleY(1.0413) skewY(9.914deg); }
+  7.204% { transform: scaleX(-0.8660) scaleY(1.0235) skewY(5.652deg); }
+  8.713% { transform: scaleX(-1.0000) scaleY(1.0000) skewY(0deg); }
+  10.247% { transform: scaleX(-0.8660) scaleY(1.0229) skewY(-5.503deg); }
+  11.808% { transform: scaleX(-0.5000) scaleY(1.0392) skewY(-9.398deg); }
+  13.397% { transform: scaleX(-0.0000) scaleY(1.0446) skewY(-10.696deg); }
+  15.016% { transform: scaleX(0.5000) scaleY(1.0380) skewY(-9.124deg); }
+  16.667% { transform: scaleX(0.8660) scaleY(1.0216) skewY(-5.186deg); }
+  18.35% { transform: scaleX(1.0000) scaleY(1.0000) skewY(-0deg); }
+  20.069% { transform: scaleX(0.8660) scaleY(1.0209) skewY(5.016deg); }
+  21.826% { transform: scaleX(0.5000) scaleY(1.0356) skewY(8.534deg); }
+  23.624% { transform: scaleX(0.0000) scaleY(1.0403) skewY(9.673deg); }
+  25.464% { transform: scaleX(-0.5000) scaleY(1.0342) skewY(8.215deg); }
+  27.352% { transform: scaleX(-0.8660) scaleY(1.0194) skewY(4.647deg); }
+  29.289% { transform: scaleX(-1.0000) scaleY(1.0000) skewY(0deg); }
+  31.282% { transform: scaleX(-0.8660) scaleY(1.0185) skewY(-4.444deg); }
+  33.333% { transform: scaleX(-0.5000) scaleY(1.0313) skewY(-7.513deg); }
+  35.45% { transform: scaleX(-0.0000) scaleY(1.0352) skewY(-8.455deg); }
+  37.639% { transform: scaleX(0.5000) scaleY(1.0297) skewY(-7.123deg); }
+  39.907% { transform: scaleX(0.8660) scaleY(1.0166) skewY(-3.992deg); }
+  42.265% { transform: scaleX(1.0000) scaleY(1.0000) skewY(-0deg); }
+  44.723% { transform: scaleX(0.8660) scaleY(1.0156) skewY(3.734deg); }
+  47.295% { transform: scaleX(0.5000) scaleY(1.0259) skewY(6.226deg); }
+  50% { transform: scaleX(0.0000) scaleY(1.0287) skewY(6.892deg); }
+  52.86% { transform: scaleX(-0.5000) scaleY(1.0237) skewY(5.694deg); }
+  55.904% { transform: scaleX(-0.8660) scaleY(1.0130) skewY(3.117deg); }
+  59.175% { transform: scaleX(-1.0000) scaleY(1.0000) skewY(0deg); }
+  62.732% { transform: scaleX(-0.8660) scaleY(1.0114) skewY(-2.724deg); }
+  66.667% { transform: scaleX(-0.5000) scaleY(1.0180) skewY(-4.315deg); }
+  71.132% { transform: scaleX(-0.0000) scaleY(1.0185) skewY(-4.441deg); }
+  76.43% { transform: scaleX(0.5000) scaleY(1.0136) skewY(-3.27deg); }
+  83.333% { transform: scaleX(0.8660) scaleY(1.0060) skewY(-1.431deg); }
+  100% { transform: scaleX(1.0000) scaleY(1.0000) skewY(-0deg); }
+}
+
+
 .battle .sprite-unit .sprite {
   position: static;
   display: block;
@@ -834,11 +1232,35 @@ body {
   }
 }
 
+/*
+ * Taking your turn: step downstage, perform, slide back to your mark.
+ *
+ * A Performer who acts from where they stand reads as a sprite being nudged.
+ * Stepping out to the front of the boards and returning reads as somebody
+ * taking a turn in the middle of a stage -- and it clears the space in front of
+ * them, so an attack clip plays where nobody is standing over it.
+ *
+ * `--sx` / `--sy` are set per unit in BattleScreen and point from that unit's
+ * own slot to the downstage mark on its own side, in CONTAINER units: a
+ * percentage here would be read against the sprite's own box instead of the
+ * stage. Duration is STRIKE_MS there; the two have to agree or the class comes
+ * off mid-step.
+ *
+ * The hold in the middle is where the attack clip plays, which is why the
+ * easing is split rather than one curve end to end.
+ */
+/* Duration and the two hold points come from the clip -- see `beatOf`. */
 .battle .unit.striking {
-  animation: stage-strike 340ms ease-out;
+  animation: stage-strike var(--beat, 1150ms) cubic-bezier(0.33, 0, 0.2, 1);
 }
 
-@keyframes stage-strike {
+/* Generated per beat in BattleScreen -- see `strikeKeyframes`. The walk-out
+   and walk-home proportions depend on how long the clip between them runs, and
+   a keyframe selector cannot read a custom property. */
+
+
+/* The old in-place shove, kept for anything without a step vector. */
+@keyframes stage-shove {
   0%,
   100% {
     transform: translateX(0);
@@ -1060,11 +1482,26 @@ body {
  * the silhouette fully opaque so it still reads against busy artwork.
  *
  * Applied to the artwork only -- the health bar stays legible.
+ *
+ * `striking` is exempt, and that exemption matters more than it looks. A unit
+ * is marked `acted` the moment its action COMMITS, which is before it has
+ * played -- so the performer stepped downstage, the camera pushed in 2.6x, and
+ * the thing it framed was a character already greyed out to two fifths
+ * brightness. The dim is there to answer "who still has a turn", and the answer
+ * is never in doubt for the one character currently swinging.
  */
-.unit.acted .sprite,
-.unit.acted .avatar,
-.unit.acted .base {
+.unit.acted:not(.striking) .sprite,
+.unit.acted:not(.striking) .avatar,
+.unit.acted:not(.striking) .base {
   filter: brightness(0.4) saturate(0.45);
+}
+
+/* Easing back to spent once the beat is over, rather than snapping. The
+   transition lives on the base rule so it applies in both directions. */
+.unit .sprite,
+.unit .avatar,
+.unit .base {
+  transition: filter 320ms ease;
 }
 
 .unit.partial .sprite,
@@ -2445,10 +2882,13 @@ select {
 }
 
 /* A harder punch out and a longer hang, so a critical is read before it goes. */
+/* The same throw, further and with a harder pop -- a crit should still be the
+   one your eye goes to when six numbers land at once. */
 @keyframes float-up-crit {
   0% {
     opacity: 0;
-    margin-top: 0;
+    translate: 0 0;
+    rotate: 0deg;
     scale: 0.5;
   }
   14% {
@@ -2456,6 +2896,8 @@ select {
     scale: 1.45;
   }
   30% {
+    translate: calc(var(--spray-x, 0px) * 0.72) calc(-16px * var(--spray-rise, 1));
+    rotate: var(--spray-tilt, 0deg);
     scale: 1;
   }
   70% {
@@ -2463,15 +2905,29 @@ select {
   }
   100% {
     opacity: 0;
-    margin-top: -46px;
+    translate: var(--spray-x, 0px) calc(-46px * var(--spray-rise, 1));
+    rotate: var(--spray-tilt, 0deg);
     scale: 1;
   }
 }
 
+/*
+ * A number thrown off the body, not lifted straight off it.
+ *
+ * `--spray-x` and `--spray-tilt` are fixed per floater, so the arc is the same
+ * every frame while every number takes a different one. The horizontal travel
+ * eases out hard -- most of it is spent in the first third, like something
+ * knocked loose and then slowing -- while the rise carries on, which is what
+ * makes it read as a bounce rather than a slide.
+ *
+ * `translate` rather than `margin-top`, because the two axes have to move
+ * independently and a margin only has the one.
+ */
 @keyframes float-up {
   0% {
     opacity: 0;
-    margin-top: 0;
+    translate: 0 0;
+    rotate: 0deg;
     scale: 0.7;
   }
   18% {
@@ -2479,11 +2935,14 @@ select {
     scale: 1.15;
   }
   32% {
+    translate: calc(var(--spray-x, 0px) * 0.72) calc(-12px * var(--spray-rise, 1));
+    rotate: var(--spray-tilt, 0deg);
     scale: 1;
   }
   100% {
     opacity: 0;
-    margin-top: -34px;
+    translate: var(--spray-x, 0px) calc(-34px * var(--spray-rise, 1));
+    rotate: var(--spray-tilt, 0deg);
     scale: 1;
   }
 }
@@ -3173,4 +3632,302 @@ select {
 .matchup-row .chip .glyph {
   display: inline-flex;
   align-items: center;
+}
+
+/*
+ * A stage piece that is never still.
+ *
+ * Two elements, two loops: the wrapper crosses, the image bobs. Splitting them
+ * is what makes it read as flight rather than as a sprite on a rail -- the
+ * cycles are on separate clocks, so they drift against each other and no two
+ * passes look the same. It also means no keyframes have to be generated per
+ * prop; these two rules serve every moving piece in the game.
+ */
+.stage-motion {
+  position: absolute;
+  animation: stage-cross var(--cross, 8s) linear infinite;
+  animation-delay: var(--cross-delay, 0s);
+  will-change: transform;
+}
+
+.stage-motion > img {
+  display: block;
+  animation: stage-bob-y var(--bob-dur, 3s) ease-in-out infinite alternate;
+  animation-delay: var(--cross-delay, 0s);
+  will-change: transform;
+}
+
+@keyframes stage-cross {
+  from { transform: translateX(calc(var(--travel, 0%) * -0.5)) rotate(calc(var(--sway, 0deg) * -1)); }
+  to   { transform: translateX(calc(var(--travel, 0%) * 0.5)) rotate(var(--sway, 0deg)); }
+}
+
+@keyframes stage-bob-y {
+  from { transform: translateY(calc(var(--bob, 0%) * -0.5)); }
+  to   { transform: translateY(calc(var(--bob, 0%) * 0.5)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stage-motion,
+  .stage-motion > img { animation: none; }
+}
+
+/*
+ * The HUD steps back while somebody is performing.
+ *
+ * The panels were placed against a wide, unzoomed stage. At 2.6x with the
+ * performer slid to one side they land on top of the cast, so the one thing
+ * the shot exists to show is the one thing covered up.
+ *
+ * Faded and nudged outward rather than hidden: a panel that vanishes and comes
+ * back reads as a glitch, and the health totals are still worth a glance while
+ * a hit lands. Pointer events go with the opacity so a half-faded panel cannot
+ * swallow a click meant for the stage.
+ *
+ * ONLY the two rosters. Everything in the bottom dock -- the sheet, the dice,
+ * the controls -- sits below the picture and has never covered anyone, so
+ * fading it buys nothing and costs something: these panels are opaque over the
+ * app's own curtain wallpaper, and dropping them to a fifth turns each one into
+ * a window onto that wallpaper, which reads as the set leaking through the UI.
+ */
+.battle .hud-party,
+.battle .hud-foes {
+  transition:
+    opacity 380ms ease,
+    transform 380ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.battle.in-beat .hud-party,
+.battle.in-beat .hud-foes {
+  opacity: 0.22;
+  pointer-events: none;
+}
+
+.battle.in-beat .hud-party { transform: translateX(-18%); }
+.battle.in-beat .hud-foes { transform: translateX(18%); }
+
+@media (prefers-reduced-motion: reduce) {
+  .battle .hud-party,
+  .battle .hud-foes { transition: opacity 380ms ease; }
+  .battle.in-beat .hud-party,
+  .battle.in-beat .hud-foes { transform: none; }
+}
+
+/*
+ * Reduced motion keeps the hit READABLE without the tumble. The pain pose and
+ * the damage floater still fire -- those are information, not decoration -- so
+ * what is removed is only the spinning, which is the part that actually
+ * triggers people.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .battle .sprite-unit.hurt .hit-spin {
+    animation: paper-spin-still 1000ms ease-out both;
+  }
+
+  /* One narrowing and back, no flip: enough to read as a reaction, not enough
+     to be the whirling that the preference exists to prevent. */
+  @keyframes paper-spin-still {
+    0%, 100% { transform: scaleX(1); }
+    20% { transform: scaleX(0.86); }
+  }
+}
+
+/*
+ * The pose track: per-frame squash, stretch and lean.
+ *
+ * Anchored at the bottom centre, which is the only anchor that makes squash
+ * read as weight -- a figure compressing about its middle sinks into the floor
+ * and floats above it in equal measure, while one compressing about its feet
+ * settles onto the boards the way a landing actually looks.
+ *
+ * `display: block` and full size so the wrapper is exactly the strip's box and
+ * adds no layout of its own; it exists only to carry a transform.
+ */
+.anim-pose {
+  display: block;
+  width: 100%;
+  height: 100%;
+  transform-origin: 50% 100%;
+}
+
+/*
+ * The element the hit reaction spins.
+ *
+ * A block of the sprite's own size that exists only to carry a transform, with
+ * the pivot at the feet -- a standing figure turning on the spot turns about
+ * its own soles, and spinning about the box centre lifts them off the boards.
+ * Sprites are bottom-anchored with empty canvas above the head, so 100% is the
+ * floor line rather than the middle of the image.
+ */
+.hit-spin {
+  display: block;
+  width: 100%;
+  height: 100%;
+  transform-origin: 50% 100%;
+}
+
+/*
+ * Picking somebody out: everything that is not them steps back.
+ *
+ * Three things move together, and they have to be three because each reaches a
+ * part of the picture the others cannot:
+ *
+ *   the scrim      settles over the SET, behind the cast
+ *   `.unfocused`   dims the other Performers, who stand in front of the scrim
+ *   the vignette   closes down the edges of the FRAME, outside both
+ *
+ * The camera has already put the subject in the middle of the shot, so a
+ * viewport-centred vignette is automatically centred on them -- no second
+ * calculation, and nothing to keep in step with the eye.
+ */
+.battle .stage-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+  background: rgba(3, 2, 8, 0.72);
+  opacity: 0;
+  transition: opacity 420ms ease;
+}
+
+.battle.focusing .stage-scrim {
+  opacity: 1;
+}
+
+/*
+ * The other Performers.
+ *
+ * Darkened and desaturated rather than faded: transparency would let the set
+ * show through a body and read as a ghost, while a dark silhouette still says
+ * "a character is standing there", which is information worth keeping. The
+ * slight blur is what separates them from the subject at a glance -- it is the
+ * one cue that reads instantly as depth rather than as lighting.
+ */
+.battle .stage-slot.unfocused {
+  filter: brightness(0.32) saturate(0.35) blur(1.4px);
+}
+
+/*
+ * The frame closes down only a little.
+ *
+ * It used to go almost to solid black on all four edges, and that turned out to
+ * be doing a job already done: once the set is behind a scrim and the other
+ * Performers are dimmed and blurred, the subject is the only lit thing on
+ * screen and a heavy vignette just buries the stage they are standing on. What
+ * is left is a small deepening of the existing edge -- enough to close the
+ * picture, not enough to be the effect.
+ */
+.battle .stage-vignette {
+  transition: background 420ms ease;
+}
+
+.battle.focusing .stage-vignette {
+  background:
+    radial-gradient(
+      ellipse 72% 80% at 50% 50%,
+      transparent 38%,
+      rgba(6, 4, 10, 0.5) 76%,
+      rgba(3, 2, 7, 0.85) 100%
+    ),
+    linear-gradient(to right, rgba(3, 2, 7, 0.9) 0%, transparent 15%, transparent 85%, rgba(3, 2, 7, 0.9) 100%),
+    linear-gradient(to bottom, rgba(3, 2, 7, 0.85) 0%, transparent 16%, transparent 90%, rgba(3, 2, 7, 0.7) 100%);
+}
+
+/* The arch is scenery too, and it lives outside the stage so the scrim cannot
+   reach it. It carries no inline filter of its own, so this one lands. */
+
+
+@media (prefers-reduced-motion: reduce) {
+  .battle .stage-scrim,
+  .battle .stage-slot,
+  .battle .stage-vignette { transition: none; }
+}
+
+/* The resting-zoom control in the dev bar. */
+.battle .dev-zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8em;
+  opacity: 0.85;
+}
+
+.battle .dev-zoom input { width: 90px; }
+
+/* Tabular so the readout does not jiggle the buttons beside it as it changes. */
+.battle .dev-zoom b {
+  font-variant-numeric: tabular-nums;
+  min-width: 3.2em;
+}
+
+/*
+ * The outer frame -- legs, columns, valance -- painted over the cast.
+ *
+ * Inside `.stage-frame` with everything else, so it takes the sway, the pointer
+ * drift and the push-in exactly as the scenery does. It is scenery; it just
+ * stands at the very front of the set.
+ *
+ * `overflow: visible` on the frame lets the legs overhang into the letterboxed
+ * margin the way they are drawn to. `.stage` still clips, so nothing escapes
+ * the picture.
+ */
+.battle .front-layers {
+  position: absolute;
+  inset: 0;
+  z-index: 250;
+  pointer-events: none;
+  transition: filter 420ms ease;
+}
+
+/* Backdrop dims like backdrop when somebody is picked out. The wrapper carries
+   it because each layer's own `filter` is already spent on its cast shadow. */
+.battle.focusing .front-layers {
+  filter: brightness(0.3) saturate(0.45);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .battle .front-layers { transition: none; }
+}
+
+/*
+ * What an enemy has declared, in its roster row.
+ *
+ * This used to be a badge at the creature's feet on the stage. At five enemies
+ * packed into an eighth of the frame, five of those plus the escalation and
+ * matchup columns beside them covered each other and the art. A row per
+ * creature cannot collide with anything, and it has room for the ability name
+ * instead of a bare number.
+ *
+ * On its own line under the name rather than beside it: the names are already
+ * as wide as the panel allows, and squeezing an ability title in next to one
+ * would truncate whichever of the two mattered.
+ */
+.battle .roster .intent-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 1px;
+  font-size: 0.72em;
+  font-style: normal;
+  letter-spacing: 0.01em;
+  color: #ffd9a0;
+  /* The panel is narrow and some ability names are long. Truncating beats
+     wrapping here: a second line would push every row below it out of step. */
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* The rolled number, kept to one compact chip so the name gets the width. */
+.battle .roster .intent-row b {
+  flex: 0 0 auto;
+  min-width: 15px;
+  padding: 0 3px;
+  border-radius: 4px;
+  font-size: 0.92em;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  color: #ffd9a0;
+  background: rgba(12, 14, 19, 0.85);
+  border: 1px solid #6b4a2a;
 }

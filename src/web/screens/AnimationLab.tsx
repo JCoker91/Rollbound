@@ -1,13 +1,26 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ROSTER } from '../../engine/content.ts';
-import { ANIMATION_CLIPS, type AnimationClip } from '../../engine/sprites.generated.ts';
-import { DEFAULT_STEP_MS, type ClipPlacement, type FrameTune } from '../animationData.ts';
+import { HIT_SPLITS, hitSplitKey } from '../../engine/hitSplits.ts';
+import { abilitySlug } from '../clipAnimation.ts';
+import { ANIMATION_CLIPS, EFFECTS, type AnimationClip } from '../../engine/sprites.generated.ts';
+
+import {
+  CLIP_IMPACTS,
+  DEFAULT_STEP_MS,
+  impactTimes,
+  type ClipPlacement,
+  type FrameTune,
+  type Impact,
+} from '../animationData.ts';
 import {
   type Step,
   clipAnimName,
   clipBox,
   clipDuration,
   clipKeyframes,
+  poseAnimName,
+  poseKeyframes,
+  poseTransform,
   clipTimeline,
   frameTransform,
   orderFor,
@@ -15,6 +28,9 @@ import {
   stepMsFor,
   tuningFor,
 } from '../clipAnimation.ts';
+
+/** How long one burst stays up. Matches `burst-pop` in styles.css. */
+const BURST_MS = 380;
 
 /**
  * Dev-only animation viewer and editor.
@@ -92,6 +108,12 @@ function trimTune(tune: FrameTune[]): FrameTune[] {
     if (t.hold != null && t.hold !== 1) out.hold = t.hold;
     if (t.dx) out.dx = t.dx;
     if (t.dy) out.dy = t.dy;
+    // Every authored field has to be listed here. A key this function does not
+    // know about is not "left alone" -- it is rebuilt out of existence, and the
+    // animator's work vanishes on the next save with no error anywhere.
+    if (t.scale != null && t.scale !== 1) out.scale = +t.scale.toFixed(4);
+    if (t.skewX) out.skewX = t.skewX;
+    if (t.skewY) out.skewY = t.skewY;
     return out;
   });
   // Frames past the end play plain, so a tail of empties carries no information.
@@ -116,6 +138,15 @@ export function AnimationLab() {
   const clip: AnimationClip | undefined = clips[clipName] ?? clips[names[0] ?? ''];
 
   const [stepMs, setStepMs] = useState(DEFAULT_STEP_MS);
+  /**
+   * The effects this clip throws, and when.
+   *
+   * Authored here rather than guessed at run time because only the animator
+   * knows which drawing is the one where the blade actually lands -- and that
+   * frame does not move when the clip is retimed, which is exactly why impacts
+   * are frame-indexed rather than timed.
+   */
+  const [impacts, setImpacts] = useState<Impact[]>([]);
   const [height, setHeight] = useState(220);
   const [mode, setMode] = useState<Mode>('loop');
   /** Position within the played sequence, not a source frame index. */
@@ -130,6 +161,29 @@ export function AnimationLab() {
   const [run, setRun] = useState(0);
   /** In `once` mode: has the one-shot finished and handed back? */
   const [settled, setSettled] = useState(false);
+  /*
+   * A practice dummy, so effects can be judged instead of imagined.
+   *
+   * Impacts were authorable here but not visible: you picked a frame, saved,
+   * walked to a battle, found a target, and watched once. Everything else in
+   * this screen answers its own question on the spot and this one did not.
+   *
+   * The dummy is a stand-in for a target, and the bursts are spawned on the
+   * clip's real schedule -- the same `impactTimes` the battle calls -- so what
+   * plays here is what will play there.
+   */
+  /*
+   * The damage split for the ability this clip belongs to.
+   *
+   * Clips are named after abilities, so the lab can find the one it is looking
+   * at and offer its shares here -- next to the impacts they land on, which is
+   * the only place the two can be judged against each other.
+   */
+  const [shares, setShares] = useState<number[] | null>(null);
+  const [sharesSaved, setSharesSaved] = useState<string | null>(null);
+  const [dummy, setDummy] = useState(true);
+  const [bursts, setBursts] = useState<{ id: number; impact: Impact }[]>([]);
+  const burstId = useRef(0);
   const [status, setStatus] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const stripRef = useRef<HTMLImageElement>(null);
@@ -150,6 +204,7 @@ export function AnimationLab() {
     // Seeded like every other authored setting. Left at its previous value the
     // slider would show one clip's pace while a different clip played.
     setStepMs(stepMsFor(who, clipName));
+    setImpacts((CLIP_IMPACTS[`${who}/${clipName}`] ?? []).map((i) => ({ ...i })));
     setAt(0);
     setSettled(false);
     setDirty(false);
@@ -160,6 +215,42 @@ export function AnimationLab() {
   const showing = mode === 'once' && settled && rest ? rest : clip;
   const showingName = mode === 'once' && settled && restName ? restName : clipName;
   const editing = showingName === clipName;
+
+  /* Which ability, if any, this clip animates. Matched on the name slug, the
+     same rule the battle uses to pick a clip for an ability. */
+  const ability = useMemo(() => {
+    const def = ROSTER.find((d) => d.id === who);
+    return def?.abilities.find((a) => abilitySlug(a.name) === clipName);
+  }, [who, clipName]);
+
+  const hittable = !!ability?.effects?.some((fx) => fx.do === 'damage');
+  const splitKey = ability ? hitSplitKey(who, ability.name) : '';
+  const savedShares = splitKey ? HIT_SPLITS[splitKey] : undefined;
+  const liveShares = shares ?? savedShares ?? null;
+
+  useEffect(() => {
+    // Reset to what is on disk whenever the clip changes, so an edit cannot
+    // follow you onto a different ability.
+    setShares(null);
+    setSharesSaved(null);
+  }, [who, clipName]);
+
+  async function saveShares(next: number[] | null) {
+    const all: Record<string, number[]> = { ...HIT_SPLITS };
+    if (next && next.length > 1) all[splitKey] = next;
+    else delete all[splitKey];
+    try {
+      const res = await fetch('/__hits/save', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ splits: all }),
+      });
+      const body = (await res.json()) as { error?: string };
+      setSharesSaved(!res.ok || body.error ? `failed: ${body.error ?? res.statusText}` : 'saved');
+    } catch (e) {
+      setSharesSaved(`failed: ${e instanceof Error ? e.message : 'dev server unreachable'}`);
+    }
+  }
 
   // Only the shown clip carries live edits; whatever it settles into plays as
   // saved, which is exactly the comparison the hand-off is meant to test.
@@ -172,9 +263,19 @@ export function AnimationLab() {
 
   const livePlace = editing ? place : placementFor(who, showingName);
 
+  // The pose track, regenerated on every edit so a scale typed into the grid
+  // shows up on the next frame rather than on the next save.
+  const poseCss = useMemo(
+    () => poseKeyframes(poseAnimName(who, showingName), steps),
+    [who, showingName, steps],
+  );
+
   const css = useMemo(
-    () => (showing ? clipKeyframes(clipAnimName(who, showingName), showing.frames, steps) : ''),
-    [who, showingName, showing?.frames, steps],
+    () =>
+      (showing ? clipKeyframes(clipAnimName(who, showingName), showing.frames, steps) : '') +
+      (poseCss ? `
+${poseCss}` : ''),
+    [who, showingName, showing?.frames, steps, poseCss],
   );
 
   /**
@@ -232,6 +333,23 @@ export function AnimationLab() {
    */
   async function save() {
     if (!clip) return;
+    /*
+     * The damage split goes first, and goes with the same button.
+     *
+     * It had its own Save, and that was a trap: you would add a hit, press the
+     * Save you were already using for everything else, and watch the page
+     * reload with the split thrown away. Two buttons where one of them silently
+     * does not save what you just edited is worse than either alone.
+     *
+     * The FILES stay separate -- balance in `hitSplits.ts`, timing in the
+     * actor's anim file -- because that line is worth keeping. Only the gesture
+     * merges.
+     *
+     * Ordered before the clip write because writing the anim file is what
+     * triggers the dev server's reload; doing it second means both writes have
+     * already landed by the time anything refreshes.
+     */
+    if (ability && liveShares) await saveShares(liveShares);
     const isNatural = order.length === clip.frames && order.every((v, i) => v === i);
     try {
       const res = await fetch('/__anim/save', {
@@ -244,6 +362,7 @@ export function AnimationLab() {
           frames: trimTune(tune),
           order: isNatural ? undefined : order,
           stepMs,
+          impacts,
         }),
       });
       const body = (await res.json()) as { file?: string; error?: string };
@@ -269,10 +388,57 @@ export function AnimationLab() {
   }
 
   /** Drop an enabled frame, or add a disabled one back at the end. */
-  function toggleFrame(source: number) {
-    setOrder((prev) =>
-      prev.includes(source) ? prev.filter((i) => i !== source) : [...prev, source],
+  /**
+   * Take ONE step out of the order, by position.
+   *
+   * It used to filter by source, which removed every copy of a duplicated
+   * drawing at once -- so disabling the second of three identical frames threw
+   * away all three.
+   */
+  function removeFrameAt(pos: number) {
+    setOrder((prev) => prev.filter((_, i) => i !== pos));
+    setImpacts((l) =>
+      l
+        // An effect hung on a step that no longer plays has nowhere to fire.
+        .filter((im) => im.frame !== pos)
+        .map((im) => (im.frame > pos ? { ...im, frame: im.frame - 1 } : im)),
     );
+    setDirty(true);
+  }
+
+  /** Put a source frame back, at the end, where it can then be moved. */
+  function addFrame(source: number) {
+    setOrder((prev) => [...prev, source]);
+    setDirty(true);
+  }
+
+  /*
+   * Repeat a drawing in the played order.
+   *
+   * `order` was always able to express this -- it is just the same index twice
+   * -- but nothing in the lab could produce it. Two reasons to want it: holding
+   * a pose for a beat that a `hold` multiplier would stretch too smoothly, and
+   * giving a drawing more than one moment to throw an effect from, since
+   * impacts are keyed to frames and a three-frame swing otherwise offers
+   * exactly three timings.
+   *
+   * Inserted immediately after the frame it copies, because that is where a
+   * repeat belongs; moving it elsewhere is what the arrows are for.
+   */
+  function duplicateFrame(pos: number) {
+    const next = [...order];
+    next.splice(pos + 1, 0, order[pos]!);
+    setOrder(next);
+    /*
+     * Impacts are positions, so inserting a step moves everything after it.
+     *
+     * Without this every duplicate would silently drag the later sparks one
+     * frame earlier in the clip. Impacts AT `pos` stay put -- they belong to
+     * the original -- so the copy arrives with none of its own, which is what
+     * makes it worth having: a second showing of the same drawing that can
+     * throw something different.
+     */
+    setImpacts((l) => l.map((im) => (im.frame > pos ? { ...im, frame: im.frame + 1 } : im)));
     setDirty(true);
   }
 
@@ -282,6 +448,12 @@ export function AnimationLab() {
     const next = [...order];
     [next[pos], next[to]] = [next[to], next[pos]];
     setOrder(next);
+    // The effects travel with the step they were attached to. Swapping the
+    // drawings and leaving the sparks behind would reorder two things the
+    // animator thinks of as one.
+    setImpacts((l) =>
+      l.map((im) => (im.frame === pos ? { ...im, frame: to } : im.frame === to ? { ...im, frame: pos } : im)),
+    );
     setDirty(true);
     if (mode === 'step') setAt(to);
   }
@@ -310,6 +482,51 @@ export function AnimationLab() {
   const ghosting = ghost === 'incoming' && !incoming ? 'still' : ghost;
   const playing = mode !== 'step';
   const duration = clipDuration(steps, stepMs);
+
+  /*
+   * Spawn the clip's impacts on the clip's own schedule.
+   *
+   * Driven by `impactTimes`, the same function the battle calls, so a spark
+   * that lands here lands there -- including several sharing a frame and
+   * separating themselves with `delay`, and a duplicated frame throwing one
+   * each time it plays.
+   *
+   * Re-armed whenever the clip, its timing or its impacts change, which is what
+   * makes dragging a slider show its result immediately. `run` is in the deps
+   * so the replay button restarts the volley along with the animation.
+   */
+  useEffect(() => {
+    if (!dummy || !playing || !showing) return;
+    // The LIVE list, not the saved one: the dummy exists to show the edit you
+    // are making. `editing` is false while previewing another actor's clip, and
+    // then the saved catalogue is the right answer.
+    const marks = impactTimes(who, showingName, steps, stepMs, editing ? impacts : undefined);
+    if (!marks.length) return;
+    const timers: number[] = [];
+    const fire = () => {
+      for (const { at, impact } of marks) {
+        timers.push(
+          window.setTimeout(() => {
+            const id = burstId.current++;
+            setBursts((b) => [...b, { id, impact }]);
+            window.setTimeout(
+              () => setBursts((b) => b.filter((x) => x.id !== id)),
+              impact.ms ?? BURST_MS,
+            );
+          }, at),
+        );
+      }
+    };
+    fire();
+    // A looping clip replays its impacts every lap; a one-shot fires once, the
+    // same as it does in a battle.
+    const loop = mode === 'loop' ? window.setInterval(fire, Math.max(1, duration)) : null;
+    return () => {
+      timers.forEach(window.clearTimeout);
+      if (loop) window.clearInterval(loop);
+      setBursts([]);
+    };
+  }, [dummy, playing, mode, who, showingName, steps, stepMs, duration, impacts, run, showing]);
   const oneShot = mode === 'once' && !settled;
   const disabled = natural(clip.frames).filter((i) => !order.includes(i));
   const shownStep = steps[Math.min(at, steps.length - 1)];
@@ -421,6 +638,216 @@ export function AnimationLab() {
           />
           Stage backdrop
         </label>
+
+        <label className="lab-check">
+          <input type="checkbox" checked={dummy} onChange={(e) => setDummy(e.target.checked)} />
+          Practice dummy
+        </label>
+
+        {/* Impacts: which effect, on which drawing, and where it lands.
+            Frame-indexed, so retiming the clip moves the spark with it. */}
+        {/*
+          Damage split, beside the impacts it lands on.
+
+          Shares are RATIOS -- `1 1 2` is a quarter, a quarter and a half -- so
+          the resolved percentages are shown underneath, because the ratio is
+          what you type and the percentage is what you are actually deciding.
+
+          It saves separately from the clip. The split is balance and lives in
+          `src/engine/hitSplits.ts`; the timing is presentation and lives in the
+          actor's anim file. One button writing both would blur a line worth
+          keeping, and the mismatch warning below is the only place they need to
+          know about each other.
+        */}
+        {hittable && ability && (
+          <div className="lab-impacts lab-split">
+            <div className="lab-impacts-head">
+              <span>Damage split — {ability.name}</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setShares([...(liveShares ?? [1]), 1]);
+                  setDirty(true);
+                }}
+                title="Add a blow"
+              >
+                Add hit
+              </button>
+            </div>
+
+            {!liveShares || liveShares.length < 2 ? (
+              <p className="dim">One hit. Add another to split the damage.</p>
+            ) : (
+              <>
+                <div className="lab-split-rows">
+                  {liveShares.map((v, i) => {
+                    const total = liveShares.reduce((n, x) => n + Math.max(0, x), 0) || 1;
+                    return (
+                      <label key={i}>
+                        <b>{i}</b>
+                        <input
+                          type="number"
+                          step={0.5}
+                          min={0.1}
+                          value={v}
+                          onChange={(e) => {
+                            const n = Math.max(0.1, +e.target.value);
+                            setShares(liveShares.map((x, j) => (j === i ? n : x)));
+                            setDirty(true);
+                          }}
+                        />
+                        <span className="dim">
+                          {Math.round((v / total) * (ability.power ?? 1) * 1000) / 10}%
+                        </span>
+                        <button
+                          type="button"
+                          className="lab-impact-drop"
+                          title="Remove this blow"
+                          onClick={() => {
+                            setShares(liveShares.filter((_, j) => j !== i));
+                            setDirty(true);
+                          }}
+                        >
+                          ×
+                        </button>
+                      </label>
+                    );
+                  })}
+                </div>
+                {liveShares.length !== impacts.length && (
+                  <p className="dim lab-split-warn">
+                    {liveShares.length} hits but {impacts.length} impact
+                    {impacts.length === 1 ? '' : 's'} — leftovers all land on the last one.
+                  </p>
+                )}
+              </>
+            )}
+
+            {sharesSaved && <p className="dim">split {sharesSaved}</p>}
+          </div>
+        )}
+
+        <div className="lab-impacts">
+          <div className="lab-impacts-head">
+            <span>Impact effects</span>
+            <button
+              type="button"
+              disabled={!clip || Object.keys(EFFECTS).length === 0}
+              onClick={() => {
+                const first = Object.keys(EFFECTS)[0];
+                if (!first || !clip) return;
+                setImpacts((list) => [
+                  ...list,
+                  // Defaults to the LAST frame, which is the safe guess for a
+                  // swing: better to land late than to spark before contact.
+                  { frame: Math.max(0, order.length - 1), effect: first, at: 'each' },
+                ]);
+                setDirty(true);
+              }}
+            >
+              Add
+            </button>
+          </div>
+
+          {impacts.length === 0 && <p className="dim">None. This clip throws no effects.</p>}
+
+          {impacts.map((im, idx) => {
+            const fx = EFFECTS[im.effect];
+            const set = (patch: Partial<Impact>) => {
+              setImpacts((l) => l.map((x, i) => (i === idx ? { ...x, ...patch } : x)));
+              setDirty(true);
+            };
+            const num = (
+              key: 'scale' | 'dx' | 'dy' | 'delay' | 'ms',
+              label: string,
+              fallback: number,
+              step: number,
+              min?: number,
+            ) => (
+              <label>
+                <span>{label}</span>
+                <input
+                  type="number"
+                  step={step}
+                  min={min}
+                  value={im[key] ?? fallback}
+                  onChange={(e) => {
+                    const v = min != null ? Math.max(min, +e.target.value) : +e.target.value;
+                    set({ [key]: v } as Partial<Impact>);
+                  }}
+                />
+              </label>
+            );
+            return (
+              <div className="lab-impact" key={idx}>
+                {/* Head: what it is and where it lands. The two questions that
+                    identify an impact, so they read on one line before any of
+                    the numbers that tune it. */}
+                <div className="lab-impact-head">
+                  <select value={im.effect} onChange={(e) => set({ effect: e.target.value })}>
+                    {Object.keys(EFFECTS).map((id) => (
+                      <option key={id} value={id}>
+                        {id}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={im.at ?? 'each'}
+                    onChange={(e) => set({ at: e.target.value as Impact['at'] })}
+                    title="Where it lands. Which SIDE is decided by who the ability affected."
+                  >
+                    <option value="each">on each target</option>
+                    <option value="centre">once, at their centre</option>
+                  </select>
+                  <button
+                    type="button"
+                    className="lab-impact-drop"
+                    onClick={() => {
+                      setImpacts((l) => l.filter((_, i) => i !== idx));
+                      setDirty(true);
+                    }}
+                    title="Remove this impact"
+                  >
+                    ×
+                  </button>
+                </div>
+
+                {/* Timing, then placement, then life. Grouped because that is
+                    the order they get decided in, and each group is short
+                    enough to scan without reading the labels twice. */}
+                <div className="lab-impact-grid">
+                  <label>
+                    <span>step</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={Math.max(0, order.length - 1)}
+                      value={im.frame}
+                      onChange={(e) =>
+                        set({ frame: Math.max(0, Math.min(order.length - 1, +e.target.value)) })
+                      }
+                    />
+                  </label>
+                  {num('delay', '+ms', 0, 20, 0)}
+                  {num('ms', 'lasts', BURST_MS, 20, 40)}
+                  {num('scale', 'scale', 1, 0.05, 0.1)}
+                  {num('dx', 'x%', 0, 2)}
+                  {num('dy', 'y%', 0, 2)}
+                </div>
+
+                {/* What the numbers above actually resolve to. Both are things
+                    you would otherwise work out on paper: which drawing the
+                    step lands on, and what the duration is per frame. */}
+                <div className="lab-impact-foot">
+                  <span>
+                    {order[im.frame] != null ? `drawing ${order[im.frame]}` : 'no such step'}
+                  </span>
+                  {fx && <span>{Math.round((im.ms ?? BURST_MS) / fx.frames)}ms/frame × {fx.frames}</span>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
 
         <label>
           Ghost
@@ -550,18 +977,42 @@ export function AnimationLab() {
                 transform: `translate(${box.shiftPct}%, ${box.dropPct}%)`,
               }}
             >
-              <img
-                key={`${who}/${showingName}/${run}`}
-                ref={stripRef}
-                className="anim-strip"
-                src={showing.src}
-                alt=""
-                draggable={false}
-                style={stripStyle}
-                onAnimationEnd={() => {
-                  if (mode === 'once') setSettled(true);
-                }}
-              />
+              {/* The same pose wrapper the battle renders, driven by the same
+                  helper. The lab is only worth trusting if what it shows and
+                  what the battle shows come out of one code path -- a preview
+                  with its own idea of squash would let an animator tune against
+                  a figure nobody else ever sees. */}
+              <span
+                className="anim-pose"
+                key={`pose/${who}/${showingName}/${run}`}
+                style={
+                  playing
+                    ? {
+                        animationName: poseCss ? poseAnimName(who, showingName) : undefined,
+                        animationDuration: poseCss ? `${duration}ms` : undefined,
+                        animationTimingFunction: 'linear',
+                        animationIterationCount: mode === 'once' ? 1 : 'infinite',
+                        ...(mode === 'once' ? { animationFillMode: 'forwards' as const } : null),
+                      }
+                    : // Stepping frame by frame: hold the picked frame's pose
+                      // rather than running a track, or the pose would animate
+                      // while the drawing under it stood still.
+                      { transform: poseTransform(shownStep?.tune) }
+                }
+              >
+                <img
+                  key={`${who}/${showingName}/${run}`}
+                  ref={stripRef}
+                  className="anim-strip"
+                  src={showing.src}
+                  alt=""
+                  draggable={false}
+                  style={stripStyle}
+                  onAnimationEnd={() => {
+                    if (mode === 'once') setSettled(true);
+                  }}
+                />
+              </span>
             </span>
           </span>
           {/* No caption here on purpose. It sat under the sprite, and its TEXT
@@ -571,6 +1022,48 @@ export function AnimationLab() {
               gave now lives in the controls above, where nothing it does can
               move the art. */}
         </figure>
+
+        {/*
+          The practice dummy: something for the effects to land ON.
+
+          A plain silhouette rather than a real character, because the question
+          this answers is "does the spark read, and does it land where I meant"
+          -- and borrowing a Performer would put their art in the way of the
+          answer while implying the effect belongs to them.
+
+          Sized to the figure height so `scale` means here what it means in a
+          battle, where an impact is a fraction of the TARGET's height.
+        */}
+        {dummy && (
+          <figure className="lab-dummy-fig">
+            <span className="lab-dummy" style={{ height, width: height * 0.42 }}>
+              {bursts.map(({ id, impact }) => {
+                const fx = EFFECTS[impact.effect];
+                if (!fx) return null;
+                return (
+                  <span
+                    key={id}
+                    className="impact-burst"
+                    style={
+                      {
+                        width: `calc(${(impact.scale ?? 1) * 100}% * ${fx.aspect})`,
+                        aspectRatio: `${fx.aspect}`,
+                        left: `${50 + (impact.dx ?? 0)}%`,
+                        top: `${50 + (impact.dy ?? 0)}%`,
+                        backgroundImage: `url(${fx.src})`,
+                        backgroundSize: `${fx.frames * 100}% 100%`,
+                        ['--fx-frames' as string]: fx.frames,
+                        ['--fx-end' as string]: `${fx.frames * 100}%`,
+                        ['--fx-ms' as string]: `${impact.ms ?? BURST_MS}ms`,
+                      } as React.CSSProperties
+                    }
+                  />
+                );
+              })}
+            </span>
+            <figcaption className="dim">dummy</figcaption>
+          </figure>
+        )}
       </div>
 
       <div className="lab-tune panel">
@@ -665,13 +1158,19 @@ export function AnimationLab() {
                 </button>
                 <button
                   className="lab-tune-idx"
-                  title="Show this frame"
+                  title={`Step ${pos} — drawing ${source}`}
                   onClick={() => {
                     setMode('step');
                     setAt(pos);
                   }}
                 >
-                  {source}
+                  {/* Position first, because that is what an impact names now.
+                      The drawing is the smaller number beside it -- with
+                      duplicates the two differ, and which is which is the
+                      difference between an effect landing where you meant and
+                      landing on all three copies. */}
+                  {pos}
+                  <em>·{source}</em>
                 </button>
                 <button
                   className="lab-tune-move"
@@ -680,6 +1179,13 @@ export function AnimationLab() {
                   onClick={() => moveFrame(pos, 1)}
                 >
                   ▶
+                </button>
+                <button
+                  className="lab-tune-move"
+                  title="Play this drawing again, straight after this one"
+                  onClick={() => duplicateFrame(pos)}
+                >
+                  ⧉
                 </button>
               </div>
               <label>
@@ -714,12 +1220,51 @@ export function AnimationLab() {
                   onChange={(e) => editTune(source, { dy: +e.target.value })}
                 />
               </label>
+              {/* Squash, stretch and lean. Anchored at the feet, so a scale
+                  below 1 settles the figure onto the boards rather than
+                  shrinking it towards its own middle. */}
+              <label>
+                scale
+                <input
+                  type="number"
+                  step={0.05}
+                  min={0.2}
+                  max={3}
+                  value={tune[source]?.scale ?? 1}
+                  autoComplete="off"
+                  onChange={(e) => editTune(source, { scale: +e.target.value })}
+                />
+              </label>
+              <label>
+                skewX°
+                <input
+                  type="number"
+                  step={1}
+                  min={-45}
+                  max={45}
+                  value={tune[source]?.skewX ?? 0}
+                  autoComplete="off"
+                  onChange={(e) => editTune(source, { skewX: +e.target.value })}
+                />
+              </label>
+              <label>
+                skewY°
+                <input
+                  type="number"
+                  step={1}
+                  min={-45}
+                  max={45}
+                  value={tune[source]?.skewY ?? 0}
+                  autoComplete="off"
+                  onChange={(e) => editTune(source, { skewY: +e.target.value })}
+                />
+              </label>
               <button
                 className="lab-tune-off"
-                title="Leave this frame out of playback"
-                onClick={() => toggleFrame(source)}
+                title="Leave this step out of playback"
+                onClick={() => removeFrameAt(pos)}
               >
-                disable
+                remove
               </button>
             </div>
           ))}
@@ -737,7 +1282,7 @@ export function AnimationLab() {
                   <div className="lab-tune-top">
                     <span className="lab-tune-idx">{source}</span>
                   </div>
-                  <button className="lab-tune-off" onClick={() => toggleFrame(source)}>
+                  <button className="lab-tune-off" onClick={() => addFrame(source)}>
                     enable
                   </button>
                 </div>
