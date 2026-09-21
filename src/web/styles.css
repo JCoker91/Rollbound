@@ -4167,3 +4167,994 @@ select {
   background: rgba(12, 14, 19, 0.85);
   border: 1px solid #6b4a2a;
 }
+
+/* ---------- cinema mode: the stage takes the window ---------- */
+
+/*
+ * One cell instead of two.
+ *
+ * The docked layout gives the bottom third to the tray and the sheet, and
+ * nothing ever overlaps the art. That is the safe arrangement and it costs the
+ * picture a third of the screen on every fight. Cinema spends that third on the
+ * artwork and makes the panels float, which is only worth it if they stay
+ * legible over a backdrop and out of the way of the board.
+ *
+ * Everything below is placement. No component changes shape, so the two modes
+ * cannot drift apart -- the same tray, sheet and rosters, put somewhere else.
+ */
+.battle.cinema {
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.battle.cinema .hud-bottom,
+.battle.cinema .hud-right {
+  grid-row: 1;
+  grid-column: 1 / -1;
+  position: absolute;
+  z-index: 30;
+  /* The stage keeps every click that is not on a panel. */
+  pointer-events: none;
+}
+
+.battle.cinema .hud-bottom > *,
+.battle.cinema .hud-right > * {
+  pointer-events: auto;
+}
+
+/*
+ * The dice, one slim row under the top bar.
+ *
+ * Every other home was somewhere the cast stands: bottom-left is the party,
+ * bottom-centre is the floor the board sits on. The strip under the top bar is
+ * sky, and it is the only edge of the window that no part of the game occupies.
+ *
+ * Always present, unlike the menu, because the dice are not something you go
+ * and look at -- they are the state being read every second of a turn.
+ */
+.battle.cinema .hud-bottom {
+  left: 50%;
+  transform: translateX(-50%);
+  top: 52px;
+  bottom: auto;
+  width: max-content;
+  max-width: 92vw;
+  padding: 0;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+/* Tray, hints and the commit button on ONE line rather than stacked. */
+.battle.cinema .hud-bottom .tray,
+.battle.cinema .hud-bottom .panel {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+}
+
+/*
+ * One row, sized to the dice actually in it.
+ *
+ * The docked tray is deliberately exactly THREE dice wide -- that fixed width
+ * is what wraps five into a pyramid and six into two rows of three. In a
+ * single-row tray the same rule is a trap: it does not stop the row, it just
+ * stops the row being told how wide it is, so the sixth die (Benjamin's
+ * contributed one) ran straight out of the panel and under the commit button.
+ *
+ * `width: auto` hands sizing back to the content, which is the whole ask: the
+ * pool grows and shrinks -- contributed dice, a bought upgrade -- and the tray
+ * has to follow it rather than the other way round.
+ */
+.battle.cinema .hud-bottom .dice {
+  /* Set the variable rather than the die: `.battle .hud-bottom .die` already
+     sizes from it, so one number moves the row and everything in it. */
+  --die: 38px;
+  --die-gap: 7px;
+  width: auto;
+  flex-wrap: nowrap;
+}
+
+.battle.cinema .hud-bottom .die {
+  font-size: 12px;
+}
+
+.battle.cinema .hud-bottom .die .pip {
+  font-size: 17px;
+}
+
+.battle.cinema .hud-bottom .die .val {
+  font-size: 10px;
+}
+
+/* The hint keeps the row from running the width of the window. */
+.battle.cinema .hud-bottom .hints {
+  max-width: 34vw;
+}
+
+.battle.cinema .hud-bottom .hint {
+  font-size: 11.5px;
+}
+
+/* The hint text wraps rather than widening the row past the window. */
+.battle.cinema .hud-bottom .hint {
+  font-size: 11.5px;
+}
+
+/*
+ * The full sheet is docked-only.
+ *
+ * Floated, it was 46vw of panel sitting on the cast, with the ability list
+ * below its own fold -- so it covered the characters AND hid the one thing
+ * needed every turn. `.hud-skills` replaces it with the part you act with.
+ */
+.battle.cinema .hud-right {
+  display: none;
+}
+
+/*
+ * Panels as PAPER, to match the cast.
+ *
+ * The dark translucent slab was the generic answer -- it reads as an interface
+ * laid over a game rather than as part of one, and the whole roster is painted
+ * stickers with a white edge and a soft shadow. So the panels are cut from the
+ * same material: warm card, a heavy ink outline, a white border like the die
+ * cut around a sticker, and a shadow that puts them a few millimetres above
+ * the set.
+ *
+ * Still translucent, because seeing the stage through the furniture was the
+ * good part of the first attempt -- just warm now rather than grey, so it
+ * tints the backdrop like tracing paper instead of dimming it like glass.
+ */
+.battle.cinema {
+  --paper: rgba(248, 240, 222, 0.93);
+  --paper-ink: #2f2519;
+  --paper-dim: #7a6a52;
+  --paper-edge: #fffdf7;
+  --paper-line: rgba(47, 37, 25, 0.22);
+}
+
+.battle.cinema .hud-bottom .panel,
+.battle.cinema .hud-skills .panel,
+.battle.cinema .hud-party .panel,
+.battle.cinema .hud-foes .panel {
+  background: var(--paper);
+  backdrop-filter: blur(5px);
+  color: var(--paper-ink);
+  /*
+   * The sticker edge, drawn entirely INSIDE the element's own box.
+   *
+   * Two earlier attempts put it outside and both failed the same way: a spread
+   * `box-shadow` is painted behind the element, and an `outline` sits beyond
+   * its border -- either can be covered by whatever is next to it, which is
+   * why the white showed at the corners, where nothing is adjacent, and
+   * vanished along the sides. Nothing outside the border box is reliable in a
+   * layout made of panels sitting against each other.
+   *
+   * So: the WHITE is the border, and the ink line is an inset shadow just
+   * inside it. Both are part of this element's own painting and cannot be
+   * overlapped by anything. The result is the same die-cut sticker edge the
+   * sprites have -- card, ink line, white rim -- and it is identical on every
+   * panel because it is one rule.
+   *
+   * `box-shadow` is then free to do only the lifting: a tight contact shadow
+   * that puts the card a few millimetres off the set, and a wide soft one that
+   * says the light is above and in front.
+   */
+  border: 3px solid var(--paper-edge);
+  border-radius: 13px;
+  box-shadow:
+    inset 0 0 0 2px var(--paper-ink),
+    0 3px 0 rgba(47, 37, 25, 0.32),
+    0 10px 22px rgba(0, 0, 0, 0.5);
+}
+
+/* Anything quiet inside a paper panel is brown, not grey: grey on cream reads
+   as a rendering fault rather than as de-emphasis. */
+.battle.cinema .hud-skills .dim,
+.battle.cinema .hud-skills .sub,
+.battle.cinema .hud-skills em,
+.battle.cinema .hud-bottom .hint {
+  color: var(--paper-dim);
+}
+
+.battle.cinema .hud-skills .skill-who {
+  border-right-color: var(--paper-line);
+}
+
+/* Buttons are cut from the same card, one shade down so they read as raised. */
+.battle.cinema .hud-skills button,
+.battle.cinema .hud-bottom button {
+  background: rgba(255, 252, 244, 0.85);
+  border: 2px solid var(--paper-ink);
+  border-radius: 9px;
+  color: var(--paper-ink);
+  font-weight: 700;
+}
+
+.battle.cinema .hud-skills button:hover:not(:disabled),
+.battle.cinema .hud-bottom button:hover:not(:disabled) {
+  background: #fffdf7;
+  border-color: var(--paper-ink);
+}
+
+/* Chosen, and ready-to-spend. Gold on cream is the paper palette's own accent,
+   so neither needs a colour borrowed from the dark theme. */
+.battle.cinema .hud-skills button.on,
+.battle.cinema .skill.active {
+  background: #f2d79a;
+  box-shadow: inset 0 0 0 2px #fffdf7;
+}
+
+.battle.cinema .skill.ready {
+  background: #fbe6ae;
+  border-color: #8a6a1f;
+  box-shadow: 0 0 10px rgba(226, 180, 76, 0.45);
+}
+
+.battle.cinema .skill .cost {
+  background: var(--paper-ink);
+  color: #f8f0de;
+}
+
+.battle.cinema .skill.ready .cost {
+  background: #8a6a1f;
+  color: #fff6dd;
+}
+
+.battle.cinema .skill.tier .cost {
+  background: #5c3f74;
+}
+
+.battle.cinema .skill.tier.bought .cost {
+  background: #3f6a48;
+}
+
+.battle.cinema .skill-cd {
+  background: var(--paper-ink);
+  border-color: var(--paper-ink);
+  color: #f8f0de;
+}
+
+/* The dice keep their own faces -- they are objects in the world, not chrome --
+   but the tray they sit in is card like everything else. */
+.battle.cinema .hud-bottom .die {
+  border-color: var(--paper-ink);
+}
+
+/* The rosters ride further out, since the stage now reaches the window edge. */
+.battle.cinema .hud-party,
+.battle.cinema .hud-foes {
+  align-self: start;
+  /* Clear of the top bar AND the dice row beneath it. */
+  padding-top: 108px;
+}
+
+/*
+ * Narration lifts clear of the floating dock.
+ *
+ * It is a grid item with `align-self: end`, not an absolutely positioned one,
+ * so `top`/`bottom` do nothing to it -- the lever is its own bottom padding.
+ * Docked, it sits at the foot of the artwork with the tray safely below in its
+ * own band; floating, that same spot is underneath the tray.
+ */
+/* The tray moved to the top, so the foot of the picture is free again. */
+.battle.cinema .hud-narration {
+  padding-bottom: 3vh;
+}
+
+@media (max-width: 1100px) {
+  /* Two floating panels and a board do not fit side by side; the sheet wins
+     the width because it is the thing being read. */
+  .battle.cinema .hud-right {
+    width: min(560px, 92vw);
+  }
+
+  .battle.cinema .hud-bottom {
+    max-width: 92vw;
+  }
+}
+
+/*
+ * The ability bar, in the sky above the cast.
+ *
+ * Centred between the rosters, which hold the left and right edges. Sized to
+ * its contents rather than to a track: a floating layer that reserves width it
+ * is not using is just a smaller version of the dock it replaced.
+ */
+/*
+ * A side panel, in the half of the screen focus just emptied.
+ *
+ * Four attempts pinned this to the character -- their slot's rect, then a
+ * per-frame re-measure to survive the camera, then a fixed anchor on the
+ * sprite to survive a pose change. All of them shared one flaw: a panel
+ * beside the character is a panel ON the character, because once focus has
+ * pushed in, the character IS the frame.
+ *
+ * Focus already leaves a permanently empty half -- an ally slides left, an
+ * enemy right -- so the panel just lives there. Same place every time, which
+ * makes it somewhere you learn rather than somewhere you look for, and there
+ * is no anchor, no frame loop and nothing to drift.
+ */
+.battle.cinema .hud-skills {
+  position: absolute;
+  top: 12%;
+  /*
+   * Just inside the centre line, not against the window edge.
+   *
+   * Focus puts the character on one side of centre and the panel on the
+   * other, so the two belong to the same middle of the screen -- pinned to
+   * the far edge the panel was a separate thing off in the corner, and the
+   * eye had to cross the whole window between the figure and what it says
+   * about them. One variable, because how far off centre it sits is the kind
+   * of number that gets tuned by looking.
+   */
+  --card-x: 52%;
+  left: var(--card-x);
+  right: auto;
+  z-index: 32;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  width: min(380px, 34vw);
+  max-height: 74vh;
+  pointer-events: none;
+}
+
+/* Enemies are pushed the other way, so their card mirrors across the centre. */
+.battle.cinema .hud-skills.to-left {
+  left: auto;
+  right: var(--card-x);
+}
+
+/*
+ * The description is still taken OUT of the flow.
+ *
+ * As a flow sibling it grew the stack, and a stack that grows while you read
+ * it moves the very row you are pointing at. It no longer needs to flip: the
+ * panel sits near the top of a fixed column, so there is always room beneath.
+ */
+.battle.cinema .skill-detail {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  width: 100%;
+}
+
+.battle.cinema .hud-skills > * {
+  pointer-events: auto;
+}
+
+/*
+ * Three doors and a name. The whole resting footprint of the layout.
+ *
+ * This is the point of the rewrite: what is on screen when you are not
+ * choosing anything should be almost nothing. The lists are one click away and
+ * close again when used.
+ */
+.skill-menu {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+}
+
+.skill-menu button {
+  padding: 5px 11px;
+  font-size: 12.5px;
+}
+
+.skill-menu button.on {
+  border-color: var(--accent);
+  background: #23324a;
+}
+
+/*
+ * The open list, stacked under the menu rather than spread along it.
+ *
+ * A row would grow sideways and start covering the cast the moment a kit had
+ * more than three or four abilities; a column grows into the empty sky, which
+ * is what this layer has plenty of.
+ */
+.skill-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 6px;
+  min-width: 232px;
+}
+
+.skill-list li {
+  display: flex;
+}
+
+.skill-list .skill {
+  width: 100%;
+}
+
+/* Whose abilities these are, and how they are doing. Small, because it is a
+   reminder rather than a reading -- the roster carries the real numbers. */
+.skill-who {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  padding-right: 10px;
+  border-right: 1px solid var(--line);
+}
+
+.skill-who em {
+  font-style: normal;
+  font-size: 10.5px;
+  font-weight: 400;
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Bought, and no longer a purchase: readable, not clickable, and visibly done. */
+.skill.tier.bought {
+  opacity: 0.75;
+}
+
+.skill.tier.bought .cost {
+  background: #2f4a37;
+  color: #cdf3d2;
+}
+
+/* A tier you cannot reach yet. Present because the track is part of reading a
+   character, quiet because it is not a decision today. */
+.skill.tier.future {
+  opacity: 0.45;
+}
+
+/*
+ * One chip per ability: the cost and the name, and nothing else.
+ *
+ * The docked row also carries the type, the reach, the element and the chain
+ * mark. All of that is real and none of it is needed to CHOOSE -- it is needed
+ * to understand, which is what the hover strip below is for. Splitting the two
+ * is what lets this bar be a bar instead of a second sheet.
+ */
+.skill {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 10px 5px 6px;
+  border-radius: 7px;
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.skill .cost {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 5px;
+  background: #2a3242;
+  font-size: 11.5px;
+  font-weight: 700;
+}
+
+.skill.ready {
+  border-color: #d9b34a;
+  background: #2a2617;
+  box-shadow: 0 0 10px rgba(240, 216, 120, 0.16);
+}
+
+.skill.ready .cost {
+  background: #f0d878;
+  color: #1a1f2a;
+}
+
+.skill.active {
+  border-color: var(--accent);
+  background: #23324a;
+}
+
+.skill.locked {
+  opacity: 0.4;
+}
+
+/* Cooling: the same language as the docked row -- greyed, with the turns left
+   where the cost was, because the cost is not the question while it counts. */
+.skill.cooling > *:not(.skill-cd) {
+  opacity: 0.4;
+  filter: grayscale(0.7);
+}
+
+.skill.cooling {
+  opacity: 1;
+}
+
+.skill-cd {
+  position: absolute;
+  left: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 5px;
+  background: #1a2233;
+  border: 1px solid rgba(160, 190, 235, 0.5);
+  color: #cfe0f5;
+  font-size: 11.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A live chain, as a ring, for the same reason it is a ring on the docked row:
+   gold is already `ready`'s colour and both can be true at once. */
+.skill.chains::before {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 9px;
+  border: 1px solid #c49a3c;
+  box-shadow: 0 0 9px rgba(196, 154, 60, 0.4);
+  pointer-events: none;
+}
+
+/*
+ * The rules, on hover, under the bar.
+ *
+ * Fed by the same `preview` state the docked sheet reads, so the two can never
+ * describe an ability differently -- and present only while something is
+ * pointed at, because a strip that is always there is always covering
+ * something.
+ */
+.skill-detail {
+  max-width: 520px;
+  padding: 9px 12px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.skill-detail strong {
+  display: block;
+  margin-bottom: 3px;
+}
+
+.skill-detail p {
+  margin: 3px 0 0;
+}
+
+.skill-detail .sub {
+  color: var(--dim);
+  font-size: 11.5px;
+}
+
+/* The upgrade chip, told apart from an ability by colour rather than position
+   -- it sits in the same row because it competes for the same dice. */
+.skill.tier .cost {
+  background: #3a3350;
+}
+
+.skill.tier.ready .cost {
+  background: #c8a6f0;
+  color: #1a1f2a;
+}
+
+.skill.tier.ready {
+  border-color: #9b7ad4;
+  background: #241d33;
+  box-shadow: 0 0 10px rgba(155, 122, 212, 0.2);
+}
+
+/*
+ * The dice, lit while an ability is waiting on them.
+ *
+ * Choosing Reposition used to look like nothing had happened: the instruction
+ * was a line of text in the tray, and the tray is the one thing nobody is
+ * looking at while deciding where to stand. The prompt belongs on the control
+ * the answer has to be given with.
+ *
+ * A pulse rather than a static glow, because the state is temporary and asks
+ * for something -- a steady highlight would read as a property of the dice.
+ */
+.dice.awaiting .die:not(:disabled):not(.picked) {
+  border-color: #d9b34a;
+  animation: die-wants 1.25s ease-in-out infinite;
+}
+
+@keyframes die-wants {
+  0%,
+  100% {
+    box-shadow: 0 0 0 rgba(240, 216, 120, 0);
+  }
+  50% {
+    box-shadow: 0 0 10px rgba(240, 216, 120, 0.5);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dice.awaiting .die:not(:disabled):not(.picked) {
+    animation: none;
+    box-shadow: 0 0 8px rgba(240, 216, 120, 0.4);
+  }
+}
+
+/*
+ * A measuring point, not a thing you can see.
+ *
+ * Zero-sized and at the figure's head height, so the cinema menu has something
+ * to hang from that does not move when the character changes pose. Inside the
+ * slot, so the camera's transform applies to it for free -- reading its rect
+ * gives a screen position with the zoom and the push-in already in it.
+ */
+.menu-anchor {
+  position: absolute;
+  left: 50%;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+/*
+ * The read-only card: everything about a character you are not commanding.
+ *
+ * Wider than the action menu and set in running text rather than in rows of
+ * controls, because it is read rather than clicked. Nothing in it takes the
+ * pointer -- hovering a card must never change what the turn is doing.
+ */
+.battle.cinema .info-card .panel.card,
+.battle.cinema .hud-skills .skill-list,
+.battle.cinema .hud-skills .skill-menu {
+  width: 100%;
+}
+
+/* A read-only card can use the whole column; it is all text. */
+.battle.cinema .info-card .panel.card {
+  max-height: 74vh;
+  overflow: auto;
+}
+
+.battle.cinema .info-card .panel.card {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px 12px;
+  pointer-events: none;
+}
+
+.battle.cinema .info-card header {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+
+.battle.cinema .info-card header strong {
+  font-size: 14px;
+}
+
+.battle.cinema .info-card .dim {
+  font-size: 11px;
+  text-transform: lowercase;
+}
+
+.card-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.card-stats b {
+  font-weight: 700;
+}
+
+/* The kit as a list of names with their rules, not as buttons: on somebody
+   else's card an ability is a fact, not an option. */
+.card-kit {
+  list-style: none;
+  margin: 2px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.card-kit li {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: 2px 8px;
+  align-items: baseline;
+}
+
+.card-kit .cost {
+  grid-row: span 2;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 5px;
+  background: var(--paper-ink);
+  color: #f8f0de;
+  font-size: 11.5px;
+  font-weight: 700;
+}
+
+.card-kit .skill-name {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.card-kit em {
+  grid-column: 2;
+  font-style: normal;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--paper-dim);
+}
+
+/* The card borrows the paper palette's quiet tones for its chips too. */
+.battle.cinema .info-card .matchups,
+.battle.cinema .info-card .mods {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.battle.cinema .info-card .mod {
+  background: rgba(47, 37, 25, 0.06);
+}
+
+.battle.cinema .info-card .mod .mod-parts {
+  color: var(--paper-dim);
+}
+
+/*
+ * The plan queue, in a single-row tray.
+ *
+ * `.battle .hud-bottom .tray` clips its overflow -- correct in the dock, where
+ * the tray is a fixed-height column and a long plan has to scroll rather than
+ * push the commit button off the bottom. Laid out as a ROW that same clip cut
+ * the queue off at the right, taking the reorder and remove buttons with it:
+ * the plan was visible and could not be edited, which is the one thing a plan
+ * is for.
+ */
+.battle.cinema .hud-bottom .tray {
+  overflow: visible;
+  width: auto;
+}
+
+.battle.cinema .hud-bottom .queue {
+  margin: 0;
+  max-height: 104px;
+  min-width: 210px;
+}
+
+.battle.cinema .hud-bottom .queue li {
+  background: rgba(47, 37, 25, 0.07);
+  font-size: 11.5px;
+  padding: 1px 5px;
+}
+
+.battle.cinema .hud-bottom .queue li.chains {
+  background: rgba(196, 154, 60, 0.28);
+}
+
+/* The row controls: small, square, and actually present. */
+.battle.cinema .hud-bottom .queue button {
+  padding: 0 5px;
+  min-width: 20px;
+  line-height: 1.5;
+  font-size: 11px;
+  border-width: 1px;
+}
+
+/*
+ * A card on the left, for enemies.
+ *
+ * The camera slides an enemy to the right when it focuses them, so the room it
+ * opens is on the left -- and a card that always sat right would be back on
+ * top of the character it is describing. Contents align to the right edge so
+ * the description strip hangs under the card rather than off the side of it.
+ */
+.battle.cinema .info-card.to-left {
+  align-items: flex-end;
+}
+
+
+
+/*
+ * Ending the phase, alone at the foot of the screen.
+ *
+ * It rode along in the tray, which in cinema is a row at the TOP -- so the one
+ * control meaning "I am done" sat behind the dice and the plan, at the opposite
+ * end of the screen from where anyone looks for it. On its own at the bottom
+ * centre it is unmissable and never competes for space.
+ */
+.battle.cinema .hud-commit {
+  grid-row: 1;
+  grid-column: 1 / -1;
+  position: absolute;
+  left: 50%;
+  bottom: 20px;
+  transform: translateX(-50%);
+  z-index: 34;
+  pointer-events: none;
+}
+
+.battle.cinema .hud-commit .controls {
+  pointer-events: auto;
+}
+
+/* Bigger than a panel button: it is the end of the turn, not a setting. */
+.battle.cinema .hud-commit button {
+  padding: 10px 26px;
+  font-size: 14px;
+  font-weight: 700;
+  border: 3px solid var(--paper-edge);
+  border-radius: 13px;
+  background: #f2d79a;
+  color: var(--paper-ink);
+  box-shadow:
+    inset 0 0 0 2px var(--paper-ink),
+    0 3px 0 rgba(47, 37, 25, 0.32),
+    0 10px 22px rgba(0, 0, 0, 0.5);
+}
+
+.battle.cinema .hud-commit button:hover:not(:disabled) {
+  background: #f8e4b4;
+}
+
+.battle.cinema .hud-commit button:disabled {
+  opacity: 0.55;
+}
+
+/*
+ * The tray steps aside while a character is being read.
+ *
+ * Focus is a moment of looking, not of spending: the camera has pushed in on
+ * one figure and a panel is describing them, and the pool of dice above it all
+ * is the one thing on screen that has nothing to do with the question being
+ * asked. It comes straight back the moment the pointer leaves.
+ *
+ * Faded rather than removed, and on the same clock as the camera, so the two
+ * read as one movement -- and `visibility` rather than `display` so nothing
+ * reflows on the way out.
+ */
+.battle.cinema .hud-bottom {
+  transition: opacity 180ms ease, visibility 180ms ease;
+}
+
+.battle.cinema.focusing .hud-bottom {
+  opacity: 0;
+  visibility: hidden;
+}
+
+/*
+ * The opposite roster steps aside while a character is being read.
+ *
+ * Reading an ally, the enemy list is the furniture in the way -- it sits on
+ * the side the card now occupies and describes five creatures nobody asked
+ * about. Reading an enemy, your own list is. Hiding the one that is not
+ * relevant is where the card's extra width comes from.
+ *
+ * The side's OWN roster stays: it is how you get from one character to the
+ * next without dropping back to the board.
+ */
+.battle.cinema .hud-party,
+.battle.cinema .hud-foes {
+  transition: opacity 180ms ease, visibility 180ms ease;
+}
+
+.battle.cinema.focus-player .hud-foes,
+.battle.cinema.focus-enemy .hud-party {
+  opacity: 0;
+  visibility: hidden;
+}
+
+/* With a roster out of the way the card can take more of the half. */
+.battle.cinema.focusing .hud-skills {
+  width: min(460px, 42vw);
+}
+
+/* A chain line under an ability, in the gold the rest of the game uses for
+   chains -- warmed to sit on paper rather than on the dark dock. */
+.card-kit .chained {
+  grid-column: 2;
+  color: #8a6a1f;
+}
+
+.card-kit .chained strong {
+  font-weight: 700;
+}
+
+.card-kit .sym {
+  margin-left: 5px;
+  border-color: rgba(138, 106, 31, 0.6);
+  background: rgba(196, 154, 60, 0.18);
+  color: #8a6a1f;
+}
+
+/*
+ * The upgrade track, set apart from the kit by a rule rather than a heading.
+ *
+ * A heading would cost a line to say something the tick marks and the costs
+ * already say. The separator is enough to stop the two lists reading as one.
+ */
+.card-kit.tiers {
+  margin-top: 2px;
+  padding-top: 7px;
+  border-top: 1px solid rgba(47, 37, 25, 0.16);
+}
+
+.card-kit.tiers .cost {
+  background: #5c3f74;
+}
+
+.card-kit.tiers li.bought .cost {
+  background: #3f6a48;
+}
+
+.card-kit.tiers li.bought {
+  opacity: 0.72;
+}
+
+/*
+ * An enemy's kit has no cost column, so it does not reserve one.
+ *
+ * The grid's first track exists to line up cost badges; with nothing to put in
+ * it, keeping it would indent every line of rules text past an empty gutter.
+ */
+.card-kit.foe li {
+  grid-template-columns: 1fr;
+}
+
+.card-kit.foe .skill-name,
+.card-kit.foe em {
+  grid-column: 1;
+}
+
+/* When it can be used, rather than what it costs. Set apart from the rules so
+   the two are not read as one sentence. */
+.card-kit .usage {
+  grid-column: 2;
+  color: #7a5c2a;
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+}
+
+.card-kit.foe .usage {
+  grid-column: 1;
+}
+
+/*
+ * A creature's d20 band, in the slot a Performer's cost occupies.
+ *
+ * Wider than a cost badge because it holds a range, and a different shape --
+ * a rounded capsule rather than a square chip -- so the two are never confused
+ * at a glance. They answer the same question ("what makes this happen") with
+ * different kinds of answer: one is a price you pay, the other is odds you
+ * read.
+ */
+.card-kit .band {
+  grid-row: span 2;
+  min-width: 42px;
+  height: 22px;
+  padding: 0 7px;
+  display: grid;
+  place-items: center;
+  border-radius: 11px;
+  background: rgba(47, 37, 25, 0.1);
+  border: 1px solid rgba(47, 37, 25, 0.35);
+  color: var(--paper-ink);
+  font-size: 10.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* The band column is wider than the cost column it replaces. */
+.card-kit li:has(.band) {
+  grid-template-columns: 46px 1fr;
+}

@@ -219,6 +219,16 @@ Two indices that are easy to confuse:
 
 ---
 
+## The two battle layouts
+
+`▣ Cinema` in the battle's top bar swaps between them, and the choice sticks. **Docked** puts the
+stage over a 37vh band of panels; **cinema** gives the window to the stage and floats them.
+
+They share every component, so a change to the tray or the sheet lands in both — but they are placed
+by different CSS, so **check both before calling a layout change done**. Cinema rules are scoped
+`.battle.cinema`, and several of them override a docked rule that is load-bearing there (the dice
+container's fixed three-die width, for one). Reasoning is in `README.md` §"Two layouts".
+
 ## Dev mode
 
 The floating **Dev** badge toggles it, on every screen, and it sticks (localStorage) — `?dev=1` alone

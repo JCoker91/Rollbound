@@ -30,6 +30,11 @@ Read these before designing anything; they carry the reasoning, not just the rul
 
 ## Architecture rules
 
+- **The battle screen has TWO layouts** — the dock, and `cinema` (a toggle in the top bar). Same
+  components, placed differently; cinema also relaxes the dice-first rule so an ability can be
+  chosen before it is paid for. Read `README.md` §"Two layouts" before changing anything in
+  `BattleScreen.tsx` or the `.battle` CSS, and check both before calling a change done.
+
 - **`src/engine/` never imports React.** It is pure and runs headless (`npm run sim` depends on it).
 - **Rules text is generated** from ability data in `describe.ts`, so a sheet can never claim
   something the engine does not do. Never hand-write ability descriptions.

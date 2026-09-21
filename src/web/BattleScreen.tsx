@@ -345,6 +345,22 @@ function strikeKeyframes(holdStart: number, holdEnd: number): string {
 const LOOK_ROOM = 7;
 
 /**
+ * How far a focused character is pushed off centre to clear the info card,
+ * measured **on screen** as a fraction of the finished frame.
+ *
+ * The camera is centre-on, so moving the SUBJECT right slides the character
+ * left. The trap is where in the transform that happens: the offset is applied
+ * BEFORE the scale, exactly as `LOOK_ROOM` documents, so a fraction written
+ * here is multiplied by the zoom before anyone sees it. Written as a flat 0.2
+ * it became more than half the viewport at focus zoom and pushed the character
+ * clean off the side -- the camera looked like it was pointing at empty stage.
+ *
+ * So it is divided by the zoom at the point of use, which makes this number
+ * mean what it says: 16% of the frame, at any zoom.
+ */
+const CARD_ROOM = 0.16;
+
+/**
  * Turning a slot's position into a camera origin.
  *
  * Slots are fractions of the FRAME; `transform-origin` is a percentage of the
@@ -472,6 +488,53 @@ export function BattleScreen({
    * re-dialling after each save. Read through a try/catch because a blocked
    * storage throws rather than returning nothing.
    */
+  /**
+   * Cinema mode: the stage takes the whole window and the dock floats over it.
+   *
+   * A toggle rather than a replacement, because it is a genuine trade and the
+   * only way to judge it is to flip between the two on a real fight. Docked,
+   * nothing overlaps the art and every number has a fixed place to live.
+   * Cinema gives the artwork the whole window and asks the panels to earn their
+   * space -- which they only do if they stay out of the way until wanted.
+   *
+   * Persisted like the zoom: a preference about how you want to look at the
+   * game should survive a reload, and re-picking it every session would make
+   * the comparison itself tedious.
+   */
+  /** Which cinema menu is open, if any. One at a time, by design. */
+  const [menu, setMenu] = useState<'abilities' | 'upgrades' | null>(null);
+  /*
+   * The cinema panels have no position state, and that is the point.
+   *
+   * They chased the character for three rounds of this: measured off the
+   * slot's rect, re-measured every frame to survive the camera, re-anchored to
+   * a fixed point on the sprite to survive a pose change. Every version had
+   * the same flaw underneath -- a panel next to the character is a panel on
+   * top of the character, because the character is the thing filling the
+   * frame once the camera has focused them.
+   *
+   * Focus already solves it. It slides an ally left and an enemy right,
+   * which leaves a permanently empty half of the screen; the panel simply
+   * lives there. It is the same place every time, so it is somewhere you
+   * learn rather than somewhere you have to find, and there is no anchor, no
+   * frame loop and no drift.
+   */
+
+  const [cinema, setCinema] = useState(() => {
+    try {
+      return localStorage.getItem('sb.cinema') === '1';
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem('sb.cinema', cinema ? '1' : '0');
+    } catch {
+      /* private browsing; the preference simply does not persist */
+    }
+  }, [cinema]);
+
   const [restZoom, setRestZoom] = useState(() => {
     try {
       const v = Number(localStorage.getItem('sb.restZoom'));
@@ -1326,6 +1389,18 @@ export function BattleScreen({
   // ----------------------------------------------------------------- handlers
 
   function selectUnit(u: Unit) {
+    /*
+     * A Performer with an action already booked is not up for selection.
+     *
+     * Their turn is decided; opening their menu offers a second action they
+     * cannot take, and the list reads as live when every row in it is dead.
+     * Taking the action out of the queue is what makes them available again,
+     * which is the same gesture that changes your mind about it.
+     */
+    if (u.side === 'player' && isPlanned(battle, u)) return;
+    // A list left open from the last Performer would be describing the wrong
+    // character's kit under the right character's name.
+    setMenu(null);
     setSel({ unit: u, ability: null, dice: [] });
     setError(null);
   }
@@ -1337,10 +1412,24 @@ export function BattleScreen({
       setSel((s) => ({ ...s, ability: null }));
       return;
     }
-    // Dice are the gate: an ability the current selection does not cover is not
-    // reachable. The button is disabled, and this guard means nothing else can
-    // slip past it. Nothing here touches `dice` -- what you picked is spent.
-    if (!matched.has(a.name)) return;
+    /*
+     * Dice-first in the dock, either order in cinema.
+     *
+     * The docked list is read with the dice already in hand: you roll, the
+     * affordable rows light up, you click one. This guard backs that up, and
+     * the rows are disabled anyway.
+     *
+     * Cinema asks the opposite question. "Reposition" is a menu item, not a
+     * lit-up row -- you click it because you have decided to move, and only
+     * then work out which die to spend. With the guard in force that click did
+     * nothing at all: no error, no highlight, no hint that dice were wanted,
+     * which is exactly what was reported.
+     *
+     * Letting the choice come first is safe because it was never the guard
+     * that made spending correct -- `checkAction` in the engine validates the
+     * dice when the action is actually queued, and always did.
+     */
+    if (!cinema && !matched.has(a.name)) return;
     setSel((s) => ({ ...s, ability: a }));
     setError(null);
   }
@@ -1355,10 +1444,18 @@ export function BattleScreen({
     setSel((s) => ({
       ...s,
       dice: s.dice.includes(id) ? s.dice.filter((d) => d !== id) : [...s.dice, id],
-      // A chosen ability can never survive a die toggle -- a die is worth at
-      // least 1, so adding or removing one always shifts the total, and a
-      // wildcard needs exactly one die so it always moves off that count.
-      ability: null,
+      /*
+       * In the dock a chosen ability cannot survive a die toggle -- a die is
+       * worth at least 1, so any change shifts the total, and a wildcard needs
+       * exactly one die so it always moves off that count. The choice was made
+       * FROM the dice, so changing them invalidates it.
+       *
+       * In cinema the choice came first and the dice are the answer to it.
+       * Clearing here would undo the player's intent the instant they started
+       * paying for it -- they would click Reposition, pick a die, and find
+       * they were no longer repositioning.
+       */
+      ability: cinema ? s.ability : null,
     }));
     setError(null);
   }
@@ -1563,9 +1660,6 @@ export function BattleScreen({
     !sel.ability && sel.dice.length > 0 && sel.unit?.side === 'player' && !sel.unit.hasActed
       ? sel.unit
       : null;
-  /** A hero is up but no dice are picked, so the whole panel is greyed out. */
-  const awaitingDice =
-    !over && sel.dice.length === 0 && sel.unit?.side === 'player' && !sel.unit.hasActed;
   /** Rules text follows the hovered ability, falling back to the chosen one. */
   const shownAbility = preview ?? sel.ability;
   /** Whether the selected Performer can still be given an action this round. */
@@ -1705,17 +1799,36 @@ export function BattleScreen({
    * `zoom: null` during a beat because `.closing-in` owns the push-in value --
    * an inline zoom would beat the class and the push would never happen.
    */
+  // Needed twice below -- for the shot itself and to keep the sideways nudge
+  // a constant size on screen -- so it is computed once.
+  const focusZoom = focusZoomFor(focusHeight);
+
   const shot = pulse
     ? { zoom: PUSH_ZOOM, inline: false, subject: eyeOf(acts[pulseSide]) }
     : focusSlot
       ? {
-          zoom: focusZoomFor(focusHeight),
+          zoom: focusZoom,
           inline: true,
           // Aim at the middle of the FIGURE, not at the mark under its feet.
           // The slot is a point on the floor; centring on that puts the
           // character in the top half of the shot with a screenful of boards
           // below them.
-          subject: eyeOf({ x: focusSlot.xPct, y: focusSlot.yPct - focusHeight / 2 }),
+          //
+          // And pushed aside in cinema, to make room for the card. Centring
+          // put the subject of the shot directly under the panel describing
+          // them -- the one arrangement that guarantees you cannot see what
+          // you are reading about. Aiming OFF them moves them the other way:
+          // an ally slides left and the card takes the right, an enemy does
+          // the reverse, so each is read on the side of the stage they occupy
+          // and the figure always has clear air beside it.
+          subject: eyeOf({
+            // Divided by the zoom, so the shift is `CARD_ROOM` of the FRAME
+            // rather than of the stage -- see the constant.
+            x:
+              focusSlot.xPct +
+              (cinema ? ((focusUnit!.side === 'player' ? 1 : -1) * CARD_ROOM) / focusZoom : 0),
+            y: focusSlot.yPct - focusHeight / 2,
+          }),
         }
       : { zoom: restZoom, inline: true, subject: eyeOf(REST_EYE) };
 
@@ -1751,9 +1864,38 @@ export function BattleScreen({
     return () => ro.disconnect();
   }, []);
 
+
+  /*
+   * Ending the phase: the one control that is always the next thing you might
+   * do, so it gets a home of its own rather than a place in a queue of panels.
+   *
+   * In the dock it is pinned to the foot of the tray. In cinema the tray moved
+   * to the top of the screen and took this with it, where it sat at the end of
+   * a row behind the dice and the plan -- present, but nowhere near where a
+   * player looks for "I am done". It now sits alone at the bottom centre.
+   */
+  const commitControls = (
+    <div className="controls">
+      <button className="primary" onClick={handleEndPhase} disabled={over || busy}>
+        {busy
+          ? 'Resolving…'
+          : battle.plan.length > 0
+            ? `Commit ${battle.plan.length} action${battle.plan.length === 1 ? '' : 's'}`
+            : 'End phase'}
+      </button>
+    </div>
+  );
+
   return (
     <div
-      className={`game battle ${pulse ? 'in-beat' : ''} ${focusUnit ? 'focusing' : ''}`}
+      /*
+        `focus-player` / `focus-enemy` as well as `focusing`, because the two
+        sides want opposite things hidden: reading an ally, the enemy roster is
+        the furniture in the way, and reading an enemy it is your own.
+      */
+      className={`game battle ${cinema ? 'cinema' : ''} ${pulse ? 'in-beat' : ''} ${
+        focusUnit ? `focusing focus-${focusUnit.side}` : ''
+      }`}
       ref={rootRef}
     >
       <style>{IDLE_KEYFRAMES}</style>
@@ -1767,6 +1909,23 @@ export function BattleScreen({
       <div
         ref={stageRef}
         className={`stage ${pulse ? 'closing-in' : ''}`}
+        /*
+          Clicking bare boards puts everything down.
+
+          A slot's own click stops propagation, so this only ever fires on the
+          set itself -- picking a different Performer replaces the selection
+          rather than clearing it. Without this the menu was sticky: the only
+          way to dismiss it was to select somebody else, so there was no way to
+          simply look at the board.
+        */
+        onClick={() => {
+          // One step at a time: an aim in progress is cancelled first, so a
+          // misclick while choosing a target does not also throw away the
+          // Performer you had picked.
+          if (sel.ability) return setSel((prev) => ({ ...prev, ability: null }));
+          setMenu(null);
+          setSel(NO_SELECTION);
+        }}
         style={
           {
             ...camera,
@@ -1993,6 +2152,7 @@ export function BattleScreen({
                 ['--sx' as string]: `${(acts[u.side].x - slot.xPct) * 100}cqw`,
                 ['--sy' as string]: `${(acts[u.side].y - slot.yPct) * 100}cqh`,
               }}
+              data-unit={u.def.id}
               onMouseEnter={() => setHover(u.pos)}
               onMouseLeave={() => setHover(null)}
               // Stops here. The stage's own click clears the selection, and a
@@ -2405,6 +2565,13 @@ export function BattleScreen({
                 />
                 <b>{restZoom.toFixed(2)}×</b>
               </label>
+              <button
+                className={cinema ? 'on' : ''}
+                title="Give the stage the whole window and float the panels over it"
+                onClick={() => setCinema((c) => !c)}
+              >
+                {cinema ? '▣ Cinema' : '▢ Cinema'}
+              </button>
               <button onClick={() => setShowLog(true)}>Show log</button>
               <button onClick={() => restart(seed)}>Restart</button>
               <button onClick={() => restart(Math.floor(Math.random() * 100000))}>New seed</button>
@@ -2517,44 +2684,7 @@ export function BattleScreen({
               and a blank space would read as the panel failing to load rather
               than as the answer.
             */}
-            <div className="matchups">
-              {(() => {
-                const entries = Object.entries(shownUnit!.def.resistances ?? {}) as [Element, number][];
-                const weak = entries.filter(([, v]) => v < 0).sort((a, b) => a[1] - b[1]);
-                const resist = entries.filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
-                if (!weak.length && !resist.length) {
-                  return <span className="dim">no elemental weakness or resistance</span>;
-                }
-                const row = (label: string, list: [Element, number][], cls: string) =>
-                  list.length > 0 && (
-                    <div className={`matchup-row ${cls}`}>
-                      <span className="lbl">{label}</span>
-                      {list.map(([el, v]) => (
-                        // The glyph carries the element, the number the size of
-                        // it. `title` keeps the name reachable for anyone who
-                        // does not read the shape at a glance.
-                        <span
-                          key={el}
-                          className="chip"
-                          style={{ borderColor: ELEMENT_COLOR[el] }}
-                          title={`${el} — ${v < 0 ? `takes ${-v}% more` : `takes ${v}% less`}`}
-                        >
-                          <span className="glyph" style={{ color: ELEMENT_COLOR[el] }}>
-                            <ElementIcon element={el} />
-                          </span>
-                          <em>{v < 0 ? `+${-v}%` : `−${v}%`}</em>
-                        </span>
-                      ))}
-                    </div>
-                  );
-                return (
-                  <>
-                    {row('weak', weak, 'weak')}
-                    {row('resists', resist, 'resist')}
-                  </>
-                );
-              })()}
-            </div>
+            <Matchups def={shownUnit.def} />
 
             {/*
               The innate passive sits with IDENTITY, not with the upgrade tiers:
@@ -2955,6 +3085,343 @@ export function BattleScreen({
         )}
       </div>
 
+      {/*
+        Cinema's menu: three doors, and only one open at a time.
+
+        The first attempt laid every ability out flat and permanently. That is
+        a dock with the word "floating" attached -- as wide as its widest
+        content forever, whether or not you are choosing anything. A menu is the
+        opposite bargain: almost nothing on screen until you ask, and then
+        exactly the one list you asked for.
+
+        Mid-air rather than pinned to the top edge. A panel welded to the top of
+        the window reads as browser chrome; the same panel floating over the set
+        reads as part of the scene, and the band between the valance and the
+        cast is the one place on a stage that nothing else wants.
+
+        Everything here drives the same state the docked sheet does --
+        `chooseAbility`, `handleUpgrade`, `preview` -- so the two layouts cannot
+        disagree about what an ability is or does.
+      */}
+      {/*
+        Two different panels, because they answer two different questions.
+
+        An ACTION menu is for a Performer of yours that you have picked and can
+        still move: it is a list of things to do. Everything else -- an enemy,
+        or a character you are merely hovering in the roster -- is a question
+        about what something IS, and the answer to that is a card you read, not
+        a list you click. Offering "Abilities" over an enemy implied you could
+        cast theirs.
+      */}
+      {cinema && shownUnit && !previewing && shownUnit.side === 'player' && (
+        <div className="hud hud-skills">
+          <div className="panel skill-menu">
+            <span className="skill-who">
+              {shownUnit.def.name}
+              <em>
+                {shownUnit.hp}/{unitMaxHp(shownUnit)}
+              </em>
+            </span>
+            <button
+              className={menu === 'abilities' ? 'on' : ''}
+              onClick={() => setMenu((m) => (m === 'abilities' ? null : 'abilities'))}
+            >
+              Abilities
+            </button>
+            {shownUnit.side === 'player' && (
+              <button
+                className={menu === 'upgrades' ? 'on' : ''}
+                onClick={() => setMenu((m) => (m === 'upgrades' ? null : 'upgrades'))}
+              >
+                Upgrades
+              </button>
+            )}
+            {boardAction && shownUnit.side === 'player' && (
+              <button
+                className={sel.ability === boardAction ? 'on' : ''}
+                disabled={previewing || !canAct}
+                title="Pick dice, then a slot to trade places with"
+                onClick={() => {
+                  setMenu(null);
+                  chooseAbility(boardAction);
+                }}
+              >
+                Reposition
+              </button>
+            )}
+          </div>
+
+          {menu === 'abilities' && (
+            <ul className="panel skill-list">
+              {kitAbilities.map((a) => {
+                const cooling = shownUnit.cooldowns[a.name] ?? 0;
+                const ok = affordable.get(a.name) ?? false;
+                const ready = !previewing && matched.has(a.name);
+                return (
+                  /*
+                    Hover on the <li>, NOT the button.
+
+                    A disabled button swallows mouse events, so putting it on
+                    the control meant an ability only described itself once the
+                    dice already covered it -- exactly backwards, since the
+                    description is what tells you whether to spend them. The
+                    docked list has carried this note for a while; this bar was
+                    written fresh and walked straight into it.
+                  */
+                  <li
+                    key={a.name}
+                    onMouseEnter={() => setPreview(a)}
+                    onMouseLeave={() => setPreview(null)}
+                  >
+                    <button
+                      className={[
+                        'skill',
+                        !canAct || cooling || ok ? '' : 'locked',
+                        cooling ? 'cooling' : '',
+                        chainFires(liveArmed, a) ? 'chains' : '',
+                        sel.ability?.name === a.name ? 'active' : '',
+                        ready ? 'ready' : '',
+                      ]
+                        .filter(Boolean)
+                        .join(' ')}
+                      disabled={!canAct || !!cooling || !ready}
+                      onFocus={() => setPreview(a)}
+                      onBlur={() => setPreview(null)}
+                      onClick={() => chooseAbility(a)}
+                    >
+                      <span className="cost">
+                        {paysAsWildcard(a, shownUnit.freeCast) ? '*' : a.cost}
+                      </span>
+                      <span className="skill-name">{a.name}</span>
+                      {cooling > 0 && <span className="skill-cd">{cooling}</span>}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+
+          {menu === 'upgrades' && (
+            <ul className="panel skill-list tiers">
+              {(shownUnit.def.upgrades ?? []).map((u, i) => {
+                const bought = i < shownUnit.upgrades;
+                const isNext = i === shownUnit.upgrades;
+                return (
+                  <li
+                    key={u.name}
+                    onMouseEnter={() => setPreviewPassive(u.passive)}
+                    onMouseLeave={() => setPreviewPassive(null)}
+                  >
+                    <button
+                      className={[
+                        'skill',
+                        'tier',
+                        bought ? 'bought' : '',
+                        isNext && upgradeReady ? 'ready' : '',
+                        isNext && !upgradeMasks.length ? 'locked' : '',
+                        !bought && !isNext ? 'future' : '',
+                      ]
+                        .filter(Boolean)
+                        .join(' ')}
+                      disabled={
+                        previewing ||
+                        !isNext ||
+                        shownUnit.hasActed ||
+                        isPlanned(battle, shownUnit) ||
+                        !upgradeReady
+                      }
+                      onClick={() => {
+                        setMenu(null);
+                        handleUpgrade();
+                      }}
+                    >
+                      <span className="cost">{bought ? '✓' : u.cost}</span>
+                      <span className="skill-name">{u.name}</span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+
+          {/* The detail, only while something is pointed at. A strip that is
+              always there is a strip that is always covering something. */}
+          {(previewPassive || shownAbility) && (
+            <div className="panel skill-detail">
+              {previewPassive ? (
+                <>
+                  <strong>{previewPassive.name ?? previewPassive.kind}</strong>
+                  <p>{describePassive(previewPassive)}</p>
+                </>
+              ) : (
+                <>
+                  <strong>{shownAbility!.name}</strong>
+                  <p>{describeAbility(shownAbility!)}</p>
+                  <p className="sub">{describeCost(shownAbility!)}</p>
+                  {shownAbility!.trigger && chainFires(liveArmed, shownAbility!) && (
+                    <p className="sub chain">
+                      <SymbolIcon symbol={shownAbility!.symbol!} />
+                      <span>
+                        <strong>Chained:</strong> {shownAbility!.trigger.text}.
+                      </span>
+                    </p>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/*
+        The read-only card: everything about a character, for anyone you are
+        not currently commanding.
+
+        This is what hovering a roster row is FOR -- stats, what they take more
+        and less of, what is currently on them, and what they can do -- and it
+        is the only way to read an enemy at all. It stays out of the flow of
+        play: nothing here is clickable, so pointing at it cannot change the
+        turn.
+      */}
+      {cinema && shownUnit && (previewing || shownUnit.side === 'enemy') && (
+        <div
+          /*
+            On the side the character is NOT. Focus slides an ally left and an
+            enemy right, so the card takes whichever half of the screen the
+            camera just emptied.
+          */
+          className={`hud hud-skills info-card${shownUnit.side === 'player' ? '' : ' to-left'}`}
+        >
+          <div className="panel card">
+            <header>
+              <strong>{shownUnit.def.name}</strong>
+              <span className="dim">
+                {ROLE_LABEL[shownUnit.def.role]} · {rankLabel(shownUnit, battle)}
+              </span>
+            </header>
+
+            <div className="card-stats">
+              <span>
+                HP <b>{shownUnit.hp}</b>/{unitMaxHp(shownUnit)}
+              </span>
+              <span>
+                ATK <b>{stat(unitAttack(shownUnit))}</b>
+              </span>
+              <span>
+                P.DEF <b>{stat(effectiveDefense(shownUnit, 'physical'))}</b>
+              </span>
+              <span>
+                M.DEF <b>{stat(effectiveDefense(shownUnit, 'magical'))}</b>
+              </span>
+            </div>
+
+            {/* What they take more and less of -- the question you are asking
+                when you look at an enemy at all. */}
+            <Matchups def={shownUnit.def} />
+
+            {modifierGroups(shownUnit).length > 0 && (
+              <div className="mods">
+                {modifierGroups(shownUnit).map((g) => (
+                  <span key={g.ability} className={`mod ${g.good ? 'good' : 'bad'}`}>
+                    <strong>{g.ability}</strong>
+                    <span className="mod-parts">{g.parts.join(' · ')}</span>
+                    <em>{g.turns}t</em>
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {/*
+              The badge says what selects the ability, and the two sides are
+              selected by different dice.
+              
+              A Performer's is a COST: dice you choose to spend. A creature's is
+              a BAND on its own d20 -- `roll: [1, 15]` fires on a 1 through 15 --
+              which is not a price but odds, and is the only thing about an
+              enemy you can plan against. Both are the answer to "what makes
+              this happen", so both go in the same slot.
+              
+              `cost` is authored at 0 on every creature, so printing that was
+              showing a price for something that has none.
+            */}
+            <ul
+              className={`card-kit${
+                shownUnit.side === 'enemy' && !shownUnit.def.abilities.some((a) => a.roll)
+                  ? ' foe'
+                  : ''
+              }`}
+            >
+              {shownUnit.def.abilities
+                .filter((a) => a.kind !== 'move')
+                .map((a) => (
+                  <li key={a.name}>
+                    {shownUnit.side === 'player' ? (
+                      <span className="cost">{a.wildcard ? '✳' : a.cost}</span>
+                    ) : (
+                      a.roll && (
+                        <span
+                          className="band"
+                          title={`Fires on a d20 roll of ${a.roll[0]}–${a.roll[1]} — ${Math.round(
+                            ((a.roll[1] - a.roll[0] + 1) / 20) * 100,
+                          )}% of turns`}
+                        >
+                          {a.roll[0] === a.roll[1] ? a.roll[0] : `${a.roll[0]}–${a.roll[1]}`}
+                        </span>
+                      )
+                    )}
+                    <span className="skill-name">
+                      {a.name}
+                      {/* The mark, on every carrier. A symbol is what makes two
+                          abilities a pair, so leaving it off a read-only card
+                          hid the only thing that explains why you would cast
+                          these two in an order. */}
+                      {a.symbol && (
+                        <em className={`sym ${a.trigger ? 'has-trigger' : ''}`}>
+                          <SymbolIcon symbol={a.symbol} size={12} />
+                        </em>
+                      )}
+                    </span>
+                    <em>{describeAbility(a)}</em>
+                    {/* When it can be used at all -- the enemy's equivalent of
+                        a cost, and the only thing you can plan against. */}
+                    {shownUnit.side === 'enemy' && describeEnemyUsage(a) && (
+                      <em className="usage">{describeEnemyUsage(a)}</em>
+                    )}
+                    {a.trigger && (
+                      <em className="chained">
+                        <strong>Chained:</strong> {a.trigger.text}.
+                      </em>
+                    )}
+                  </li>
+                ))}
+            </ul>
+
+            {/*
+              The upgrade track, as a reading.
+
+              On your own Performer this is a menu you buy from; here it is
+              what somebody IS on their way to becoming -- which is exactly
+              what you want to know about an enemy, and about an ally you are
+              deciding whether to spend dice on. Bought tiers are ticked so the
+              card says where along the track they already are.
+            */}
+            {(shownUnit.def.upgrades ?? []).length > 0 && (
+              <ul className="card-kit tiers">
+                {(shownUnit.def.upgrades ?? []).map((u, i) => (
+                  <li key={u.name} className={i < shownUnit.upgrades ? 'bought' : ''}>
+                    <span className="cost">{i < shownUnit.upgrades ? '✓' : u.cost}</span>
+                    <span className="skill-name">{u.name}</span>
+                    <em>{describePassive(u.passive)}</em>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      )}
+
+      {cinema && <div className="hud hud-commit">{commitControls}</div>}
+
       {/* The turn's own voice, over the stage rather than in the dock.
           It belongs with the action it describes, and the dock is where you
           read numbers rather than watch. Only mounted while something is being
@@ -2971,6 +3438,7 @@ export function BattleScreen({
         <div className="panel tray">
           {battle.phase === 'player' && !busy ? (
             <DiceTray
+              awaiting={!!sel.ability && !matched.has(sel.ability.name)}
               dice={battle.dice}
               selected={sel.dice}
               onToggle={toggleDie}
@@ -3048,23 +3516,27 @@ export function BattleScreen({
             </ol>
           )}
 
-          <div className="controls">
-            <button className="primary" onClick={handleEndPhase} disabled={over || busy}>
-              {busy
-                ? 'Resolving…'
-                : battle.plan.length > 0
-                  ? `Commit ${battle.plan.length} action${battle.plan.length === 1 ? '' : 's'}`
-                  : 'End phase'}
-            </button>
-          </div>
+          {/* In cinema this same control is rendered on its own down at the
+              foot of the screen -- see `hud-commit`. One definition, two
+              homes, because a duplicate would be two buttons to keep in step
+              with the busy and outcome states. */}
+          {!cinema && commitControls}
 
-          {(sel.ability || error || diceOnly || awaitingDice) && (
+          {/* `awaitingDice` no longer opens this: the line it used to hold is
+              gone, so gating on it produced an empty bordered strip that
+              appeared the moment a Performer was picked and said nothing. */}
+          {(sel.ability || error || diceOnly) && (
             <div className="hints">
-              {awaitingDice && (
-                <span className="hint">
-                  Pick dice to choose an ability — an ability unlocks when your dice cover its cost
-                </span>
-              )}
+              {/*
+                No "pick dice to choose an ability" line any more.
+
+                It was the widest thing in the tray and it explained the one
+                rule the game teaches by itself: the dice are the only route to
+                an action, so anyone who picks a die learns it immediately, and
+                anyone who has played a turn already knows. A permanent sentence
+                restating the premise is a sentence the eye has to skip past
+                every turn for the rest of the game.
+              */}
               {diceOnly && (
                 <span className={`hint ${matched.size > 0 || upgradeReady ? 'ok' : 'warn'}`}>
                   <strong>{diceSum}</strong>
@@ -3129,6 +3601,57 @@ export function BattleScreen({
           onClose={() => setRosterOpen(false)}
         />
       )}
+    </div>
+  );
+}
+
+/**
+ * What a character takes more and less of.
+ *
+ * Its own component because two panels ask it now -- the docked sheet and
+ * cinema's read-only card -- and a second copy of "which resistances are
+ * weaknesses" would be a second thing to keep in step with the element wheel.
+ *
+ * Shown even when empty: "no elemental weakness" is a real property and worth
+ * stating. A blank space reads as the panel failing to load rather than as the
+ * answer.
+ */
+function Matchups({ def }: { def: CharacterDef }) {
+  const entries = Object.entries(def.resistances ?? {}) as [Element, number][];
+  const weak = entries.filter(([, v]) => v < 0).sort((a, b) => a[1] - b[1]);
+  const resist = entries.filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+  if (!weak.length && !resist.length) {
+    return (
+      <div className="matchups">
+        <span className="dim">no elemental weakness or resistance</span>
+      </div>
+    );
+  }
+  const row = (label: string, list: [Element, number][], cls: string) =>
+    list.length > 0 && (
+      <div className={`matchup-row ${cls}`}>
+        <span className="lbl">{label}</span>
+        {list.map(([el, v]) => (
+          // The glyph carries the element, the number the size of it. `title`
+          // keeps the name reachable for anyone who does not read the shape.
+          <span
+            key={el}
+            className="chip"
+            style={{ borderColor: ELEMENT_COLOR[el] }}
+            title={`${el} — ${v < 0 ? `takes ${-v}% more` : `takes ${v}% less`}`}
+          >
+            <span className="glyph" style={{ color: ELEMENT_COLOR[el] }}>
+              <ElementIcon element={el} />
+            </span>
+            <em>{v < 0 ? `+${-v}%` : `−${v}%`}</em>
+          </span>
+        ))}
+      </div>
+    );
+  return (
+    <div className="matchups">
+      {row('weak', weak, 'weak')}
+      {row('resists', resist, 'resist')}
     </div>
   );
 }
@@ -3589,6 +4112,17 @@ function UnitChip({
  * on.
  */
 function DiceTray({
+  /**
+   * An ability is chosen and its cost is not covered yet, so the dice are what
+   * the turn is waiting on.
+   *
+   * Without this, picking Reposition looked like nothing happened: the prompt
+   * to choose dice was a line of text in the tray, and the tray is the one
+   * thing a player is not looking at while deciding where to stand. Lighting
+   * the dice themselves says "your move is here" at the place the move has to
+   * be made.
+   */
+  awaiting = false,
   dice,
   selected,
   onToggle,
@@ -3602,9 +4136,10 @@ function DiceTray({
   disabled: boolean;
   roll: { phase: 'pending' | 'tumbling' | 'settled'; face: number }[] | null;
   nameFor: (id: string) => string;
+  awaiting?: boolean;
 }) {
   return (
-    <div className="dice">
+    <div className={`dice${awaiting ? ' awaiting' : ''}`}>
       {dice.map((die, i) => {
         const anim = roll?.[i];
         // While a die is in the air it shows a random face, not its real value.

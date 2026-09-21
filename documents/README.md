@@ -158,6 +158,91 @@ not progress, and wiping one should never touch the other. Entries are validated
 trusted — the file outlives the roster it was written against, and a member naming a since-renamed
 character is dropped rather than allowed to crash the party build.
 
+### Two layouts: the dock, and cinema
+
+The battle screen has **two arrangements of the same components**, toggled by `▣ Cinema` in the top
+bar and remembered in `localStorage`. Nothing is rewritten between them — the same tray, sheet,
+rosters and controls, placed differently — so the two cannot drift apart in what they say, only in
+where they say it.
+
+**Docked** is the safe arrangement: two grid rows, the stage on top and a 37vh band below holding
+everything else. Nothing ever overlaps the artwork, and every number has a fixed place to live. It
+costs the picture a third of the screen on every fight.
+
+**Cinema** gives the whole window to the stage and floats the panels. That only works if they earn
+their space, and most of the work below is about what "earn" turned out to mean.
+
+#### What is on screen, and when
+
+| | docked | cinema |
+| --- | --- | --- |
+| dice | pyramid in the bottom band | one slim row under the top bar; hidden while focusing |
+| the selected Performer | full sheet in the dock | a **menu**: Abilities · Upgrades · Reposition |
+| an enemy, or a hovered roster row | the same sheet | a read-only **card** |
+| end phase | pinned in the tray | alone at the bottom centre |
+| the opposite roster | always | hidden while focusing |
+
+**A menu, not a flattened sheet.** The first cinema attempt floated the whole sheet, and it failed
+twice over: 46vw of panel sat on the cast, and the ability list was below its own fold — so it
+covered the characters *and* hid the one thing needed every turn. A dock can afford to show a
+Performer's whole sheet at once; a floating layer has to earn every pixel, and what it has to earn
+is the list you click. Everything else is one hover away.
+
+**An action menu and an info card are different objects.** A menu is a list of things to *do*, which
+only makes sense for a Performer of yours that you have picked and who can still move. An enemy or a
+hovered character is a question about what something *is*, and the answer is a card you read.
+Offering "Abilities" over an enemy implied you could cast theirs.
+
+**The card shows a creature's d20 band where a Performer's cost goes.** `Ability.roll` — `[1, 15]`
+fires on a 1 through 15 — is what selects an enemy ability, and `cost` is authored at 0 on every
+creature. Printing the cost showed a price for something that has none. The band is a rounded
+capsule rather than a square chip, because the two answer the same question with different kinds of
+answer: a price you choose to pay, versus odds you read.
+
+#### Four things that took more than one try
+
+**Where the panel goes.** It chased the character through four versions — the slot's rect, a
+per-frame re-measure to survive the camera, a fixed anchor on the sprite to survive pose changes
+(each clip carries its own `placement.scale`, so a Performer cycling idle stances dragged the menu
+with every switch). All of them shared one flaw: *a panel beside the character is a panel on the
+character*, because once focus pushes in, the character **is** the frame. The answer was to stop
+following. Focus slides an ally left and an enemy right, so the panel simply lives in the half that
+leaves empty, just inside the centre line. No anchor, no frame loop, nothing to drift.
+
+**The focus offset, and a trap the code already documented.** `LOOK_ROOM`'s comment says the camera
+offset is applied *before* the scale, so a fraction written there is multiplied by the zoom. A flat
+`0.2` therefore became **113% of the frame** at the ~5.6× focus zoom characters actually get, pushing
+them clean off screen. `CARD_ROOM` is divided by the zoom at the point of use, so the number means
+what it says: 16% of the frame, at any zoom.
+
+**The paper edge.** The sticker rim — card, ink line, white edge, matching the sprites — was tried as
+a spread `box-shadow` and then as an `outline`. Both live *outside* the border box, where a
+neighbouring panel paints over them: the white showed at the corners, where nothing is adjacent, and
+vanished along the sides. Nothing outside the border box is reliable in a layout made of panels
+sitting against each other. The white is now the **border** and the ink line an **inset** shadow,
+both part of the element's own painting, leaving `box-shadow` free to do only the lifting.
+
+**Nothing may move under the cursor.** Two separate versions of the same bug. The stack hung from
+its bottom, so opening a list pushed the menu *upward* out from under the pointer; and the hover
+description was a flow sibling, so it grew the stack and slid the next row under the cursor,
+changing the description to something never asked for. The stack is now anchored by its top and the
+description is absolutely positioned.
+
+#### Cinema changes one rule of play
+
+**Either order.** The dock is dice-first: you roll, affordable rows light up, you click one —
+`chooseAbility` refuses anything the dice do not cover, and `toggleDie` clears the chosen ability on
+every toggle. Cinema asks the opposite: "Reposition" is a menu item you click because you have
+decided to move, and only then work out which die to spend. Under the docked rule that click did
+nothing at all — no error, no highlight, no hint that dice were wanted. Both guards are skipped in
+cinema, which is safe because neither was ever what made spending correct: `checkAction` validates
+the dice when the action is queued, and always did. The dice then **pulse gold** while an ability is
+waiting on them, because the prompt belongs on the control the answer is given with.
+
+**A readied Performer is not selectable.** Their turn is decided; opening their menu offers a second
+action they cannot take. Removing the action from the queue makes them available again — the same
+gesture as changing your mind about it.
+
 **The battle screen is a stage with two flanking rosters, over one full-width dock.**
 
 - **The rosters sit in the darkened surround** either side of the letterboxed backdrop, centred on
