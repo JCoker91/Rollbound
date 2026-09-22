@@ -345,7 +345,7 @@ export const ROSTER: CharacterDef[] = [
         symbol: 'thorn', name: 'Hibernate', cost: 2, kind: 'heal', scope: 'self', range: 1, power: 0.25,
         // Two regen CHARGES, so "2 turns" is two heals whenever it lands. See
         // `Statuses.regen` for why a duration could not promise that.
-        trigger: { text: 'also grants him regen for 2 turns', effects: [{ do: 'regen', turns: 2, on: 'self' }] },
+        trigger: { text: 'Also grants the caster regen for 2 turns', effects: [{ do: 'regen', turns: 2, on: 'self' }] },
         effects: [
           /*
            * A QUARTER OF HIS OWN BAR, not a multiple of his ATK.
@@ -381,7 +381,7 @@ export const ROSTER: CharacterDef[] = [
          * too is a CONDITIONAL patch the team has to set up, never a permanent
          * one, which is exactly the shape a trigger should have.
          */
-        trigger: { text: 'the guard answers magic as well as steel', guardAlso: 'magical' },
+        trigger: { text: 'Anyone hitting them with a magical attack takes 1 frost as well', guardAlso: 'magical' },
         effects: [
           {
             do: 'modify', stats: ['physicalDefense', 'magicalDefense'],
@@ -430,7 +430,7 @@ export const ROSTER: CharacterDef[] = [
          * number, and the fourth stack is the half that matters: against a bar
          * of 6 it is the difference between being 3 short and being 2.
          */
-        trigger: { text: 'strikes half again as hard and applies a fourth frost', empower: 0.3, deepen: 1 },
+        trigger: { text: 'Deals 90% of ATK instead of 60%, and applies 4 frost instead of 3', empower: 0.3, deepen: 1 },
         damageType: 'magical', element: 'water', range: 3, scope: 'all', power: 0.6,
         effects: [
           { do: 'damage', power: 0.6 },
@@ -585,7 +585,7 @@ export const ROSTER: CharacterDef[] = [
           { do: 'modify', stats: ['attack'], percent: -25, of: 'targetBase', turns: 3 },
         ],
         trigger: {
-          text: 'the shred bites deeper',
+          text: 'Reduces its ATK by 40% instead of 25%',
           amplify: -15,
         },
       },
@@ -603,7 +603,7 @@ export const ROSTER: CharacterDef[] = [
         damageType: 'physical', range: 2, power: 0,
         effects: [{ do: 'taunt' }],
         trigger: {
-          text: 'he braces for it, taking less damage this round',
+          text: "Also raises the caster's P.DEF and M.DEF by 30% of their own base stats for 1 turn",
           effects: [
             {
               do: 'modify', stats: ['physicalDefense', 'magicalDefense'],
@@ -636,7 +636,7 @@ export const ROSTER: CharacterDef[] = [
         // instruction -- brace behind Challenge, or hit harder with Reckoning.
         // Same arming, opposite answers.
         trigger: {
-          text: 'the blow lands with everything behind it',
+          text: 'Deals a further 30% of ATK',
           effects: [{ do: 'damage', power: 0.3 }],
         },
       },
@@ -763,7 +763,7 @@ export const ROSTER: CharacterDef[] = [
         // Amplify rather than an appended `modify`: modifiers are keyed by
         // ability name, so a second modify from Sunder would REFRESH the shred
         // instead of deepening it. -25 becomes -40.
-        trigger: { text: 'shreds 15% deeper', amplify: -15 },
+        trigger: { text: 'Reduces its P.DEF by 40% instead of 25%', amplify: -15 },
         damageType: 'physical', range: 2, power: 1.1,
         effects: [
           { do: 'damage', power: 1.1 },
@@ -780,7 +780,7 @@ export const ROSTER: CharacterDef[] = [
         // The "convert to whole-team" trigger BATTLE_DESIGN.md §4 warns is an
         // order of magnitude above the others -- which is exactly why it sits
         // on a cost-4 ability with no damage on it, per that section's advice.
-        trigger: { text: 'buffs the whole team instead of one ally', retarget: 'allies' },
+        trigger: { text: 'Buffs the whole party instead of one ally', retarget: 'allies' },
         effects: [
           {
             do: 'modify',
@@ -796,11 +796,34 @@ export const ROSTER: CharacterDef[] = [
         // Off his own BASE rather than his current stats, deliberately. Reading
         // current would let a recast compound on itself; base keeps the number
         // honest while still handing Rally a bigger figure to copy.
-        // Carries `lantern` but has NO trigger. Triggers never sit on the ult:
-        // it is already his big turn, and making it bigger when it chains would
-        // collapse the decision into "save the ult for a chain".
+        /*
+         * The ult DOES chain, which reverses an earlier call.
+         *
+         * It used to carry `lantern` with no trigger, on the argument that a
+         * chained ultimate collapses the decision into "save the ult for a
+         * chain". That argument assumed the chain was a free rider; at cost 10
+         * on a 3-turn cooldown it is not. Setting it up means spending a whole
+         * other action on a lantern first, in the same round, before an
+         * ability you get to use roughly twice a fight -- which is a real bill
+         * and a real decision rather than an obvious yes.
+         *
+         * Note what it does to the pair. Benjamin's two lantern abilities now
+         * BOTH carry triggers, so neither arms the other for free from a cold
+         * start -- but either one arms the mark for the other, so Rally into
+         * Perfect Form and Perfect Form into Rally both pay off. He is the only
+         * Performer whose symbol pair reads in both directions; every other one
+         * is a carrier and a trigger.
+         */
         name: 'Perfect Form', cost: 10, kind: 'attack', ultimate: true,
         symbol: 'lantern',
+        // +0.5 power and +5 on the modifier: 250% instead of 200%, and a 25%
+        // self-buff instead of 20%. Both written as deltas rather than as new
+        // figures so retuning the base ability carries the chain along with it.
+        trigger: {
+          text: 'Deals 250% of ATK instead of 200%, and the self-buff is 25% instead of 20%',
+          empower: 0.5,
+          amplify: 5,
+        },
         damageType: 'physical', range: 2, power: 2.0,
         effects: [
           {
@@ -1001,7 +1024,7 @@ export const ROSTER: CharacterDef[] = [
          * budget is one, and a chain that is strictly better in every dimension
          * with nothing given up.
          */
-        trigger: { text: 'applies a second frost to every enemy', deepen: 1 },
+        trigger: { text: 'Applies 2 frost to every enemy instead of 1', deepen: 1 },
         // Damage before frost, for the reason spelled out on Frostbolt.
         effects: [
           { do: 'damage', power: 0.6 },
@@ -1035,7 +1058,7 @@ export const ROSTER: CharacterDef[] = [
         // `empower` raises the frozen case as well as the base, so the chain is
         // worth the same 30% against the targets this ability is FOR; see
         // `triggeredEffects`.
-        trigger: { text: 'strikes 30% harder', empower: 0.3 },
+        trigger: { text: 'Deals 180% of ATK instead of 150%, or 230% instead of 200% against a frozen target', empower: 0.3 },
         // Written as a list because a trigger's magnitudes operate on one.
         effects: [{ do: 'damage', power: 1.5, versus: { frozen: 2.0 } }],
       },
@@ -1088,7 +1111,7 @@ export const ROSTER: CharacterDef[] = [
          * already on the board -- where the band's +30% examples are
          * conditional only on the symbol.
          */
-        trigger: { text: 'each frost stack adds 35% instead of 25%', sharpen: 0.1 },
+        trigger: { text: 'Each frost stack adds 35% instead of 25%', sharpen: 0.1 },
         effects: [{ do: 'damage', power: 1.0, perFrost: 0.25 }],
       },
     ],
@@ -1215,7 +1238,7 @@ export const ROSTER: CharacterDef[] = [
       {
         symbol: 'thorn', name: 'Verdant Grace', cost: 4, kind: 'heal',
         power: 0.7, element: 'earth', range: 3,
-        trigger: { text: 'the roots run deeper, for two more turns', prolong: 2 },
+        trigger: { text: 'Their regen lasts 4 turns instead of 2', prolong: 2 },
         effects: [
           { do: 'heal', power: 0.7 },
           { do: 'regen', turns: 2 },
@@ -1242,7 +1265,7 @@ export const ROSTER: CharacterDef[] = [
       {
         symbol: 'tide', name: 'Bedrock', cost: 7, kind: 'heal',
         power: 0, element: 'earth', range: 3, scope: 'self',
-        trigger: { text: 'the wind is answered as well as the stone',
+        trigger: { text: "Raises the whole party's Wind resistance by 50% for 2 turns as well",
                    effects: [{ do: 'resist', element: 'wind', percent: 50, turns: 2, on: 'allies' }] },
         effects: [{ do: 'resist', element: 'earth', percent: 50, turns: 2, on: 'allies' }],
       },
@@ -1265,7 +1288,7 @@ export const ROSTER: CharacterDef[] = [
       {
         symbol: 'tide', name: 'Hallowed Grove', cost: 11, kind: 'heal', ultimate: true,
         power: 0, element: 'earth', range: 3, scope: 'self',
-        trigger: { text: 'the grove stands two turns longer', prolong: 2 },
+        trigger: { text: 'The regen and the damage reduction last 5 turns instead of 3', prolong: 2 },
         effects: [
           { do: 'regen', turns: 3, on: 'allies' },
           { do: 'ward', percent: 20, turns: 3, on: 'allies' },
@@ -1359,7 +1382,7 @@ export const ROSTER: CharacterDef[] = [
          */
         name: 'Bulwark', cost: 5, kind: 'buff', scope: 'self', range: 3, power: 20,
         symbol: 'anvil',
-        trigger: { text: 'guards the whole team instead of himself', retarget: 'allies' },
+        trigger: { text: 'Guards the whole party instead of only the caster', retarget: 'allies' },
         effects: [
           {
             do: 'modify',
@@ -1373,7 +1396,7 @@ export const ROSTER: CharacterDef[] = [
         // shred is for whoever acts after him.
         name: 'Molten Slag', cost: 8, kind: 'attack',
         symbol: 'ember',
-        trigger: { text: 'shreds 10% deeper', amplify: -10 },
+        trigger: { text: 'Reduces its M.DEF by 30% instead of 20%', amplify: -10 },
         damageType: 'magical', element: 'fire', range: 2, power: 1.15,
         effects: [
           { do: 'damage', power: 1.15 },

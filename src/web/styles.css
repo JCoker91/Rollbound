@@ -88,6 +88,7 @@ body {
 .battle .stage,
 .battle .stage-vignette,
 .battle .hud-top,
+.battle .hud-tally,
 .battle .hud-centre {
   grid-column: 1 / -1;
   grid-row: 1;
@@ -754,6 +755,8 @@ body {
  * colour change nobody notices.
  */
 .queue .sym,
+.chain-stack .sym,
+.skill .sym,
 .ability .sym {
   display: inline-flex;
   align-items: center;
@@ -774,6 +777,7 @@ body {
  * filled chip means this ability does something extra when it chains; an
  * outlined one only ever arms for somebody else.
  */
+.skill .sym.has-trigger,
 .ability .sym.has-trigger {
   border-color: rgba(196, 154, 60, 0.75);
   background: rgba(196, 154, 60, 0.16);
@@ -781,6 +785,8 @@ body {
 }
 
 .queue .sym.on,
+.chain-stack .sym.on,
+.skill .sym.on,
 .ability .sym.on {
   border-color: #c49a3c;
   background: rgba(196, 154, 60, 0.22);
@@ -819,12 +825,129 @@ body {
   position: absolute;
   inset: -3px;
   border-radius: 8px;
-  border: 1px solid #c49a3c;
+  border: 2px solid #e0b455;
   box-shadow:
-    0 0 10px rgba(196, 154, 60, 0.45),
-    inset 0 0 10px rgba(196, 154, 60, 0.16);
+    0 0 14px rgba(224, 180, 85, 0.6),
+    inset 0 0 12px rgba(196, 154, 60, 0.22);
   /* Purely a mark. The button underneath has to stay clickable through it. */
   pointer-events: none;
+  animation: chain-live 1.6s ease-in-out infinite;
+}
+
+/*
+ * A live chain BREATHES.
+ *
+ * A static ring says "this row is a bit different"; the thing it actually has
+ * to say is "this is available right now and it will not be next round". Every
+ * other gold state on this screen -- `ready`, the cost badge, the ability
+ * border -- is also static gold, so a still ring was one more gold edge in a
+ * screen full of them and read as decoration.
+ *
+ * Slow and shallow on purpose: 1.6s and a 40% swing in the glow, not a flash.
+ * It has to survive being on screen for a whole turn without becoming the thing
+ * you are trying to ignore while you read the row underneath it.
+ */
+@keyframes chain-live {
+  0%,
+  100% {
+    box-shadow:
+      0 0 10px rgba(224, 180, 85, 0.4),
+      inset 0 0 12px rgba(196, 154, 60, 0.16);
+  }
+  50% {
+    box-shadow:
+      0 0 20px rgba(224, 180, 85, 0.8),
+      inset 0 0 14px rgba(196, 154, 60, 0.3);
+  }
+}
+
+/* The mark that names the chain pulses with the ring that announces it, so the
+   two read as one signal rather than as two gold things that happen to agree. */
+.ability.chains .sym.on,
+.skill.chains .sym.on,
+.chain-mark.live {
+  animation: chain-chip 1.6s ease-in-out infinite;
+}
+
+@keyframes chain-chip {
+  0%,
+  100% {
+    box-shadow: 0 0 0 2px rgba(196, 154, 60, 0.18);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(196, 154, 60, 0.4);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /*
+   * No breathing, but not back to the quiet ring either -- the prominence is
+   * the point and it has to survive the preference. Held at the bright end of
+   * the pulse instead of animated to it.
+   */
+  .ability.chains::before,
+  .skill.chains::before,
+  .ability.chains .sym.on,
+  .skill.chains .sym.on,
+  .chain-mark.live {
+    animation: none;
+  }
+
+  .ability.chains::before {
+    box-shadow:
+      0 0 18px rgba(224, 180, 85, 0.7),
+      inset 0 0 14px rgba(196, 154, 60, 0.26);
+  }
+
+  /* The paper ring keeps its own gold; see `chain-live-paper`. */
+  .skill.chains::before {
+    box-shadow: 0 0 16px rgba(184, 134, 42, 0.7);
+  }
+}
+
+/*
+ * The chain marks in play this round, in the status bar.
+ *
+ * Two states, and the difference is the decision. A SOLID mark is out --
+ * something has already resolved carrying it, so anything chained to it fires
+ * the moment it is cast. A DASHED one is only promised by an action sitting in
+ * the queue: true in the order you have arranged, and false again the moment
+ * you move that action below the ability meant to use it.
+ *
+ * Dashed rather than faded, because faded reads as "less important" and this is
+ * not less important -- it is conditional, which is a different thing and the
+ * one the reorder buttons act on.
+ */
+.chain-stack {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  /* Its own left margin rather than the bar's gap, so it reads as attached to
+     the turn count it qualifies rather than as another field beside it. */
+  margin-left: -6px;
+}
+
+.chain-stack .sym {
+  margin-left: 0;
+}
+
+/*
+ * Right-aligned, so the marks form a column down the menu.
+ *
+ * "Which two of these four chain together" is a question you answer by
+ * scanning, and a mark that floats to wherever each name happens to end is one
+ * you have to read for instead. The flex gap handles the spacing, so the
+ * shared chip rule's left margin is dropped here.
+ */
+.skill .sym {
+  margin-left: auto;
+}
+
+.chain-stack .sym.pending {
+  border-style: dashed;
+  border-color: rgba(196, 154, 60, 0.6);
+  color: #c9ab6d;
+  background: none;
 }
 
 /* The trigger text, under the ability's own meta line. Gold, small, and only
@@ -836,24 +959,111 @@ body {
   line-height: 1.3;
 }
 
-/* The mark, then only what the mark cannot say. */
-.rules .sub.chain {
-  display: flex;
-  /* Top, not centre: the trigger text wraps to two lines and a centred mark
-     drifts down beside it, reading as a bullet that has come loose. */
-  align-items: flex-start;
-  gap: 7px;
+/*
+ * The chain mark, in the corner of the rules box.
+ *
+ * A label on the card rather than a line of the rules -- the way a suit sits in
+ * the corner of a playing card -- so it reads as "what kind of thing is this"
+ * before the sentence underneath is read at all. At the bottom of the box it
+ * was competing with the chained clause for the same line and losing to it.
+ *
+ * Three states, the same three the ability rows use, so a mark means the same
+ * thing wherever it is drawn: outlined carries it, filled has a trigger to
+ * spend it on, lit means casting this now fires it.
+ */
+.chain-mark {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: inline-flex;
+  padding: 3px 5px;
+  border-radius: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.chain-mark.has-trigger {
+  border-color: rgba(196, 154, 60, 0.75);
+  background: rgba(196, 154, 60, 0.16);
+  color: #e6c47a;
+}
+
+.chain-mark.live {
+  border-color: #f0d089;
+  background: rgba(196, 154, 60, 0.34);
+  color: #ffe6ac;
+  box-shadow: 0 0 0 3px rgba(196, 154, 60, 0.22);
+}
+
+/* Cinema's panels are cream, and the dock's gold is tuned against near black. */
+.battle.cinema .chain-mark {
+  border-color: var(--paper-line);
+  color: var(--paper-dim);
+}
+
+.battle.cinema .chain-mark.has-trigger {
+  border-color: rgba(154, 111, 31, 0.7);
+  background: rgba(196, 154, 60, 0.22);
+  color: #8a6318;
+}
+
+.battle.cinema .chain-mark.live {
+  border-color: #8a6318;
+  background: rgba(196, 154, 60, 0.45);
+  color: #5e410c;
+  box-shadow: 0 0 0 3px rgba(154, 111, 31, 0.28);
+}
+
+/* The title sits left of the mark rather than under it. */
+.rules strong,
+.skill-detail > strong {
+  padding-right: 34px;
+}
+
+/*
+ * The mark, then only what the mark cannot say.
+ *
+ * NOT scoped to `.rules`, which is what it used to be. The docked inspect panel
+ * wraps its lines in one; cinema's detail strip does not, so the same paragraph
+ * came out as an unstyled icon and a run of body text there -- no gold, no
+ * alignment, nothing marking it as being about chains at all. Two classes is
+ * specific enough to stand on its own, and standing on its own is what makes it
+ * the same line in both layouts.
+ */
+.sub.chain {
   color: #d8b968;
 }
 
-.rules .sub.chain svg {
-  flex: 0 0 auto;
-  margin-top: 1px;
-}
-
-.rules .sub.chain strong {
+.sub.chain strong {
   color: #f0d089;
   font-weight: 700;
+}
+
+/*
+ * The chain is live RIGHT NOW: casting this fires the trigger.
+ *
+ * The unlit line is a fact about the ability and reads as reference; this is a
+ * fact about the board and reads as an opportunity. Same gold, turned up, with
+ * the mark given a lit chip of its own so the difference survives being
+ * glanced at rather than read.
+ */
+.sub.chain.live {
+  color: #f0d089;
+}
+
+/* Cinema paints every `.sub` in a skills panel brown, at a specificity this
+   cannot reach from two classes -- so the chain line asks for its gold back by
+   name, darkened to hold against cream the same way the chips are. */
+.battle.cinema .hud-skills .sub.chain {
+  color: #8a6318;
+}
+
+.battle.cinema .hud-skills .sub.chain strong {
+  color: #5e410c;
+}
+
+.battle.cinema .hud-skills .sub.chain.live {
+  color: #5e410c;
 }
 
 .queue .ord {
@@ -1062,7 +1272,8 @@ body {
   z-index: 260;
   /* Duration comes from the impact, so one effect sheet can snap in one place
      and linger in another. */
-  animation: burst-pop var(--fx-ms, 380ms) steps(var(--fx-frames, 3)) 1 forwards;
+  animation: burst-pop calc(var(--fx-ms, 380ms) * var(--slow, 1)) steps(var(--fx-frames, 3)) 1
+    forwards;
 }
 
 @keyframes burst-pop {
@@ -1120,7 +1331,7 @@ body {
   /* Deliberately SHORTER than the spin. The jolt is the moment of contact and
      wants to be over quickly; stretched across the whole tumble it reads as the
      character being shoved slowly rather than struck. */
-  animation: stage-flinch 520ms ease-out;
+  animation: stage-flinch calc(520ms * var(--slow, 1)) ease-out;
 }
 
 @keyframes stage-flinch {
@@ -1146,7 +1357,7 @@ body {
 .battle .sprite-unit.hurt .hit-spin {
   /* Matches PAIN_MS in BattleScreen, so the tumble ends exactly when the pain
      pose is dropped rather than still turning as the sprite swaps back. */
-  animation: paper-spin 1000ms linear both;
+  animation: paper-spin calc(1000ms * var(--slow, 1)) linear both;
 }
 
 /*
@@ -1313,8 +1524,17 @@ body {
  * The hold in the middle is where the attack clip plays, which is why the
  * easing is split rather than one curve end to end.
  */
-/* Duration and the two hold points come from the clip -- see `beatOf`. */
-.battle .unit.striking,
+/*
+ * Duration and the two hold points come from the clip -- see `beatOf`.
+ *
+ * `:not(.in-place)` exempts a reposition. It is performing -- it wants the
+ * `striking` stance, the clip and the exemption from the spent dim, all of
+ * which hang off that class -- but the one thing it must not do is walk to the
+ * downstage mark, because the slot it is standing in is ALREADY walking it
+ * somewhere. Two journeys for one decision, and the one the player asked for
+ * buried under the one they did not.
+ */
+.battle .unit.striking:not(.in-place),
 /*
  * The caster's own effects, walking out with him.
  *
@@ -1324,7 +1544,7 @@ body {
  * one line with `.unit` rather than copied so the two can never be retimed
  * apart, which would show as an effect sliding off the character carrying it.
  */
-.battle .caster-fx.striking {
+.battle .caster-fx.striking:not(.in-place) {
   animation: stage-strike var(--beat, 1150ms) cubic-bezier(0.33, 0, 0.2, 1);
 }
 
@@ -1412,6 +1632,31 @@ body {
   inset: 0;
   align-items: center;
   justify-content: center;
+}
+
+/*
+ * The playback-speed control: fast-forward triangles, and the exact figure.
+ *
+ * Fixed width on purpose. The label steps 1x -> 1.5x -> 2x and the glyph grows
+ * with it, so a button sized to its content would resize under the cursor
+ * between one click and the next -- on a control whose whole point is that you
+ * press it repeatedly.
+ */
+.battle .bar button.speed {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: center;
+  min-width: 78px;
+  font-variant-numeric: tabular-nums;
+}
+
+.battle .bar button.speed .speed-glyph {
+  font-size: 10px;
+  /* Tucked together so three triangles read as one fast-forward mark rather
+     than as three separate arrows. */
+  letter-spacing: -1.5px;
+  opacity: 0.8;
 }
 
 /* Frosted so the board stays readable underneath. */
@@ -2272,6 +2517,7 @@ button.wait:hover {
 }
 
 .rules {
+  position: relative;
   margin-top: 12px;
   padding: 10px;
   border-radius: 6px;
@@ -2423,6 +2669,120 @@ select {
   justify-content: center;
   padding: 0 0 14px;
   z-index: 14;
+}
+
+/*
+ * What the whole action came to, over the middle of the stage.
+ *
+ * A separate readout from the floaters and not a bigger one of them. A floater
+ * is anchored to a unit because it is describing something that happened to
+ * that unit; this is describing the ACTION, which happened to the board -- so
+ * it is placed against the stage rather than against anybody standing on it.
+ *
+ * Only ever on screen for a multi-hit or an area ability. A single strike puts
+ * its whole total in one floater already, and restating it larger a few inches
+ * away would read as two different numbers before it read as one.
+ */
+.battle .hud-tally {
+  /* Laid over the stage cell and centred in it, the same way `.hud-centre`
+     places the outcome card -- the two are the same kind of thing, something
+     said about the board rather than about a place on it. */
+  position: absolute;
+  inset: 0;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  /* Over the stage and the narration, under the floaters: the per-blow numbers
+     are still in the air when this arrives and they are what it is summing. */
+  z-index: 16;
+}
+
+.battle .hud-tally > * {
+  /* `.hud > *` turns clicks back on for panels you interact with; this is a
+     readout in the middle of the stage, and for the two seconds it is up it
+     would otherwise swallow the click on bare boards that puts everything
+     down. */
+  pointer-events: none;
+  /* Lifted clear of the downstage mark. The performer is standing there with
+     their clip still finishing when this lands, and the point of the number is
+     that you can read it without looking away from what just happened -- near
+     them, not on them. */
+  margin-bottom: 22vh;
+}
+
+.battle .tally {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 10px 22px 12px;
+  border-radius: 14px;
+  background: var(--paper);
+  border: 3px solid #fff;
+  box-shadow:
+    inset 0 0 0 2px var(--paper-edge),
+    0 10px 26px rgba(0, 0, 0, 0.45);
+  animation: tally-pop calc(1900ms * var(--slow, 1)) ease-out forwards;
+}
+
+.battle .tally b {
+  font-size: 46px;
+  line-height: 1;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  /* The floater damage red, so the big number and the small ones it adds up
+     are obviously the same quantity. */
+  color: #ff6a5c;
+  -webkit-text-stroke: 1px rgba(0, 0, 0, 0.35);
+}
+
+.battle .tally span {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--paper-dim);
+}
+
+/*
+ * In, hold, out -- all in one animation, because the element is unmounted on
+ * `TALLY_MS` and a fade that lived in JS would need a second timer agreeing
+ * with the first. The hold is most of it: this is meant to be read, not
+ * glimpsed.
+ */
+@keyframes tally-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+  9% {
+    opacity: 1;
+    transform: scale(1.06);
+  }
+  16% {
+    transform: scale(1);
+  }
+  78% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The scale is the part that moves; the fade is what makes it legible as
+     arriving and leaving, so only the first goes. */
+  .battle .tally {
+    animation: tally-fade calc(1900ms * var(--slow, 1)) ease-out forwards;
+  }
+
+  @keyframes tally-fade {
+    0% { opacity: 0; }
+    9%, 78% { opacity: 1; }
+    100% { opacity: 0; }
+  }
 }
 
 /*
@@ -2978,7 +3338,7 @@ select {
  * overlay so it works identically on an <img> sprite and an inline SVG badge.
  */
 .unit.hurt {
-  animation: flinch 420ms ease-out;
+  animation: flinch calc(420ms * var(--slow, 1)) ease-out;
 }
 
 @keyframes flinch {
@@ -3049,7 +3409,7 @@ select {
     1px 0 0 #05070b,
     -1px 0 0 #05070b,
     0 2px 5px rgba(0, 0, 0, 0.85);
-  animation: float-up 1.4s ease-out forwards;
+  animation: float-up calc(1.4s * var(--slow, 1)) ease-out forwards;
 }
 
 .floater.damage {
@@ -3113,7 +3473,7 @@ select {
   font-size: 23px;
   letter-spacing: 0.01em;
   -webkit-text-stroke-width: 4px;
-  animation: float-up-crit 1.5s ease-out forwards;
+  animation: float-up-crit calc(1.5s * var(--slow, 1)) ease-out forwards;
 }
 
 .floater.crit.damage:not([class*='el-']) {
@@ -3198,11 +3558,11 @@ select {
 
 @media (prefers-reduced-motion: reduce) {
   .floater {
-    animation: float-up 1.4s linear forwards;
+    animation: float-up calc(1.4s * var(--slow, 1)) linear forwards;
   }
 
   .floater.crit {
-    animation: float-up-crit 1.5s linear forwards;
+    animation: float-up-crit calc(1.5s * var(--slow, 1)) linear forwards;
   }
 }
 
@@ -3987,7 +4347,7 @@ select {
  */
 @media (prefers-reduced-motion: reduce) {
   .battle .sprite-unit.hurt .hit-spin {
-    animation: paper-spin-still 1000ms ease-out both;
+    animation: paper-spin-still calc(1000ms * var(--slow, 1)) ease-out both;
   }
 
   /* One narrowing and back, no flip: enough to read as a reaction, not enough
@@ -4552,6 +4912,31 @@ select {
 }
 
 /* The buttons inside it are still buttons, not handle. */
+/*
+ * A peeked menu is a read-out, not a control.
+ *
+ * It takes no pointer at all, and that is load-bearing rather than tidy: the
+ * panel is centred on the screen and the thing being hovered is a body on the
+ * boards, so the two overlap often. If the panel took the pointer, the sprite
+ * would lose the hover the instant the menu covered it, the menu would close,
+ * the sprite would get the hover back, and the pair would strobe at the frame
+ * rate. Nothing is lost by refusing it -- every control inside is already
+ * disabled while previewing somebody you are not commanding.
+ *
+ * Both the wrapper and its children, because `.hud > *` turns the pointer back
+ * on for panels one level down.
+ */
+.battle.cinema .hud-skills.peeking,
+.battle.cinema .hud-skills.peeking > * {
+  pointer-events: none;
+}
+
+/* Lifted a shade off the card so a glance reads as a glance. Not dimmed --
+   the kit and the chain marks are the whole reason it is on screen. */
+.battle.cinema .hud-skills.peeking .skill-menu {
+  opacity: 0.94;
+}
+
 .battle.cinema .hud-skills.menu-panel .skill-menu button {
   cursor: pointer;
 }
@@ -4701,12 +5086,18 @@ select {
 }
 
 /*
- * One chip per ability: the cost and the name, and nothing else.
+ * One chip per ability: the cost, the name, and the chain mark.
  *
- * The docked row also carries the type, the reach, the element and the chain
- * mark. All of that is real and none of it is needed to CHOOSE -- it is needed
- * to understand, which is what the hover strip below is for. Splitting the two
- * is what lets this bar be a bar instead of a second sheet.
+ * The docked row also carries the type, the reach and the element. That is real
+ * and none of it is needed to CHOOSE -- it is needed to understand, which is
+ * what the hover strip below is for, and splitting the two is what lets this be
+ * a bar instead of a second sheet.
+ *
+ * The chain mark started on the other side of that line and was moved. It is
+ * not a fact about the ability, which is what the hover strip answers; it is a
+ * fact about the BOARD, and it is the reason to cast this one now rather than
+ * next turn. A player working in cinema could watch a chain fire and never see
+ * one coming.
  */
 .skill {
   position: relative;
@@ -4780,6 +5171,32 @@ select {
   font-variant-numeric: tabular-nums;
 }
 
+/*
+ * The symbol chip on paper.
+ *
+ * `.hud-skills em` is brown so that quiet text on cream does not read as a
+ * rendering fault -- but this em is not quiet text, it is a token with three
+ * states, and inheriting that colour flattened all three. Gold is darkened for
+ * the same reason the ink is: the dock's `#c49a3c` is tuned against a near
+ * black panel and washes out on cream.
+ */
+.battle.cinema .skill .sym {
+  border-color: var(--paper-line);
+  color: var(--paper-dim);
+}
+
+.battle.cinema .skill .sym.has-trigger {
+  border-color: rgba(154, 111, 31, 0.7);
+  background: rgba(196, 154, 60, 0.22);
+  color: #8a6318;
+}
+
+.battle.cinema .skill .sym.on {
+  border-color: #8a6318;
+  background: rgba(196, 154, 60, 0.4);
+  color: #5e410c;
+}
+
 /* A live chain, as a ring, for the same reason it is a ring on the docked row:
    gold is already `ready`'s colour and both can be true at once. */
 .skill.chains::before {
@@ -4787,9 +5204,22 @@ select {
   position: absolute;
   inset: -3px;
   border-radius: 9px;
-  border: 1px solid #c49a3c;
-  box-shadow: 0 0 9px rgba(196, 154, 60, 0.4);
+  /* Darker than the dock's, because this ring is drawn on cream. The lightest
+     gold that reads against near black is close to invisible on paper. */
+  border: 2px solid #b8862a;
+  box-shadow: 0 0 12px rgba(184, 134, 42, 0.55);
   pointer-events: none;
+  animation: chain-live-paper 1.6s ease-in-out infinite;
+}
+
+@keyframes chain-live-paper {
+  0%,
+  100% {
+    box-shadow: 0 0 8px rgba(184, 134, 42, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 18px rgba(184, 134, 42, 0.75);
+  }
 }
 
 /*
@@ -4801,6 +5231,7 @@ select {
  * something.
  */
 .skill-detail {
+  position: relative;
   max-width: 520px;
   padding: 9px 12px;
   font-size: 12px;

@@ -37,7 +37,14 @@ function clipsFor(id: string): { value: string; label: string }[] {
     ['idle_3', 'idle_3 — alternate stance'],
     ['idle_4', 'idle_4 — alternate stance'],
     ['ready', 'ready — held while walking out'],
+    // The three stills. They are installed rather than cut -- one drawing held
+    // for a state -- and they were reachable through this page only by way of
+    // `thinking`, which was the one somebody happened to need first. All three
+    // go through the same branch of the splitter, so listing one and not the
+    // others was an omission rather than a decision.
     ['thinking', 'thinking — still, held while selected'],
+    ['pain', 'pain — still, held when struck'],
+    ['death', 'death — still, held once down'],
     ['upgrade', 'upgrade — buying an upgrade'],
     ['move', 'move — repositioning'],
     ['celebration', 'celebration — victory'],
@@ -83,8 +90,28 @@ export function SheetDrop() {
    * only question is whether that is what you meant.
    */
   const already = (ANIMATION_CLIPS[who] ?? {})[clip]?.frames ?? 0;
-  const [append, setAppend] = useState(false);
-  const blocked = already > 0 && !append;
+  /**
+   * What to do about frames that are already there: add, or start over.
+   *
+   * `null` until it is chosen, and the commit button stays disabled that long.
+   * Both answers are reasonable and neither is reasonable by accident -- adding
+   * to the wrong clip buries good frames behind new ones, and replacing the
+   * wrong one deletes them -- so the page asks rather than defaulting.
+   *
+   * A pose is a single drawing held for a state, so there is nothing to add TO.
+   * It offers replace alone.
+   */
+  const [how, setHow] = useState<'add' | 'replace' | null>(null);
+  const blocked = already > 0 && !how;
+  /*
+   * The stills, which the splitter installs rather than cuts.
+   *
+   * Mirrors `EXTRA_POSES` in pack_sprites.py. Duplicated rather than derived
+   * because this page is a form and that is a build script -- but it is only
+   * ever used to hide an option that would be refused anyway, so a copy that
+   * fell behind would cost a wasted click, not a wrong file.
+   */
+  const pose = ['pain', 'death', 'thinking'].includes(clip);
 
   async function post(payload: Record<string, unknown>) {
     const r = await fetch('/__art/upload', {
@@ -150,7 +177,8 @@ export function SheetDrop() {
         clip,
         grid: grid || undefined,
         bleed: bleed ? '10%' : undefined,
-        append: append || undefined,
+        append: how === 'add' || undefined,
+        replace: how === 'replace' || undefined,
         token,
       });
       setStatus(j.log || 'written');
@@ -182,7 +210,7 @@ export function SheetDrop() {
             onChange={(e) => {
               setWho(e.target.value);
               setStatus(null);
-              setAppend(false);
+              setHow(null);
             }}
           >
             {ROSTER.map((d) => (
@@ -199,7 +227,7 @@ export function SheetDrop() {
             value={clip}
             onChange={(e) => {
               setClip(e.target.value);
-              setAppend(false);
+              setHow(null);
             }}
           >
             {clipsFor(who).map((c) => (
@@ -235,23 +263,49 @@ export function SheetDrop() {
             <code>{clip}</code> already has <strong>{already}</strong> frame
             {already === 1 ? '' : 's'}.
           </p>
+          {!pose && (
+            <label className="drop-check">
+              <input
+                type="radio"
+                name="drop-existing"
+                checked={how === 'add'}
+                onChange={() => setHow('add')}
+              />
+              Add these frames to it
+            </label>
+          )}
           <label className="drop-check">
             <input
-              type="checkbox"
-              checked={append}
-              onChange={(e) => setAppend(e.target.checked)}
+              type="radio"
+              name="drop-existing"
+              checked={how === 'replace'}
+              onChange={() => setHow('replace')}
             />
-            Add these frames to it
+            Replace what is there
           </label>
-          <p className="dim">
-            New frames go on the <strong>end</strong>. Move them where you want in the anim lab —
-            it can reorder, duplicate and disable frames while the clip plays, which is a better
-            place to decide order than a file listing. To replace the clip instead, delete{' '}
-            <code>
-              art/actors/{who}/animations/{clip}/
-            </code>
-            .
-          </p>
+          {how === 'add' && (
+            <p className="dim">
+              New frames go on the <strong>end</strong>. Move them where you want in the anim lab —
+              it can reorder, duplicate and disable frames while the clip plays, which is a better
+              place to decide order than a file listing.
+            </p>
+          )}
+          {how === 'replace' && (
+            <p className="dim">
+              The {already} frame{already === 1 ? '' : 's'} in{' '}
+              <code>
+                art/actors/{who}/animations/{clip}
+                {pose ? '' : '/'}
+              </code>{' '}
+              {already === 1 ? 'is' : 'are'} <strong>deleted</strong>, along with any loose sheet for
+              this clip still sitting beside it — otherwise it comes back as the clip the day the
+              folder goes. Every file dropped is named in the log. Numbering restarts at 01, so a
+              shorter clip cannot leave the back half of the old one playing after it.
+            </p>
+          )}
+          {!how && (
+            <p className="dim">Pick one — the button stays off until you do.</p>
+          )}
         </div>
       )}
 
@@ -303,8 +357,9 @@ export function SheetDrop() {
             </p>
           ))}
           <button className="primary" disabled={busy || cut.refused || blocked} onClick={commit}>
-            {append ? 'Add' : 'Cut into'} {cut.frames} file{cut.frames === 1 ? '' : 's'}
-            {append ? ' to the end' : ' and save'}
+            {how === 'add' ? 'Add' : how === 'replace' ? 'Replace with' : 'Cut into'} {cut.frames}{' '}
+            file{cut.frames === 1 ? '' : 's'}
+            {how === 'add' ? ' to the end' : how === 'replace' ? '' : ' and save'}
           </button>
         </div>
       )}

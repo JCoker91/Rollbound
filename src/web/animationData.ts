@@ -154,6 +154,14 @@ export interface ClipSettings {
  * having to say so. Making it selectable would let a sheet declare a spark on
  * the wrong team, which is a bug nobody would think to look for.
  *
+ * That holds for an ability that does ONE thing, and only then. An ability that
+ * damages an enemy and buffs its caster affected two units for two different
+ * reasons, and `each` cannot tell a sword landing from a blessing landing -- it
+ * fans both drawings over both bodies, so the hit spark goes off on the
+ * Performer as well. `Impact.to` is the answer, and note what it filters on: not
+ * the team, which would reintroduce exactly the bug above, but WHAT HAPPENED to
+ * each unit, which is the thing the drawing depicts.
+ *
  * `caster` is not an exception to that. It does not pick a side either -- it
  * names the one unit that is never in question, the one whose clip is playing.
  * It is the placement a buff wants, and buffs are exactly where `each` reads
@@ -186,6 +194,28 @@ export interface Impact {
   effect: string;
   /** Default `each`. See `ImpactPlacement`. */
   at?: ImpactPlacement;
+  /**
+   * Narrow an `each` or `centre` burst to part of what the ability reached.
+   *
+   * Omitted means everyone it affected, which is right for every ability that
+   * does one thing and is why almost nothing sets this.
+   *
+   *   struck  only what this ability damaged
+   *   aided   only what it reached WITHOUT damaging -- healed, buffed,
+   *           frozen, taunted, or simply standing where the effect landed
+   *
+   * The split is by outcome rather than by side on purpose: `to: 'struck'` on a
+   * hit spark keeps it off the caster of a mixed ability without the sheet ever
+   * having to name a team, and it stays honest for an ability that damages an
+   * ally or heals an enemy.
+   *
+   * Damage a unit takes from THORNS does not make it struck. It was not hit by
+   * this ability, it hit back -- and counting it would put the spark on the
+   * attacker, which is the same bug in a different coat.
+   *
+   * Ignored by `caster`, which names one unit and has no group to narrow.
+   */
+  to?: 'struck' | 'aided';
   /**
    * Size relative to the height of whoever it lands on. 1 is their full height.
    *

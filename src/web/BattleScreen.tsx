@@ -52,7 +52,6 @@ import {
 import {
   describeAbility,
   describeChain,
-  describeCost,
   describeElement,
   describeEnemyUsage,
   describePassive,
@@ -70,6 +69,7 @@ import {
   alive,
   freezeThreshold,
   type Ability,
+  type ChainSymbol,
   type Die,
   type Passive,
   type CharacterDef,
@@ -231,6 +231,44 @@ const stat = (n: number): string => String(Math.round(n * 10) / 10);
 
 /** Must match the floater CSS animation length. */
 const FLOATER_MS = 1500;
+
+/**
+ * How long the running total of an action hangs on screen.
+ *
+ * Must match `tally-pop` in styles.css, which does its own fade: the element is
+ * unmounted on this timer, so a CSS animation that ran shorter would leave a
+ * finished number sitting there and a longer one would be cut off mid-fade.
+ */
+const TALLY_MS = 1900;
+
+/**
+ * How fast a performance plays. The top of the range is the pace everything
+ * was originally tuned at, and the default is half of it.
+ *
+ * **It scales the PERFORMANCE, not the transit.** The clip, the impacts that
+ * ride its frames, the bursts, the flinch and the floating numbers all stretch
+ * together; the walk downstage, the pause at the mark, the walk home and the
+ * gaps between turns do not. That split is deliberate and it is the whole
+ * reason this is not one multiplier over `beatOf`.
+ *
+ * Measured, because the instinct was the other way round. Benjamin's four
+ * abilities run 480-2415ms of clip inside a 2060-3995ms beat: a turn is already
+ * more waiting than acting, since `STEP_OUT_MS + SETTLE_MS + STEP_BACK_MS` is a
+ * flat 1580ms of travel and pause whatever the ability is. Scaling that along
+ * with everything else would have doubled a second and a half of nothing per
+ * Performer -- about eight seconds a round with a full party -- and made the
+ * game slower without making anything easier to read. What is hard to read is
+ * the six numbers of a multi-hit landing across a 2.4s swing, and that is what
+ * this stretches.
+ *
+ * Stored as the speed rather than as the slowdown so the control reads the
+ * direction people think in: bigger is faster.
+ */
+const SPEEDS = [1, 1.5, 2] as const;
+/** The pace every duration constant in this file is written at. */
+const FULL_SPEED = 2;
+/** What to multiply a performance duration by, at a given speed. */
+const slowdown = (speed: number): number => FULL_SPEED / speed;
 /**
  * How long a Performer's turn on the boards lasts: step out, act, step back.
  *
@@ -276,7 +314,12 @@ const SETTLE_MS = 1000;
  * the clip, and the schedule the impacts fire from. They cannot drift apart
  * because there is only one of them.
  */
-function beatOf(id: string, clipName: string): {
+function beatOf(
+  id: string,
+  clipName: string,
+  /** See `SPEEDS`. Stretches the clip, and with it the beat around it. */
+  slow: number,
+): {
   clipMs: number;
   beat: number;
   leadIn: number;
@@ -287,7 +330,11 @@ function beatOf(id: string, clipName: string): {
   const clipMs = c
     ? clipDuration(
         clipTimeline(c.frames, tuningFor(id, clipName), orderFor(id, clipName)),
-        stepMsFor(id, clipName),
+        // The playback speed setting lives HERE rather than in `stepMsFor`,
+        // because that function answers "what pace was this clip authored at"
+        // and the answer must stay the same in the lab, where the animator is
+        // tuning the drawing and not watching a battle.
+        stepMsFor(id, clipName) * slow,
       )
     : 0;
   /*
@@ -593,6 +640,29 @@ export function BattleScreen({
     }
   }, [cinema]);
 
+  /*
+   * How fast performances play. Persisted, because it is a taste rather than a
+   * per-battle decision -- somebody who wants to read every number wants that
+   * in the next fight too.
+   */
+  const [speed, setSpeed] = useState<number>(() => {
+    try {
+      const v = Number(localStorage.getItem('sb.speed'));
+      return (SPEEDS as readonly number[]).includes(v) ? v : SPEEDS[0];
+    } catch {
+      return SPEEDS[0];
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem('sb.speed', String(speed));
+    } catch {
+      /* private browsing; the preference simply does not persist */
+    }
+  }, [speed]);
+  /** What every performance duration is multiplied by. See `SPEEDS`. */
+  const slow = slowdown(speed);
+
   const [restZoom, setRestZoom] = useState(() => {
     try {
       const v = Number(localStorage.getItem('sb.restZoom'));
@@ -629,6 +699,15 @@ export function BattleScreen({
     dx: number;
     clip: string;
     act: boolean;
+    /**
+     * Perform without stepping downstage.
+     *
+     * `striking` means "is performing" and a good deal hangs off it -- the
+     * `ready` stance, the thinking pose, the exemption from the spent-unit dim.
+     * A reposition wants every one of those and none of the walk, so the walk
+     * is the thing that gets its own flag rather than the performing.
+     */
+    inPlace?: boolean;
   } | null>(null);
   /**
    * Who is currently holding a hit reaction, cleared on a timer.
@@ -713,10 +792,40 @@ export function BattleScreen({
    * an effect appears only where something actually happened, so a miss, an
    * immunity or a resisted debuff still produces nothing.
    */
-  const lastAffected = useRef<string[]>([]);
+  /**
+   * Who the last action reached, and in what way.
+   *
+   * Three lists rather than one because an impact can now be narrowed to part
+   * of them -- see `Impact.to`. `all` is what every unnarrowed burst fans over,
+   * exactly as the single list used to.
+   */
+  const lastAffected = useRef<{ all: string[]; struck: string[]; aided: string[] }>({
+    all: [],
+    struck: [],
+    aided: [],
+  });
   const [hits, setHits] = useState<Record<string, number>>({});
   const [floaters, setFloaters] = useState<Floater[]>([]);
   const floaterId = useRef(0);
+  /*
+   * What an action added up to, once it has finished landing.
+   *
+   * The floaters answer "what did that blow do"; this answers "what did that
+   * ATTACK do", which for a six-hit ability is a sum nobody can do from six
+   * numbers flying past in two seconds. Deliberately a separate readout rather
+   * than a seventh floater: it is not a thing that happened at a place on the
+   * board, it is the account of the whole action.
+   *
+   * `id` rather than a plain object so the CSS animation restarts on a second
+   * action even when the total happens to be identical.
+   */
+  const [tally, setTally] = useState<{
+    id: number;
+    total: number;
+    blows: number;
+    struck: number;
+  } | null>(null);
+  const tallyId = useRef(0);
   const [roll, setRoll] = useState<{ phase: 'pending' | 'tumbling' | 'settled'; face: number }[] | null>(null);
 
   const rollTimeouts = useRef<number[]>([]);
@@ -795,6 +904,7 @@ export function BattleScreen({
     setNarration(null);
     setHits({});
     setFloaters([]);
+    setTally(null);
     setSeed(nextSeed);
     setStage(nextStage);
     const scene = sceneFor(nextStage);
@@ -1068,7 +1178,7 @@ export function BattleScreen({
    * and no name matching.
    */
   function withHitReactions(act: () => void) {
-    lastAffected.current = [];
+    lastAffected.current = { all: [], struck: [], aided: [] };
     const before = new Map(battle.units.map((u) => [u.def.id, u.hp]));
     // Where the log stood before the action, so the events it appends can be
     // read back. The HP diff below still decides the NUMBER -- it catches
@@ -1127,7 +1237,26 @@ export function BattleScreen({
       const u = battle.units.find((x) => x.def.name === name);
       if (u) affected.add(u.def.id);
     }
-    lastAffected.current = [...affected];
+    /*
+     * Which of them this ability DAMAGED, as opposed to merely reached.
+     *
+     * Read off the log rather than the HP diff, and thorns left out, for the
+     * same reason the total ignores it: thorns is the target hitting back, so
+     * counting it would mark the attacker as struck and put the hit spark on
+     * the Performer -- which is the very thing `to` exists to stop.
+     */
+    const damaged = new Set<string>();
+    for (const e of battle.log.slice(logMark)) {
+      if (e.t !== 'damage' || e.matchup === 'thorns') continue;
+      const u = battle.units.find((x) => x.def.name === e.target);
+      if (u) damaged.add(u.def.id);
+    }
+    const reached = [...affected];
+    lastAffected.current = {
+      all: reached,
+      struck: reached.filter((id) => damaged.has(id)),
+      aided: reached.filter((id) => !damaged.has(id)),
+    };
 
     if (changed.length === 0) return;
 
@@ -1204,11 +1333,53 @@ export function BattleScreen({
      * impacts -- the leftovers all land on the final impact. Better to show
      * every number late than to silently drop damage that was really dealt.
      */
+    /*
+     * The action's own account of itself: how much, over how many blows.
+     *
+     * Read from the LOG rather than from the HP diff, on purpose. The diff is
+     * the right source for a floater -- it is what actually left the unit, so
+     * it catches thorns and regen and overkill trimming with no name matching
+     * -- but this readout is answering a different question: what did the
+     * ability deal. Summing the damage events gives exactly that, and it is the
+     * same set of events the per-blow floaters are built from, so the numbers
+     * on screen add up to the number in the box.
+     *
+     * `hit` is the blow index an event belongs to. Counting DISTINCT values
+     * rather than events keeps "6 hits" honest when one of those blows caught
+     * three targets and logged three times.
+     */
+    let total = 0;
+    const blows = new Set<number>();
+    const struck = new Set<string>();
+    for (const e of battle.log.slice(logMark)) {
+      if (e.t !== 'damage') continue;
+      // Thorns is logged as damage like everything else, but it is the target
+      // hitting BACK -- counting it would add the attacker to the list of
+      // people this ability struck, which is enough on its own to push a plain
+      // single strike over the two-target line and put a box on screen that
+      // reads as the attack having done more than it did.
+      if (e.matchup === 'thorns') continue;
+      total += e.amount;
+      struck.add(e.target);
+      if (e.hit != null) blows.add(e.hit);
+    }
+    /*
+     * Shown only when the numbers on the board do not already add up for you.
+     *
+     * One strike on one target puts its whole total in a single floater, and
+     * repeating that in larger text beside it is noise. Two or more of either
+     * -- a multi-hit, or an area ability -- is the case this exists for.
+     */
+    const worthTotalling = total > 0 && (blows.size > 1 || struck.size > 1);
+
     const float = (batch: typeof spawned) => {
       if (!batch.length) return;
       const ids = new Set(batch.map((f) => f.id));
       setFloaters((f) => [...f, ...batch]);
-      window.setTimeout(() => setFloaters((f) => f.filter((x) => !ids.has(x.id))), FLOATER_MS);
+      window.setTimeout(
+        () => setFloaters((f) => f.filter((x) => !ids.has(x.id))),
+        FLOATER_MS * slow,
+      );
     };
 
     pendingHit.current = (n: number, of = 1) => {
@@ -1229,7 +1400,7 @@ export function BattleScreen({
             for (const i of hurtIds) delete next[i];
             return next;
           });
-        }, PAIN_MS);
+        }, PAIN_MS * slow);
       }
       // The unindexed changes -- heals, burns, plain single strikes -- belong
       // to the action rather than to any one blow, so they fly on the first.
@@ -1238,6 +1409,16 @@ export function BattleScreen({
       const last = n >= of - 1;
       for (const [hit, batch] of byHit) {
         if (hit === n || (last && hit > n)) float(batch);
+      }
+
+      // On the last blow, and not before: a running subtotal would be a number
+      // that changes while you are reading it, which is the problem rather than
+      // the fix. The gap between the final impact and the walk home is where it
+      // lands, which is the one moment in a beat with nothing else happening.
+      if (last && worthTotalling) {
+        const id = tallyId.current++;
+        setTally({ id, total, blows: blows.size, struck: struck.size });
+        window.setTimeout(() => setTally((t) => (t?.id === id ? null : t)), TALLY_MS * slow);
       }
     };
   }
@@ -1272,7 +1453,12 @@ export function BattleScreen({
   function lunge(
     id: string,
     side: Unit['side'],
-    targets: string[] = [],
+    /** Who the action reached, split by outcome. See `Impact.to`. */
+    reached: { all: string[]; struck: string[]; aided: string[] } = {
+      all: [],
+      struck: [],
+      aided: [],
+    },
     ability?: Ability,
     /**
      * A clip to play instead of the one the ability would name.
@@ -1303,6 +1489,32 @@ export function BattleScreen({
       const react = pendingHit.current;
       pendingHit.current = null;
       react?.(0);
+
+      /*
+       * The `move` clip plays IN PLACE while the slot does the travelling.
+       *
+       * The stage already walks a repositioning character across the boards --
+       * `.stage-slot` transitions `left` and `top`, which is what makes two
+       * units in a swap cross each other. What it could not do was change the
+       * DRAWING, so a Performer glided to their new rank in whatever idle they
+       * happened to be holding, feet still.
+       *
+       * No lead-in and no impacts: both exist to give a blow somewhere to
+       * happen and a frame to happen on, and a move has neither. `act` is true
+       * from the first frame because there is nothing to wait for.
+       *
+       * The clip runs once and holds its last drawing (`forwards`), so one
+       * authored below the length of the crossing reads as a planted stride
+       * rather than snapping back to idle halfway. Benjamin's is a single frame
+       * and works exactly that way; a multi-frame one wants to be about as long
+       * as the walk, which is `MOVE_MS`.
+       */
+      if (ANIMATION_CLIPS[id]?.move) {
+        // `dx` is the lean into a lunge. A reposition has no lunge to lean
+        // into -- the whole body is already going somewhere.
+        setPulse({ id, dx: 0, clip: 'move', act: true, inPlace: true });
+        window.setTimeout(() => setPulse((prev) => (prev?.id === id ? null : prev)), MOVE_MS);
+      }
       return MOVE_MS;
     }
     /*
@@ -1328,7 +1540,7 @@ export function BattleScreen({
     const steps = clip
       ? clipTimeline(clip.frames, tuningFor(id, clipName), orderFor(id, clipName))
       : [];
-    const { beat, leadIn } = beatOf(id, clipName);
+    const { beat, leadIn } = beatOf(id, clipName, slow);
 
     setPulse({ id, dx: side === 'player' ? 1 : -1, clip: clipName, act: false });
     // The swing begins when the walk and the pause are done, not when the turn
@@ -1373,7 +1585,9 @@ export function BattleScreen({
      */
     const react = pendingHit.current;
     pendingHit.current = null;
-    const marks = clip ? impactTimes(id, clipName, steps, stepMsFor(id, clipName)) : [];
+    // Stretched by the same factor as the clip, so a spark stays on the frame
+    // its drawing connects on however slowly that drawing is playing.
+    const marks = clip ? impactTimes(id, clipName, steps, stepMsFor(id, clipName) * slow) : [];
 
     /*
      * A `caster` burst plays on the performer, so it does not need the ability
@@ -1382,7 +1596,7 @@ export function BattleScreen({
      * placements, since both are defined in terms of who was hit.
      */
     const onCaster = marks.some(({ impact }) => impact.at === 'caster');
-    const nothingToLandOn = targets.length === 0 && !onCaster;
+    const nothingToLandOn = reached.all.length === 0 && !onCaster;
 
     if (!clip || nothingToLandOn || marks.length === 0) {
       if (react) window.setTimeout(() => react(0), leadIn);
@@ -1397,24 +1611,39 @@ export function BattleScreen({
         // ability reads as a single event rather than five simultaneous ones.
         // The point is the mean of their slots, which is where the group
         // visually is -- not the mean of the whole side.
+        /*
+         * Which of the reached this burst is FOR.
+         *
+         * Unnarrowed is everyone, which is what every impact authored before
+         * `to` existed means and what a single-purpose ability wants. An
+         * ability that damages one unit and buffs another affected both, and
+         * only the sheet knows which of the two drawings goes where.
+         */
+        const land =
+          impact.to === 'struck'
+            ? reached.struck
+            : impact.to === 'aided'
+              ? reached.aided
+              : reached.all;
         const spawned =
           // `caster` rides the performer's own slot, which is why it needs no
           // position of its own and no targets: `on` is the acting unit, and
           // the slot renderer does the rest exactly as it does for a target.
+          // It names one unit, so `to` has nothing to narrow.
           impact.at === 'caster'
             ? [{ id: key, on: id, walks: true, impact }]
-            : targets.length === 0
+            : land.length === 0
               ? []
               : impact.at === 'centre'
-                ? [{ id: key, on: null, at: centroidOf(targets), impact }]
-                : targets.map((on, i) => ({ id: key + i, on, walks: on === id, impact }));
+                ? [{ id: key, on: null, at: centroidOf(land), impact }]
+                : land.map((on, i) => ({ id: key + i, on, walks: on === id, impact }));
         setBursts((b) => [...b, ...spawned]);
         const ids = new Set(spawned.map((x) => x.id));
         // Cleared when it has finished PLAYING, which is now per impact. A
         // fixed wait would cut a slow burst off or leave a fast one lingering.
         window.setTimeout(
           () => setBursts((b) => b.filter((x) => !ids.has(x.id))),
-          impact.ms ?? BURST_MS,
+          (impact.ms ?? BURST_MS) * slow,
         );
         // Offset by the lead-in, because the clip does not start until the
         // performer has reached the mark and taken their beat. `at` is a time
@@ -1527,6 +1756,7 @@ export function BattleScreen({
       // mid-turn, which is the same complaint as blanking it on commit -- and
       // it is why there was never anything left for the commit to preserve.
       setSel((prev) => ({ unit: prev.unit, ability: null, dice: [] }));
+      setPreview(null);
       setPreviewPassive(null);
       setError(null);
     }
@@ -1677,8 +1907,29 @@ export function BattleScreen({
    * character is not one worth shipping, so the guard is explicit rather than
    * left to the geometry.
    */
-  const shownUnit = rosterHover ?? sel.unit;
+  const hoveredUnit = hover ? battle.units.find((u) => alive(u) && pk(u.pos) === pk(hover)) : undefined;
+
+  /*
+   * Pointing at a body on the boards, as opposed to at a row in the roster.
+   *
+   * The two hovers answer different questions and now do different things. A
+   * roster row is a request to READ somebody -- it focuses the camera on them
+   * and opens the full card. Pointing at the figure itself is a glance: it puts
+   * their action menu up and nothing else, no camera move and no card, because
+   * the thing it is for is running your eye along the line and seeing who has a
+   * chain mark lit.
+   *
+   * Suppressed in every state where the pointer means something else. While an
+   * ability is in hand the cursor is a targeting reticle and `hover` is what
+   * aims it; while the turn is resolving nothing on the board is a control.
+   */
+  const stagePeek =
+    hoveredUnit && !sel.ability && !busy && !pulse && !over ? hoveredUnit : null;
+
+  const shownUnit = rosterHover ?? stagePeek ?? sel.unit;
   const previewing = shownUnit !== sel.unit;
+  /** The sheet on screen belongs to a body being pointed at, not to a choice. */
+  const peeking = !rosterHover && !!stagePeek && shownUnit === stagePeek && stagePeek !== sel.unit;
 
   const kitAbilities = useMemo(
     // Whoever the sheet is ABOUT, which is the hovered unit while previewing.
@@ -1709,8 +1960,52 @@ export function BattleScreen({
     !sel.ability && sel.dice.length > 0 && sel.unit?.side === 'player' && !sel.unit.hasActed
       ? sel.unit
       : null;
-  /** Rules text follows the hovered ability, falling back to the chosen one. */
-  const shownAbility = preview ?? sel.ability;
+  /*
+   * Rules text follows the hovered ability, falling back to the chosen one.
+   *
+   * The hover is only honoured while it belongs to the unit on screen, and that
+   * guard is doing real work rather than being defensive. `onMouseLeave` never
+   * fires for an element that is REMOVED from under the cursor, and the menu is
+   * removed under the cursor every time an action is booked -- so the last row
+   * hovered stays "hovered" forever, and the next character clicked opened with
+   * the previous one's ability described underneath them.
+   *
+   * Clearing the preview at each of those exits is the other half of the fix
+   * and it is done too, but only this half is total: every future path that
+   * closes the menu gets it for free, rather than being one more place to
+   * remember.
+   */
+  const shownAbility =
+    (preview && shownUnit?.def.abilities.includes(preview) ? preview : null) ?? sel.ability;
+  /** The same guard, for the passive chips: they live in the same panel. */
+  const shownPassive =
+    previewPassive && shownUnit?.def.passives?.includes(previewPassive) ? previewPassive : null;
+
+  /*
+   * A hover does not outlive the character it was made over.
+   *
+   * `onMouseLeave` never fires for an element REMOVED from under the cursor,
+   * and both layouts remove the ability list under the cursor routinely -- the
+   * cinema menu closes the moment an action is booked, and the dock's sheet
+   * unmounts when the round starts and drops the selection. The row stays
+   * "hovered" forever, so the next character clicked opened with the previous
+   * ability's rules underneath them.
+   *
+   * Three things guard it, and they cover genuinely different cases rather than
+   * being the same fix written out three times:
+   *
+   *   - this effect, for the panel changing WHO it is about -- a new round, a
+   *     different Performer, a roster row hovered;
+   *   - the explicit clears in `aimAt` and `handleUpgrade`, for the menu closing
+   *     while the panel stays on the SAME Performer, which this effect cannot
+   *     see because nothing it watches moved;
+   *   - the `includes` guards above, which make a stale preview harmless in the
+   *     render that happens before either of the other two has run.
+   */
+  useEffect(() => {
+    setPreview(null);
+    setPreviewPassive(null);
+  }, [shownUnit]);
   /** Whether the selected Performer can still be given an action this round. */
   const canAct =
     !!sel.unit &&
@@ -1734,6 +2029,16 @@ export function BattleScreen({
    */
   const deciding = canAct && !sel.ability ? sel.unit : null;
 
+  /*
+   * Which door of the menu is open.
+   *
+   * A peek forces Abilities. The whole reason to put the menu up on a hover is
+   * to read the kit and the chain marks, and inheriting whichever door happened
+   * to be open for the character you last commanded would make the answer to
+   * "what can she do" depend on something you did two turns ago.
+   */
+  const openDoor = peeking ? 'abilities' : menu;
+
   // Recomputed on every plan change, which is what makes reordering legible:
   // move an action above its arming symbol and its chain marker goes out.
   const chained = chainPreview(battle.plan, battle.armed);
@@ -1747,6 +2052,21 @@ export function BattleScreen({
    * abilities as on the selected one's.
    */
   const liveArmed = armedAfter(battle.plan, battle.armed);
+  /**
+   * Which queued action arms each symbol that is not out yet.
+   *
+   * The stack readout is worth little if it only says a mark is coming -- the
+   * decision it feeds is "do I put my chained ability after that one", and that
+   * needs a name. Built from the plan in order, first arming wins: a second
+   * action carrying the same mark does not re-arm it, so it is not the one that
+   * put it out.
+   */
+  const armingSource = new Map<ChainSymbol, string>();
+  for (const entry of battle.plan) {
+    const sym = entry.ability?.symbol;
+    if (!sym || battle.armed.includes(sym) || armingSource.has(sym)) continue;
+    armingSource.set(sym, `${entry.unit.def.name}'s ${entry.ability!.name}`);
+  }
   // Which resting stance each Performer is holding right now. Empty for
   // anyone who has only been drawn one idle, which is currently everyone.
   const stances = useIdleStances(battle.units);
@@ -1761,7 +2081,6 @@ export function BattleScreen({
   // over the default marks: a set and the places people stand on it are one
   // decision, so they travel together.
 
-  const hoveredUnit = hover ? battle.units.find((u) => alive(u) && pk(u.pos) === pk(hover)) : undefined;
   // Whose mark the camera should be looking at. Falls back to the player side
   // so the origin is a real point even between turns, which keeps the ambient
   // sway anchored rather than snapping when a turn starts.
@@ -2039,12 +2358,17 @@ export function BattleScreen({
         focusUnit ? `focusing focus-${focusUnit.side}` : ''
       }`}
       ref={rootRef}
+      /* Every timed CSS animation that belongs to the performance -- the burst,
+         the flinch, the tumble, the floating numbers -- is written as
+         `calc(<base> * var(--slow))`, so the setting reaches them without a
+         duration having to be posted into each element from here. */
+      style={{ ['--slow' as string]: slow } as CSSProperties}
     >
       <style>{IDLE_KEYFRAMES}</style>
       {/* The walk, retimed for whoever is currently performing. */}
       <style>
         {(() => {
-          const b = beatOf(pulse?.id ?? '', pulse?.clip ?? '');
+          const b = beatOf(pulse?.id ?? '', pulse?.clip ?? '', slow);
           return strikeKeyframes(b.holdStart, b.holdEnd);
         })()}
       </style>
@@ -2311,7 +2635,7 @@ export function BattleScreen({
                 // the sprite's own box rather than against the stage.
                 // The clip THIS beat is playing decides its length, so a long
                 // ability holds the mark longer than a short one.
-                ['--beat' as string]: `${beatOf(u.def.id, pulse?.id === u.def.id ? pulse.clip : '').beat}ms`,
+                ['--beat' as string]: `${beatOf(u.def.id, pulse?.id === u.def.id ? pulse.clip : '', slow).beat}ms`,
                 ['--sx' as string]: `${(acts[u.side].x - slot.xPct) * 100}cqw`,
                 ['--sy' as string]: `${(acts[u.side].y - slot.yPct) * 100}cqh`,
               }}
@@ -2340,8 +2664,10 @@ export function BattleScreen({
                 hit={hits[u.def.id] ?? 0}
                 flinching={flinching[u.def.id] ?? null}
                 striking={pulse?.id === u.def.id}
+                inPlace={pulse?.id === u.def.id && !!pulse.inPlace}
                 actClip={pulse?.id === u.def.id && pulse.act ? (pulse.clip || null) : null}
                 stance={stances[u.def.id]}
+                slow={slow}
                 /* The one being decided about: selected, not yet committed.
                    Reads off the SELECTION rather than the hover, because a
                    character you are merely looking at is not deliberating. */
@@ -2368,7 +2694,9 @@ export function BattleScreen({
                 hundred ms after he did.
               */}
               <span
-                className={`caster-fx${pulse?.id === u.def.id ? ' striking' : ''}`}
+                className={`caster-fx${
+                  pulse?.id === u.def.id ? (pulse.inPlace ? ' striking in-place' : ' striking') : ''
+                }`}
                 aria-hidden="true"
               >
                 {bursts
@@ -2688,9 +3016,79 @@ export function BattleScreen({
           <span className="dim">
             Turn {battle.turn}/{MAX_TURNS}
           </span>
+          {/*
+            What is on the stack.
+
+            In the status bar rather than in a panel of its own, because that is
+            what it is -- a fact about the round, sitting beside the phase and
+            the turn count. It also puts it in BOTH layouts for free, which a
+            floating panel would not have been.
+
+            Two states, and the difference is the whole point. A solid mark is
+            out: anything chained to it fires the moment it is cast. A dashed
+            one is only PROMISED by something already in the queue, so it is
+            true in the order you have arranged and stops being true if you move
+            that action down past the ability meant to use it.
+
+            Cleared at the top of every round by the engine, so an empty stack
+            simply draws nothing -- there is no state to explain, and a label
+            over an empty row would be a permanent reminder of a mechanic that
+            is not currently happening.
+          */}
+          {liveArmed.length > 0 && (
+            <span className="chain-stack" title="Chain marks in play this round">
+              {liveArmed.map((sym) => {
+                const out = battle.armed.includes(sym);
+                return (
+                  <em
+                    key={sym}
+                    className={`sym ${out ? 'on' : 'pending'}`}
+                    title={
+                      out
+                        ? `${sym} is armed — abilities chained to it fire now`
+                        : `${sym} will be armed by ${armingSource.get(sym) ?? 'a queued action'}`
+                    }
+                  >
+                    <SymbolIcon symbol={sym} size={13} />
+                  </em>
+                );
+              })}
+            </span>
+          )}
         </div>
         <div className="panel bar">
           <button onClick={onExit}>Home</button>
+          {/*
+            How fast the show plays. Not behind the dev flag -- it is a
+            preference, not a tool.
+
+            A button that cycles rather than a menu, because there are only
+            three stops and they are ordered: a transport control reads as
+            "more of the same thing" at a glance, where a dropdown makes you
+            open it to find out what the options even are. The triangles ARE
+            the value -- one, two, three, the fast-forward convention -- and
+            the multiplier beside them is the exact reading for when the glyphs
+            are only telling you "faster than before".
+          */}
+          <button
+            className={`speed ${speed === FULL_SPEED ? 'on' : ''}`}
+            title={`Performances play at ${speed}× — click for ${
+              SPEEDS[(SPEEDS.indexOf(speed as (typeof SPEEDS)[number]) + 1) % SPEEDS.length]
+            }×`}
+            onClick={() =>
+              setSpeed(
+                (v) =>
+                  SPEEDS[
+                    (SPEEDS.indexOf(v as (typeof SPEEDS)[number]) + 1) % SPEEDS.length
+                  ],
+              )
+            }
+          >
+            <span className="speed-glyph" aria-hidden>
+              {'▸'.repeat(SPEEDS.indexOf(speed as (typeof SPEEDS)[number]) + 1)}
+            </span>
+            {speed}×
+          </button>
           {devMode && (
             <>
               {/* Jump anywhere on the ladder: every tenth rung is the boss, and
@@ -2863,7 +3261,7 @@ export function BattleScreen({
             {(shownUnit.def.passives ?? []).map((pas) => (
               <button
                 key={pas.name ?? pas.kind}
-                className={`passive-chip ${previewPassive === pas ? 'on' : ''}`}
+                className={`passive-chip ${shownPassive === pas ? 'on' : ''}`}
                 onMouseEnter={() => setPreviewPassive(pas)}
                 onMouseLeave={() => setPreviewPassive(null)}
                 onFocus={() => setPreviewPassive(pas)}
@@ -3212,32 +3610,51 @@ export function BattleScreen({
         */}
         {shownUnit && (
           <div className="panel inspect">
-            {previewPassive ? (
+            {shownPassive ? (
               <div className="rules">
-                <strong>{previewPassive.name ?? previewPassive.kind}</strong>
+                <strong>{shownPassive.name ?? shownPassive.kind}</strong>
                 <p className="sub">Passive — always on</p>
-                <p>{describePassive(previewPassive)}</p>
+                <p>{describePassive(shownPassive)}</p>
               </div>
             ) : shownAbility ? (
               <div className="rules">
-                <strong>{shownAbility.name}</strong>
-                <p>{describeAbility(shownAbility)}</p>
-                <p className="sub">{describeCost(shownAbility)}</p>
-                {describeElement(shownAbility) && <p className="sub">{describeElement(shownAbility)}</p>}
                 {/*
-                  The MARK, not a sentence about the mark. A symbol is pure
-                  identity -- it does nothing, it matches -- so the shape states
-                  the whole rule and the only text worth keeping is what THIS
-                  ability does differently when it chains.
+                  The mark, in the corner.
+
+                  It is not a line of the rules and it was never reading as one
+                  at the bottom of them -- it is a LABEL on the card, the way a
+                  suit sits in the corner of a playing card, and the corner is
+                  where the eye goes for that. It also stops the shape competing
+                  with the sentence beside it for the same line.
+
+                  A carrier gets the mark and nothing else, which is the whole
+                  of what it contributes: this mark will be out. There used to
+                  be a sentence saying so in words, and restating a shape in
+                  prose is precisely the waste the symbols replaced prose to
+                  avoid.
                 */}
                 {shownAbility.symbol && (
-                  <p className="sub chain">
-                    <SymbolIcon symbol={shownAbility.symbol} />
-                    {shownAbility.trigger && (
-                      <span>
-                        <strong>Chained:</strong> {shownAbility.trigger.text}.
-                      </span>
-                    )}
+                  <em
+                    className={`chain-mark ${shownAbility.trigger ? 'has-trigger' : ''} ${
+                      chainFires(liveArmed, shownAbility) ? 'live' : ''
+                    }`}
+                    title={
+                      (chainFires(liveArmed, shownAbility) ? 'Chain is live \u2014 ' : '') +
+                      (describeChain(shownAbility) ?? '')
+                    }
+                  >
+                    <SymbolIcon symbol={shownAbility.symbol} size={16} />
+                  </em>
+                )}
+                <strong>{shownAbility.name}</strong>
+                <p>{describeAbility(shownAbility)}</p>
+                {describeElement(shownAbility) && <p className="sub">{describeElement(shownAbility)}</p>}
+                {shownAbility.trigger && (
+                  <p className={`sub chain ${chainFires(liveArmed, shownAbility) ? 'live' : ''}`}>
+                    <strong>
+                      {chainFires(liveArmed, shownAbility) ? 'Chains now:' : 'Chained:'}
+                    </strong>{' '}
+                    {shownAbility.trigger.text}.
                   </p>
                 )}
               </div>
@@ -3291,9 +3708,34 @@ export function BattleScreen({
         only one on the roster that did not show a card when pointed at.
         Hovering is hovering, whoever it lands on.
       */}
-      {cinema && shownUnit && !rosterHover && deciding === shownUnit && (
+      {/*
+        The action menu: for the Performer you are commanding, or the one you
+        are pointing at.
+
+        Player side only. An enemy has no menu -- offering "Abilities" over one
+        implies you could cast theirs -- so pointing at a creature falls through
+        to the read-only card below, which is the same thing a roster row gives
+        and the only way to read an enemy at all.
+      */}
+      {cinema &&
+        shownUnit &&
+        !rosterHover &&
+        shownUnit.side === 'player' &&
+        (deciding === shownUnit || peeking) && (
         <div
-          className={`hud hud-skills menu-panel${dragging ? ' dragging' : ''}`}
+          /*
+            A peeked menu does not take the pointer.
+
+            It is centred on the screen and the thing being hovered is a body on
+            the boards, so the panel can easily land over it -- and if it took
+            the pointer, the sprite would lose the hover, the menu would close,
+            the sprite would regain it, and the whole thing would strobe at the
+            frame rate. It is inert while peeking anyway (`previewing` disables
+            every control in it), so there is nothing to click and nothing lost.
+          */
+          className={`hud hud-skills menu-panel${dragging ? ' dragging' : ''}${
+            peeking ? ' peeking' : ''
+          }`}
           style={{ transform: `translate(calc(-50% + ${menuNudge.x}px), ${menuNudge.y}px)` }}
         >
           <div className="panel skill-menu" onPointerDown={startMenuDrag}>
@@ -3304,14 +3746,14 @@ export function BattleScreen({
               </em>
             </span>
             <button
-              className={menu === 'abilities' ? 'on' : ''}
+              className={openDoor === 'abilities' ? 'on' : ''}
               onClick={() => setMenu((m) => (m === 'abilities' ? null : 'abilities'))}
             >
               Abilities
             </button>
             {shownUnit.side === 'player' && (
               <button
-                className={menu === 'upgrades' ? 'on' : ''}
+                className={openDoor === 'upgrades' ? 'on' : ''}
                 onClick={() => setMenu((m) => (m === 'upgrades' ? null : 'upgrades'))}
               >
                 Upgrades
@@ -3351,7 +3793,7 @@ export function BattleScreen({
             )}
           </div>
 
-          {menu === 'abilities' && (
+          {openDoor === 'abilities' && (
             <ul className="panel skill-list">
               {kitAbilities.map((a) => {
                 const cooling = shownUnit.cooldowns[a.name] ?? 0;
@@ -3393,6 +3835,19 @@ export function BattleScreen({
                         {paysAsWildcard(a, shownUnit.freeCast) ? '*' : a.cost}
                       </span>
                       <span className="skill-name">{a.name}</span>
+                      {a.symbol && (
+                        <em
+                          className={`sym ${a.trigger ? 'has-trigger' : ''} ${
+                            chainFires(liveArmed, a) ? 'on' : ''
+                          }`}
+                          title={
+                            (chainFires(liveArmed, a) ? 'Chain is live \u2014 ' : '') +
+                            (describeChain(a) ?? '')
+                          }
+                        >
+                          <SymbolIcon symbol={a.symbol} size={12} />
+                        </em>
+                      )}
                       {cooling > 0 && <span className="skill-cd">{cooling}</span>}
                     </button>
                   </li>
@@ -3401,7 +3856,7 @@ export function BattleScreen({
             </ul>
           )}
 
-          {menu === 'upgrades' && (
+          {openDoor === 'upgrades' && (
             <ul className="panel skill-list tiers">
               {(shownUnit.def.upgrades ?? []).map((u, i) => {
                 const bought = i < shownUnit.upgrades;
@@ -3446,24 +3901,37 @@ export function BattleScreen({
 
           {/* The detail, only while something is pointed at. A strip that is
               always there is a strip that is always covering something. */}
-          {(previewPassive || shownAbility) && (
+          {(shownPassive || shownAbility) && (
             <div className="panel skill-detail">
-              {previewPassive ? (
+              {shownPassive ? (
                 <>
-                  <strong>{previewPassive.name ?? previewPassive.kind}</strong>
-                  <p>{describePassive(previewPassive)}</p>
+                  <strong>{shownPassive.name ?? shownPassive.kind}</strong>
+                  <p>{describePassive(shownPassive)}</p>
                 </>
               ) : (
                 <>
+                  {/* Same corner, same reason. See the docked panel. */}
+                  {shownAbility!.symbol && (
+                    <em
+                      className={`chain-mark ${shownAbility!.trigger ? 'has-trigger' : ''} ${
+                        chainFires(liveArmed, shownAbility!) ? 'live' : ''
+                      }`}
+                      title={
+                        (chainFires(liveArmed, shownAbility!) ? 'Chain is live \u2014 ' : '') +
+                        (describeChain(shownAbility!) ?? '')
+                      }
+                    >
+                      <SymbolIcon symbol={shownAbility!.symbol} size={16} />
+                    </em>
+                  )}
                   <strong>{shownAbility!.name}</strong>
                   <p>{describeAbility(shownAbility!)}</p>
-                  <p className="sub">{describeCost(shownAbility!)}</p>
-                  {shownAbility!.trigger && chainFires(liveArmed, shownAbility!) && (
-                    <p className="sub chain">
-                      <SymbolIcon symbol={shownAbility!.symbol!} />
-                      <span>
-                        <strong>Chained:</strong> {shownAbility!.trigger.text}.
-                      </span>
+                  {shownAbility!.trigger && (
+                    <p className={`sub chain ${chainFires(liveArmed, shownAbility!) ? 'live' : ''}`}>
+                      <strong>
+                        {chainFires(liveArmed, shownAbility!) ? 'Chains now:' : 'Chained:'}
+                      </strong>{' '}
+                      {shownAbility!.trigger.text}.
                     </p>
                   )}
                 </>
@@ -3635,6 +4103,25 @@ export function BattleScreen({
       {narration && (
         <div className="hud hud-narration">
           <div className="narration">{narration}</div>
+        </div>
+      )}
+
+      {/* What the action came to. Placed above the middle of the stage rather
+          than at it: the performer is standing on the downstage mark when this
+          appears, and a number over their head is one they are not behind. */}
+      {tally && (
+        <div className="hud hud-tally">
+          <div className="tally" key={tally.id}>
+            <b>{tally.total}</b>
+            <span>
+              {[
+                tally.blows > 1 ? `${tally.blows} hits` : null,
+                tally.struck > 1 ? `${tally.struck} targets` : null,
+              ]
+                .filter(Boolean)
+                .join(' · ')}
+            </span>
+          </div>
         </div>
       )}
 
@@ -3964,8 +4451,10 @@ function UnitChip({
   facing,
   hit,
   striking,
+  inPlace = false,
   actClip,
   stance,
+  slow,
   thinking = false,
   flinching = null,
   queued = false,
@@ -3984,6 +4473,8 @@ function UnitChip({
   flinching?: 'a' | 'b' | null;
   /** Taking their turn: walking out, performing, walking back. Drives the step. */
   striking: boolean;
+  /** Performing without the walk downstage -- see `pulse.inPlace`. */
+  inPlace?: boolean;
   /** The clip to PLAY, once they have arrived and taken their pause. */
   actClip: string | null;
   /** Selected, and still deciding: holds the `thinking` stance if one exists. */
@@ -3993,6 +4484,8 @@ function UnitChip({
    * idle sheet is drawn exactly as they were before alternates existed.
    */
   stance?: string;
+  /** See `SPEEDS`. The clip is the one thing in here that plays on a clock. */
+  slow: number;
 }) {
   // Only grey out the side whose turn it is; the idle side's flags are stale.
   // `queued` is distinct from `acted`: one is a promise the player can still take
@@ -4061,7 +4554,7 @@ function UnitChip({
     const clipSteps = strip
       ? clipTimeline(strip.frames, tuningFor(unit.def.id, clipName), orderFor(unit.def.id, clipName))
       : [];
-    const { clipMs } = beatOf(unit.def.id, clipName);
+    const { clipMs } = beatOf(unit.def.id, clipName, slow);
     const poseName = poseKeyframes(poseAnimName(unit.def.id, clipName), clipSteps)
       ? poseAnimName(unit.def.id, clipName)
       : '';
@@ -4238,7 +4731,7 @@ function UnitChip({
       <div
         className={`unit sprite-unit ${unit.side} ${spent} ${hit ? 'hurt' : ''} ${
           flinching === 'b' ? 'spin-b' : ''
-        } ${striking ? 'striking' : ''}`}
+        } ${striking ? 'striking' : ''} ${inPlace ? 'in-place' : ''}`}
         title={title}
         style={{
           // Rounded to whole art pixels, in CSS rather than here: these are
@@ -4274,7 +4767,9 @@ function UnitChip({
 
   return (
     <div
-      className={`unit ${unit.side} ${spent} ${hit ? 'hurt' : ''} ${striking ? 'striking' : ''}`}
+      className={`unit ${unit.side} ${spent} ${hit ? 'hurt' : ''} ${striking ? 'striking' : ''} ${
+        inPlace ? 'in-place' : ''
+      }`}
       style={{ borderColor: ELEMENT_COLOR[themeOf(unit.def)] }}
       title={title}
     >

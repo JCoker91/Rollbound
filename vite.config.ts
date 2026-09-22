@@ -272,13 +272,15 @@ function animationSaver(): Plugin {
             token?: string;
             png?: string;
             append?: boolean;
+            replace?: boolean;
           };
           try {
             parsed = JSON.parse(body);
           } catch (e) {
             return fail(400, e instanceof Error ? e.message : 'bad JSON');
           }
-          const { mode, who, clip, grid, bleed, token, png, append } = parsed;
+          const { mode, who, clip, grid, bleed, token, png, append, replace } = parsed;
+          if (append && replace) return fail(400, 'append and replace ask for opposite things');
           if (grid && !/^\d{1,2}x\d{1,2}$/.test(grid)) return fail(400, 'grid must look like 4x1');
 
           const inbox = resolve(root, '.art-inbox');
@@ -335,8 +337,11 @@ function animationSaver(): Plugin {
             }
             const already =
               existsSync(frames) && readdirSync(frames).filter((f) => f.endsWith('.png')).length;
-            if (already && !append) {
-              return fail(409, `${clip}/ already has ${already} frames -- tick "add to it" to append`);
+            if (already && !append && !replace) {
+              return fail(
+                409,
+                `${clip}/ already has ${already} frames -- choose whether to add to it or replace it`,
+              );
             }
             /*
              * Split straight out of the staging folder into the clip's folder.
@@ -362,10 +367,22 @@ function animationSaver(): Plugin {
             if (grid) args.push('--grid', grid);
             if (bleed) args.push('--bleed', bleed);
             if (append) args.push('--append');
+            // The splitter empties the folder itself, and reports every file it
+            // drops in the log this hands back -- a deletion the page asked for
+            // is still one the person watching should see itemised.
+            if (replace) args.push('--replace');
             return run(args, (code, out, err) => {
               if (code !== 0) return fail(500, (err || out).trim() || 'split failed');
               res.setHeader('content-type', 'application/json');
-              res.end(JSON.stringify({ ok: true, clip, appended: !!already, log: out.trim() }));
+              res.end(
+                JSON.stringify({
+                  ok: true,
+                  clip,
+                  appended: !!already && !!append,
+                  replaced: !!replace,
+                  log: out.trim(),
+                }),
+              );
             });
           }
 
@@ -480,15 +497,28 @@ function animationSaver(): Plugin {
               if (!Array.isArray(impacts)) return fail(400, 'impacts must be an array');
               for (const i of impacts) {
                 if (!i || typeof i !== 'object') return fail(400, 'bad impact');
-                const { frame, effect, at } = i as Record<string, unknown>;
+                const { frame, effect, at, to } = i as Record<string, unknown>;
                 if (!Number.isInteger(frame) || (frame as number) < 0) {
                   return fail(400, 'impact.frame must be a frame index');
                 }
                 if (typeof effect !== 'string' || !NAME.test(effect)) {
                   return fail(400, 'impact.effect must be an effect id');
                 }
-                if (at != null && at !== 'each' && at !== 'centre') {
-                  return fail(400, 'impact.at must be "each" or "centre"');
+                /*
+                 * `caster` was missing here, and it had never been saved once.
+                 *
+                 * The lab has offered the option for as long as the placement
+                 * has existed, so every attempt to author a burst on the
+                 * Performer came back 400 and the impact stayed on `each` --
+                 * which then fans a hit spark over the caster of any ability
+                 * that also buffs them. A validator that does not know about a
+                 * value the editor emits is not a guard, it is a silent veto.
+                 */
+                if (at != null && at !== 'each' && at !== 'centre' && at !== 'caster') {
+                  return fail(400, 'impact.at must be "each", "centre" or "caster"');
+                }
+                if (to != null && to !== 'struck' && to !== 'aided') {
+                  return fail(400, 'impact.to must be "struck" or "aided"');
                 }
               }
               if (impacts.length) settings.impacts = impacts;

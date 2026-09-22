@@ -158,6 +158,44 @@ not progress, and wiping one should never touch the other. Entries are validated
 trusted — the file outlives the roster it was written against, and a member naming a since-renamed
 character is dropped rather than allowed to crash the party build.
 
+### Playback speed
+
+A cycling button in the top bar (`▸ 1×` → `▸▸ 1.5×` → `▸▸▸ 2×`), remembered in `localStorage`.
+**`2×` is the pace every duration constant in `BattleScreen.tsx` is written at**, so the top of the
+range is exactly what the game did before the control existed, and the default is half of it.
+
+A button rather than a dropdown because there are only three stops and they are ordered: a transport
+control reads as "more of the same thing" at a glance, where a menu has to be opened before it says
+what is in it. It is held to a fixed width, since a label stepping `1× → 1.5×` would resize the
+button under the cursor between one click and the next.
+
+**It scales the performance, not the transit**, and that split is the whole design. Stretched: the
+clip, the impacts riding its frames, the bursts, the flinch, the tumble and the floating numbers.
+Not stretched: the walk downstage, the pause at the mark, the walk home, and the gaps between turns.
+
+That was measured, because the instinct was to scale everything. Benjamin's four abilities run
+480–2415ms of clip inside a 2060–3995ms beat — a turn is already more waiting than acting, since
+`STEP_OUT_MS + SETTLE_MS + STEP_BACK_MS` is a flat 1580ms of travel and pause whatever the ability
+is. Scaling that too would have doubled a second and a half of nothing per Performer, about eight
+seconds a round with a full party, and made the game slower without making anything easier to read.
+What is hard to read is six numbers landing across a 2.4s swing, and that is what this stretches:
+
+| | mean turn | 5-Performer phase |
+| --- | --- | --- |
+| `2×` (as before) | 3158ms | 15.8s |
+| `1.5×` | 3624ms | 18.1s |
+| `1×` (default) | 4556ms | 22.8s |
+
+Two mechanisms, one number. JS timers multiply by `slow` (`FULL_SPEED / speed`); CSS animations that
+belong to the performance are written `calc(<base> * var(--slow, 1))` and read a `--slow` custom
+property set on the battle root — so a duration does not have to be posted into each element from
+React. The `--beat` the walk runs on is JS-side, via `beatOf`, whose `holdStart` / `holdEnd` are
+proportions: a stretched clip automatically makes the same 260ms walk a smaller share of a longer
+beat, which is the "transit does not scale" rule drawing itself.
+
+The speed lives **only** in the battle. `stepMsFor` is untouched, because it answers "what pace was
+this clip authored at" and the animation lab is tuning the drawing, not watching a fight.
+
 ### Two layouts: the dock, and cinema
 
 The battle screen has **two arrangements of the same components**, toggled by `▣ Cinema` in the top
@@ -187,6 +225,36 @@ twice over: 46vw of panel sat on the cast, and the ability list was below its ow
 covered the characters *and* hid the one thing needed every turn. A dock can afford to show a
 Performer's whole sheet at once; a floating layer has to earn every pixel, and what it has to earn
 is the list you click. Everything else is one hover away.
+
+**Two hovers, two answers.** Pointing at a **roster row** is a request to *read* somebody: it
+focuses the camera on them and opens the full card — stats, matchups, what is on them, their whole
+kit. Pointing at the **figure on the boards** is a glance: it puts their action menu up and does
+nothing else, no camera move and no card. That is what the menu is good at and the card is not —
+running your eye along the line to see who has a chain mark lit.
+
+A peek forces the **Abilities** door open. Inheriting whichever door happened to be open for the
+character you last commanded would make the answer to "what can she do" depend on something you did
+two turns ago.
+
+Enemies fall through to the card from either hover, because an enemy has no menu — offering
+"Abilities" over one implies you could cast theirs.
+
+> **A peeked menu takes no pointer at all** (`pointer-events: none` on the panel *and* its children,
+> since `.hud > *` turns it back on one level down). That is load-bearing, not tidy: the panel is
+> centred on the screen and the thing being hovered is a body on the boards, so the two overlap. If
+> the panel took the pointer, the sprite would lose the hover the instant the menu covered it, the
+> menu would close, the sprite would get it back, and the pair would strobe at the frame rate.
+>
+> The cost is that you cannot hover an ability *row* while peeking, so the rules strip stays empty —
+> the marks and the costs are all visible, the sentences are not. Fixing that properly means a hover
+> bridge (hold the peek while the pointer is over the menu, cancel on a timer), which is real
+> machinery for a preview panel; refusing the pointer is the version that cannot flicker.
+
+The peek is suppressed wherever the pointer already means something else: while an ability is in
+hand the cursor is a targeting reticle and `hover` is what aims it, and while the turn resolves
+nothing on the board is a control. It also feeds the docked layout's sheet, so pointing at a body
+there shows that body's sheet — the dock has no menu, and the alternative was one hover meaning two
+different things depending on the layout.
 
 **An action menu and an info card are different objects.** A menu is a list of things to *do*, which
 only makes sense for a Performer of yours that you have picked and who can still move. An enemy or a
@@ -373,6 +441,64 @@ state, and both states can be true at once — a pseudo-element competes for nei
 chained row reads as both, and `ready`'s glow survives where a second `box-shadow` rule on the row
 would have replaced it rather than added to it. The marker is computed from the round, not from the
 selection, so it reads the same on a previewed Performer's sheet as on the selected one's.
+
+**The stack is on screen.** The status bar draws every mark in play this round, beside the turn
+count — in the bar rather than a panel of its own, because that is what it is, a fact about the
+round sitting next to the phase and the turn, and because a bar both layouts already share costs no
+new positioning. Two states, and the difference is the decision: a **solid** mark is out, so
+anything chained to it fires the moment it is cast; a **dashed** one is only promised by an action
+sitting in the queue, true in the order you have arranged and false again the moment you move that
+action below the ability meant to use it. Dashed rather than faded — faded reads as "less
+important", and this is not less important, it is conditional, which is the thing the reorder
+buttons act on. Its tooltip names the queued action doing the arming, since "do I put my chained
+ability after that one" needs a name and not just a shape. The engine clears `armed` each turn, so
+an empty stack draws nothing at all.
+
+**Cinema's ability rows carry the mark too**, right-aligned so the marks form a column down the menu
+— "which two of these four chain together" is a question you answer by scanning, not by reading. It
+had been left off deliberately, on the rule that the menu holds only what you need to *choose* and
+the hover strip holds what you need to *understand*. The chain mark turns out to be on the other
+side of that line: it is not a fact about the ability but about the **board**, and it is the reason
+to cast this one now rather than next turn. Without it a player in cinema could watch a chain fire
+and never see one coming.
+
+**The chain line shows on every ability that carries a symbol**, in both layouts. Cinema had gated
+it on `chainFires`, so it appeared only while the chain was *already* live — which is exactly when
+you least need telling, and never while you are deciding whether to set one up. It read as "works on
+some abilities and not others" because what it actually depended on was the state of the board. The
+same paragraph was also scoped `.rules .sub.chain`, a wrapper only the docked panel has, so on the
+occasions cinema did draw it, it came out as an unstyled icon and a run of body text. Both fixed:
+the selector stands on its own at two classes, and the lead reads **`Chains now:`** rather than
+`Chained:` while the chain is live.
+
+**The mark sits in the corner of the rules box**, not at the bottom beside the clause — a label on
+the card, the way a suit sits in the corner of a playing card, so it reads as *what kind of thing is
+this* before the sentence under it is read at all. At the bottom it was competing with the chained
+clause for the same line and losing.
+
+> A carrier gets the mark and **no text**. There was briefly a `describeArming` returning *"Plays
+> Anvil for whoever acts after it."*, written and then removed a turn later: a carrier's entire
+> contribution is "this mark will be out", the corner mark says that by being there, and restating a
+> shape in prose is exactly the waste the symbols replaced prose to avoid.
+
+**A live chain breathes.** The ring went from 1px to 2px and now pulses on a 1.6s cycle, with the
+symbol chip pulsing in step so the two read as one signal. A static gold ring was one more gold edge
+on a screen where `ready`, the cost badge and the row border are all static gold, so it read as
+decoration — and what it has to say is *available right now, and not next round*. Slow and shallow
+deliberately: it is on screen for a whole turn and must not become the thing you are trying to
+ignore while reading the row underneath. Under `prefers-reduced-motion` the animation stops but is
+held at the **bright** end rather than reverting to the quiet ring; the prominence is the point and
+has to survive the preference.
+
+**The cost sentence is gone from the battle screen.** *"Spend any dice totalling exactly 9. Then
+unavailable for 3 turns."* was restating, in prose, two controls on the same row: the cost is a badge
+on the ability you are reading and a cooldown is a counter drawn over it while it runs. `describeCost`
+itself is untouched and the Characters screen still calls it — that page is where a kit is read end
+to end, away from the board, and the cooldown has no other home there at all.
+
+> **The cooldown now has no pre-use home in battle.** The counter only appears while an ability is
+> actually cooling, so its length is no longer readable before the first cast. That is a real loss
+> and a deliberate one; a small `⟳3` chip beside the cost would close it if it turns out to matter.
 
 **The ability list is never hidden.** A kit describes the character; it is not a menu that exists
 only while it can be used, and hiding it emptied the widest part of the sheet at the exact moment
@@ -1455,6 +1581,24 @@ Save.
 `describe.ts` states an uneven split in the rules text (`over 3 hits of 25% / 25% / 50%`) and stays
 quiet about an even one, since "six hits" already says thirds without arithmetic.
 
+**The board shows the total once the action has landed.** Six numbers flying past in two seconds is
+six numbers nobody adds up, so an action that dealt damage over **more than one blow or to more than
+one target** puts its total in a box above the middle of the stage, with the shape of it underneath
+(`6 hits`, `5 targets`, or both). A single strike on a single target gets nothing: its floater
+already IS the total, and restating it larger a few inches away reads as two different numbers
+before it reads as one.
+
+It sums the **damage log events**, not the HP diff. The diff is the right source for the floaters --
+it is what actually left the unit, so it catches overkill trimming and regen with no name matching
+-- but the box is answering "what did the ability deal", and the events are exactly that, and are
+the same events the per-blow floaters are built from, so what is on screen adds up to what is in the
+box. **Thorns is excluded**: it is logged as damage like everything else but it is the target
+hitting back, and counting it would put the attacker in the list of people the ability struck --
+enough on its own to push a plain single strike over the two-target line.
+
+It fires on the **last** blow. A running subtotal is a number that changes while you are reading it,
+which is the problem rather than the fix.
+
 ### 5.3 Enemies are NOT built like player characters
 
 This is the single most important content distinction.
@@ -1967,10 +2111,11 @@ hard-coded constant — so it moved the lab preview and nothing else.
 
 #### Impacts — when a particle effect fires
 
-An `impacts` entry is what turns a sword swing into a hit: `{ frame, effect, at, scale, dx, dy,
+An `impacts` entry is what turns a sword swing into a hit: `{ frame, effect, at, to, scale, dx, dy,
 delay, ms }`. `effect` names a particle set, `at` is `each` (once per target), `centre` (one burst
-at the middle of them) or `caster` (one burst on the performer), and the offsets and `scale` place
-it against whichever body it lands on.
+at the middle of them) or `caster` (one burst on the performer), `to` optionally narrows `each` and
+`centre` to what the ability `struck` or `aided`, and the offsets and `scale` place it against
+whichever body it lands on.
 
 **Impacts land on whoever the action AFFECTED, not on whoever it hurt.** The list used to come from
 an HP diff, which made every buff invisible: Rally touches allies and damages none of them, so the
@@ -2001,7 +2146,41 @@ one frame, `caster` and `each`, read as "he raises his sword and the light settl
 single placement says that. In the battle it costs nothing to draw — `on` is set to the acting unit
 and the burst rides that unit's slot exactly as a target burst rides theirs.
 
-The first effect authored for it is `art/effects/buff_4x1.png`, a gold ring-and-swirl flourish, on
+> **`at: 'caster'` had never once been saved.** The lab has offered it since the placement existed,
+> but `/__anim/save` validated `at` against `'each' | 'centre'` only, so every attempt came back 400
+> and the impact stayed on `each`. A validator that does not know a value its own editor emits is not
+> a guard, it is a silent veto — and the whole point of this paragraph was unreachable in practice.
+
+**`Impact.to` narrows a burst to part of what the ability reached.** The rule above — that the side
+is decided by who was affected and is never a choice — holds for an ability that does *one* thing.
+Perfect Form damages an enemy and buffs Benjamin, so it affected two units for two different
+reasons, and `each` cannot tell a sword landing from a blessing landing: it fanned both drawings
+over both bodies and the hit spark went off on the Performer.
+
+`to` is `struck` (what this ability damaged) or `aided` (what it reached without damaging), and
+omitting it means everyone — which is what every impact authored before it means, and what a
+single-purpose ability wants. **It filters by outcome, not by side**, deliberately: a side selector
+would let a sheet declare a spark on the wrong team, which is the bug the original rule exists to
+prevent, and the outcome split stays honest for an ability that damages an ally or heals an enemy.
+Measured on the real case:
+
+```
+Perfect Form  log: modify:Benjamin ×3  damage:Red Understudy ×6
+  all    [Red Understudy, Benjamin]     <- what `each` was fanning over
+  struck [Red Understudy]
+  aided  [Benjamin]
+```
+
+**Thorns damage does not make a unit struck.** It is the target hitting back, so counting it would
+mark the attacker and put the hit spark on the Performer — the same bug in a different coat. The
+`struck` set is read off the damage log with `matchup === 'thorns'` skipped, the same exclusion the
+damage total uses. `caster` ignores `to` entirely: it names one unit and has no group to narrow.
+
+The lab hides the control on a `caster` impact for that reason, and it is the one impact control
+whose result the practice dummy cannot show — there is only one dummy and it is neither struck nor
+aided, so this one is only visible in a battle.
+
+The first effect authored for `caster` is `art/effects/buff_4x1.png`, a gold ring-and-swirl flourish, on
 Benjamin's `rally` at step 2 — the long held pose — with `ms: 900` so it plays under the hold rather
 than snapping out of it at the 380ms default.
 
@@ -2153,10 +2332,24 @@ thing you can own: regenerate one bad drawing instead of a whole sheet, or lift 
 animation into another to build something the generator would not produce in one pass. A folder
 beats a same-named sheet, so nothing has to migrate in a hurry.
 
-**A clip can be assembled from several sheets.** `--append` adds a cut sheet's frames to a clip that
-already has some, continuing the numbering; the `⤓ Drop art` screen offers the same thing as a
-checkbox. Benjamin's celebration is built this way — a sword-raise and a back-flip generated
+**A clip that already has frames can be added to or started over.** `--append` continues the
+numbering; `--replace` empties the folder first. The two ask for opposite things and are refused
+together, and the `⤓ Drop art` screen puts them as a pair of radios with **neither** preselected,
+because adding to the wrong clip buries good frames behind new ones and replacing the wrong one
+deletes them. Benjamin's celebration is built by appending — a sword-raise and a back-flip generated
 separately, cut, and joined.
+
+**Replace clears rather than overwrites**, and that is not fussiness. A new sheet may hold *fewer*
+frames than the old one, and leftovers keep their numbers and are read back as part of the clip — a
+four-frame swing replaced by a two-frame one would play the two new drawings and then the back half
+of the animation it was meant to retire. It also drops any loose sheet for the same clip sitting in
+`animations/`, which a folder shadows: unread, and therefore harmless right up until somebody
+deletes the folder and a sheet nobody remembers uploading comes back as the clip. Every file dropped
+is named in the log.
+
+For a **pose** (`pain`, `death`, `thinking`) there is nothing to append to — it is one drawing
+installed as `<actor>_<pose>.png` — so the splitter refuses a second one unless `--replace` says to
+overwrite it, and the drop page offers Replace alone.
 
 New frames always land at the end, and the order is then set in the animation lab. That is not a
 limitation: `order` in `<name>.anim.json` indexes **source** frames, so appending cannot disturb an
@@ -2420,8 +2613,19 @@ Two of his clips are worth looking at as worked examples:
 - **`idle_2` and `idle_3` were cut with `--bleed`**, because their figures overlap their seams. The
   neighbour fragments were erased automatically.
 
-`move` packs but nothing plays it: repositioning still returns early with a fixed `MOVE_MS` and no
-clip. That renderer is the one obvious gap left in his kit.
+- **`move` plays in place.** The stage was already walking a repositioning character across the
+  boards — `.stage-slot` transitions `left` and `top`, which is what makes two units in a swap cross
+  each other — but nothing changed the DRAWING, so they glided to their new rank in whatever idle
+  they were holding, feet still. The clip now plays with no lead-in, no impacts and **no walk
+  downstage**: `pulse.inPlace` adds an `in-place` class and the `stage-strike` selectors became
+  `.striking:not(.in-place)`. The flag is on the WALK rather than on the performing, because a
+  reposition wants everything else `striking` carries — the `ready` stance, the clip, the exemption
+  from the spent-unit dim — and only not the journey to the mark, which would be a second journey
+  for one decision with the one the player asked for buried underneath.
+
+  It runs once and holds its last frame, so author it to about `MOVE_MS` (520ms); Benjamin's single
+  frame is a walking pose held through the glide. Repositioning does **not** scale with the playback
+  speed, under the same rule as the step out and the step home: a walk is transit.
 
 **`SPRITE_STYLE_GUIDE.md` describes the pixel-art era and is superseded** by the paper/sticker art.
 Its banner lists what the pipeline still enforces; the rest is history awaiting an art-direction
@@ -2576,6 +2780,41 @@ chains**. The carrier/trigger distinction — the one real thing the prose was c
 chip's fill: an ability with a trigger gets a gold filled chip, a pure carrier an outlined one, so
 "which two of these four chain, and which of them benefits" is answerable from the kit list without
 hovering anything.
+
+**Every chain clause says what it does, with the figure in it.** They were written as flavour —
+*"the guard answers magic as well as steel"*, *"the wind is answered as well as the stone"*, *"the
+shred bites deeper"* — and flavour is the one thing this line cannot afford. It is the **only** place
+a chain's payoff is stated, it is read while deciding whether to spend a whole separate action arming
+the mark, and nobody can weigh "bites deeper" against anything. All sixteen were rewritten in the
+vocabulary `describeAbility` already uses for the base ability sitting directly above them, so the
+two read as the same sentence twice and the delta is the thing that stands out:
+
+```
+Sunder        base     … then reduces its P.DEF by 25% of its own base stats for 3 turns.
+              chained  Reduces its P.DEF by 40% instead of 25%.
+
+Frost Armor   base     … while it lasts anyone hitting them with a physical attack takes 1 frost …
+              chained  Anyone hitting them with a magical attack takes 1 frost as well.
+
+Bedrock       base     Raises the whole party's Earth resistance by 50% for 2 turns.
+              chained  Raises the whole party's Wind resistance by 50% for 2 turns as well.
+```
+
+`describeElement`'s resist line gained its missing `%` in the same pass — it read *"by 50 for 2
+turns"*, and a chained clause beside it saying `50%` would have looked like two different numbers.
+
+**Perfect Form now chains**, which reverses an earlier call. It carried `lantern` with no trigger on
+the argument that a chained ultimate collapses the decision into "save the ult for a chain" — but
+that assumed the chain was a free rider, and at cost 10 on a 3-turn cooldown it is not. Arming it
+means spending a whole other action on a lantern first, in the same round, before an ability that
+comes up roughly twice a fight. `empower: 0.5` and `amplify: 5` take it to **250% of ATK instead of
+200% and a 25% self-buff instead of 20%** — written as deltas so retuning the base carries the chain
+with it.
+
+> It makes Benjamin the only Performer whose symbol pair reads in **both directions**. Both his
+> lantern abilities now carry triggers, so neither arms the other from a cold start — but arming is
+> unconditional, so Rally into Perfect Form and Perfect Form into Rally both pay off. Every other
+> Performer is one carrier and one trigger per symbol.
 
 **Brax fills the 5★ summon tier**, which was previously empty — and his canvas is the interesting
 part. **Stature is `body / canvas`, so a bigger canvas is a detail

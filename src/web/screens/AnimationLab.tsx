@@ -952,6 +952,31 @@ ${poseCss}` : ''),
                     <option value="centre">once, at their centre</option>
                     <option value="caster">once, on the caster</option>
                   </select>
+                  {/*
+                    Which of the affected, for an ability that does two things.
+
+                    Hidden on `caster`, which names one unit and has nothing to
+                    narrow. Note that the dummy cannot show the difference --
+                    there is only one of it, and it is neither struck nor aided
+                    -- so this is the one impact control whose result is only
+                    visible in a battle. The labels say what they filter on
+                    rather than naming a team, because the filter is by what
+                    HAPPENED: a sheet that could declare a side could declare
+                    the wrong one.
+                  */}
+                  {im.at !== 'caster' && (
+                    <select
+                      value={im.to ?? 'all'}
+                      onChange={(e) =>
+                        set({ to: e.target.value === 'all' ? undefined : (e.target.value as 'struck' | 'aided') })
+                      }
+                      title="Which of the affected this burst is for. Only matters when one ability both damages and helps -- otherwise leave it on everyone."
+                    >
+                      <option value="all">everyone affected</option>
+                      <option value="struck">only what it damaged</option>
+                      <option value="aided">only what it helped</option>
+                    </select>
+                  )}
                   <button
                     type="button"
                     className="lab-impact-drop"

@@ -175,7 +175,7 @@ function describeEffect(a: Ability, fx: Effect, sameTargetAsPrevious: boolean): 
       const whose = sameTargetAsPrevious ? who.it : `${who.full}'s`;
       return (
         `${fx.percent < 0 ? 'lowers' : 'raises'} ${whose} ${cap(fx.element)} resistance by ` +
-        `${Math.abs(fx.percent)} for ${fx.turns} turn${fx.turns === 1 ? '' : 's'}`
+        `${Math.abs(fx.percent)}% for ${fx.turns} turn${fx.turns === 1 ? '' : 's'}`
       );
     }
     case 'modify': {

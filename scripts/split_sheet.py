@@ -261,6 +261,31 @@ def analyse(path: Path, grid: str | None) -> dict:
     }
 
 
+def shadowed_sheets(folder: Path, clip: str, source: Path) -> list[Path]:
+    """
+    Loose sheets in `folder` that are another copy of `clip`.
+
+    A clip folder BEATS a same-named sheet, so cutting one into frames leaves
+    the sheet it came from -- or an older one for the same clip -- sitting there
+    unread. Harmless right up until somebody deletes the folder, at which point
+    a sheet nobody remembers uploading comes back to life as the clip.
+
+    Only `--replace` acts on this. Appending is adding to what is there, and
+    what is there includes the sheet; removing it would be a deletion nobody
+    asked for.
+    """
+    actor = folder.parent.name
+    out = []
+    for f in sorted(folder.glob('*.png')):
+        if f.resolve() == source.resolve():
+            continue
+        stem = f.stem
+        name = stem[len(actor) + 1:] if stem.startswith(f'{actor}_') else stem
+        if parse_grid(name)[0] == clip:
+            out.append(f)
+    return out
+
+
 def split(
     path: Path,
     write: bool,
@@ -269,6 +294,7 @@ def split(
     clip_name: str | None = None,
     out_dir: Path | None = None,
     append: bool = False,
+    replace: bool = False,
     grid_override: str | None = None,
 ) -> int:
     name = path.parent.parent.name  # animations/<sheet> -> the actor's folder
@@ -312,11 +338,12 @@ def split(
         print(f'{path.name}: a still  ->  {readable(dest)}')
         if not write:
             return 0
-        if dest.exists():
-            print(f'    refusing: {dest.name} is already there -- delete it to replace it')
+        if dest.exists() and not replace:
+            print(f'    refusing: {dest.name} is already there -- pass --replace to overwrite it')
             return 1
+        overwriting = dest.exists()
         dest.write_bytes(path.read_bytes())
-        print(f'    wrote {dest.name}')
+        print(f'    {"replaced" if overwriting else "wrote"} {dest.name}')
         if remove:
             path.unlink()
             print(f'    removed {path.name}')
@@ -357,9 +384,28 @@ def split(
     if not write:
         return 0
     existing = sorted(out.glob('*.png')) if out.exists() else []
-    if existing and not append:
+    stale = shadowed_sheets(out_dir or path.parent, clip, path) if replace else []
+    if existing and not (append or replace):
         print(f'    refusing: {out.name}/ already has frames in it')
         return 1
+
+    '''
+    Replacing empties the folder first, rather than writing over it.
+
+    Overwriting in place looks equivalent and is not: the new sheet may hold
+    FEWER frames than the old one, and the leftovers keep their numbers and are
+    read back as part of the clip -- so a four-frame swing replaced by a
+    two-frame one plays the two new drawings and then the back half of the
+    animation it was meant to retire. Clearing first means the numbering always
+    restarts at 01 and what is in the folder is what was just cut.
+    '''
+    if replace:
+        for f in existing + stale:
+            f.unlink()
+            print(f'    removed {f.name}')
+        # Emptied, so the numbering below starts from nothing rather than
+        # continuing past files that are no longer there.
+        existing = []
 
     '''
     Appending continues the numbering rather than restarting it.
@@ -409,6 +455,8 @@ def main() -> int:
     ap.add_argument('--grid', default=None, help='override the grid, e.g. 4x1')
     ap.add_argument('--clip', default=None, help='target clip name, instead of reading the filename')
     ap.add_argument('--out', default=None, help='folder to write the clip folder into')
+    ap.add_argument('--replace', action='store_true',
+                    help="empty the clip's folder first, and drop any same-named sheet shadowing it")
     ap.add_argument('--append', action='store_true',
                     help='add to a clip that already has frames, continuing the numbering')
     ap.add_argument('--bleed', nargs='?', const='10%', default=None,
@@ -434,8 +482,12 @@ def main() -> int:
             return 0
         bad = sum(split(p, args.write, args.remove, args.bleed) for p in sheets)
     else:
+        if args.append and args.replace:
+            print('--append and --replace ask for opposite things; pick one')
+            return 2
         bad = split(Path(args.target), args.write, args.remove, args.bleed,
-                    args.clip, Path(args.out) if args.out else None, args.append, args.grid)
+                    args.clip, Path(args.out) if args.out else None, args.append,
+                    args.replace, args.grid)
 
     if not args.write:
         print('\n(dry run -- pass --write to apply)')

@@ -80,7 +80,12 @@ visible where you would notice.
 booked),
 `upgrade` (buying an in-battle upgrade), `pain` and `death` (stills), `celebration`, and
 `celebration_ending` (the pose `celebration` settles into — the `_ending` suffix is what wires that
-up). `move` has no renderer yet; a sheet for it will pack and sit unused.
+up), and `move` (held while a repositioning character crosses the stage).
+
+**Author `move` to about `MOVE_MS` (520ms).** It plays **once and holds its last drawing** while the
+slot itself does the travelling, so a clip shorter than the crossing reads as a planted stride and
+one longer gets cut off at the landing. A single frame is a perfectly good `move` — it is a walking
+pose held through the glide, which is what Benjamin's is.
 
 There is **no generic `attack` clip.** An ability with no sheet plays no clip: the Performer walks
 out, holds their `ready` stance for the beat, and walks back.
@@ -118,9 +123,26 @@ Two things worth knowing about how it works:
 - **Nothing lands under `art/` until you commit.** The upload is stashed in `.art-inbox/` while you
   look at it, so the watcher does not fire and the page does not reload out from under the decision.
 
-**A clip can be built from several sheets.** If the clip you pick already has frames, the page offers
-*"Add these frames to it"* instead of refusing. Benjamin's celebration is two generations joined this
-way: a sword-raise and a back-flip, cut separately and appended.
+**If the clip you pick already has frames, the page asks what to do with them** rather than
+refusing — *"Add these frames to it"* or *"Replace what is there"*. Neither is the default: adding to
+the wrong clip buries good frames behind new ones and replacing the wrong one deletes them, so the
+commit button stays off until you choose. A **pose** (`pain`, `death`, `thinking`) is a single
+drawing held for a state, so there is nothing to add to and only Replace is offered.
+
+**A clip can be built from several sheets** — that is what Add is for. Benjamin's celebration is two
+generations joined this way: a sword-raise and a back-flip, cut separately and appended.
+
+**Replace empties the folder before writing**, rather than overwriting in place, and it drops any
+loose sheet for the same clip sitting beside it. Both matter:
+
+- Overwriting looks equivalent and is not. A new sheet may hold *fewer* frames than the old one, and
+  the leftovers keep their numbers and are read back as part of the clip — so a four-frame swing
+  replaced by a two-frame one plays the two new drawings and then the back half of the animation it
+  was meant to retire. Clearing first means numbering always restarts at `01`.
+- A folder beats a same-named sheet, so a shadowed sheet sits unread — harmless right up until
+  somebody deletes the folder and a sheet nobody remembers uploading comes back as the clip.
+
+Every file it drops is named in the log the page prints.
 
 New frames always land at the **end**, and then you order them in the anim lab — it can move,
 duplicate and disable frames while the clip plays, which is a far better place to decide order than a
@@ -141,7 +163,8 @@ npm run art:split -- art/actors/benjamin/animations/benjamin_idle_2_3x1.png --wr
 npm run art:split -- --all benjamin --write        # every sheet this actor has
 ```
 
-Dry-run by default; `--remove` deletes the sheet once its frames are written.
+Dry-run by default; `--remove` deletes the sheet once its frames are written. `--append` and
+`--replace` ask for opposite things and are refused together.
 
 | flag | |
 | --- | --- |
@@ -149,6 +172,7 @@ Dry-run by default; `--remove` deletes the sheet once its frames are written.
 | `--clip <name>` | Which clip the frames belong to, instead of reading it off the filename. |
 | `--out <dir>` | Where the clip folder goes. Lets a sheet be split out of a staging folder. |
 | `--append` | Add to a clip that already has frames, continuing the numbering. |
+| `--replace` | Empty the clip's folder first, and drop any same-named sheet shadowing it. |
 | `--json` | Print the cut as data and write nothing. What the upload page previews with. |
 
 > **`--grid` and `--remove` together were a trap, and it cost a source file.** `--grid` reached the

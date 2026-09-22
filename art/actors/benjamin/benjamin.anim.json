@@ -78,7 +78,7 @@
         "effect": "buff",
         "at": "each",
         "scale": 1,
-        "dx": 12,
+        "dx": -2,
         "dy": 14,
         "delay": 0,
         "ms": 1200
@@ -90,12 +90,12 @@
         "ms": 1200,
         "scale": 1,
         "dy": 14,
-        "dx": 12
+        "dx": -2
       }
     ],
     "placement": {
       "scale": 1.25,
-      "dx": -14.5
+      "dx": -7
     },
     "frames": [
       {
@@ -123,6 +123,73 @@
       3
     ],
     "stepMs": 105
+  },
+  "ability_4": {
+    "impacts": [
+      {
+        "frame": 1,
+        "effect": "impact",
+        "at": "each",
+        "scale": 1.4,
+        "ms": 1000,
+        "to": "struck"
+      },
+      {
+        "frame": 2,
+        "effect": "impact",
+        "at": "each",
+        "ms": 1000,
+        "dx": -20,
+        "dy": -20,
+        "to": "struck"
+      },
+      {
+        "frame": 3,
+        "effect": "impact",
+        "at": "each",
+        "ms": 1000,
+        "dy": 20,
+        "to": "struck"
+      },
+      {
+        "frame": 4,
+        "effect": "impact",
+        "at": "each",
+        "dx": 20,
+        "ms": 1000,
+        "to": "struck"
+      }
+    ],
+    "placement": {
+      "scale": 1.095,
+      "dx": -4.5
+    },
+    "frames": [
+      {
+        "hold": 2
+      },
+      {
+        "dx": -5
+      },
+      {
+        "hold": 4,
+        "dx": -0.5
+      },
+      {
+        "hold": 1.25,
+        "dx": -6
+      }
+    ],
+    "order": [
+      0,
+      1,
+      1,
+      1,
+      1,
+      2,
+      3
+    ],
+    "stepMs": 260
   },
   "attack": {
     "impacts": [
@@ -314,7 +381,7 @@
       }
     ],
     "stepMs": 260,
-    "idleWeight": 10
+    "idleWeight": 0
   },
   "idle_4": {
     "frames": [
