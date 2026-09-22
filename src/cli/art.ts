@@ -35,6 +35,7 @@ const EXPECTED: { clip: string; grid: boolean; note: string }[] = [
   { clip: 'idle_3', grid: false, note: 'alternate stance' },
   { clip: 'idle_4', grid: false, note: 'alternate stance' },
   { clip: 'ready', grid: false, note: 'held while walking out, and while an action is queued' },
+  { clip: 'thinking', grid: false, note: 'still — held while selected and still deciding' },
   { clip: 'upgrade', grid: true, note: 'buying an in-battle upgrade' },
   { clip: 'move', grid: true, note: 'repositioning' },
   { clip: 'pain', grid: false, note: 'still — held hit reaction' },

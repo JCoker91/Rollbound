@@ -191,6 +191,20 @@
       "src": "/sprites/benjamin/benjamin_ready.png",
       "trimmed": 0
     },
+    "thinking": {
+      "anchorX": 0.596,
+      "aspect": 0.99375,
+      "footPad": 0.0,
+      "frames": 1,
+      "loops": false,
+      "normalised": 1.0,
+      "pxH": 320,
+      "restFill": 1.0,
+      "size": 138532,
+      "src": "/sprites/benjamin/benjamin_thinking.png",
+      "still": true,
+      "trimmed": 0
+    },
     "upgrade": {
       "anchorX": 0.5118,
       "aspect": 0.857143,

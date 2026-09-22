@@ -40,7 +40,7 @@ export interface SpriteMetrics extends Omit<SpriteSheet, 'scale' | 'nativePx'> {
 export const SPRITE_METRICS: Record<SpriteId, SpriteMetrics> = {
   aethis: { src: '/sprites/aethis/aethis.png', icon: '/sprites/aethis/aethis_icon.png', aspect: 239 / 320, pxH: 320, anchorX: 0.444, nativePx: 84, nativeCanvas: 128, pixelArt: false },
   backdrop_bat: { src: '/sprites/backdrop_bat/backdrop_bat.png', icon: '/sprites/backdrop_bat/backdrop_bat_icon.png', aspect: 114 / 92, pxH: 92, anchorX: 0.346, nativePx: 92, nativeCanvas: 128, pixelArt: true },
-  benjamin: { src: '/sprites/benjamin/benjamin.png', icon: '/sprites/benjamin/benjamin_icon.png', pain: '/sprites/benjamin/benjamin_pain.png', death: '/sprites/benjamin/benjamin_death.png', aspect: 333 / 320, pxH: 320, anchorX: 0.584, nativePx: 84, nativeCanvas: 128, pixelArt: false, idle: { src: '/sprites/benjamin/benjamin_idle.png', frames: 6, aspect: 0.857143, pxH: 224, anchorX: 0.5118, restFill: 0.691964, footPad: 0.0 } },
+  benjamin: { src: '/sprites/benjamin/benjamin.png', icon: '/sprites/benjamin/benjamin_icon.png', pain: '/sprites/benjamin/benjamin_pain.png', death: '/sprites/benjamin/benjamin_death.png', thinking: '/sprites/benjamin/benjamin_thinking.png', aspect: 333 / 320, pxH: 320, anchorX: 0.584, nativePx: 84, nativeCanvas: 128, pixelArt: false, idle: { src: '/sprites/benjamin/benjamin_idle.png', frames: 6, aspect: 0.857143, pxH: 224, anchorX: 0.5118, restFill: 0.691964, footPad: 0.0 } },
   brax: { src: '/sprites/brax/brax.png', icon: '/sprites/brax/brax_icon.png', aspect: 224 / 211, pxH: 211, anchorX: 0.493, nativePx: 211, nativeCanvas: 256, pixelArt: true, idle: { src: '/sprites/brax/brax_idle.png', frames: 8, aspect: 1.090047, pxH: 211, anchorX: 0.4961, restFill: 0.976303, footPad: 0.0 } },
   caspian: { src: '/sprites/caspian/caspian.png', icon: '/sprites/caspian/caspian_icon.png', aspect: 356 / 320, pxH: 320, anchorX: 0.406, nativePx: 84, nativeCanvas: 128, pixelArt: false, idle: { src: '/sprites/caspian/caspian_idle.png', frames: 6, aspect: 1.130435, pxH: 92, anchorX: 0.4135, restFill: 0.972826, footPad: 0.0 } },
   false_lead: { src: '/sprites/false_lead/false_lead.png', icon: '/sprites/false_lead/false_lead_icon.png', aspect: 228 / 205, pxH: 205, anchorX: 0.533, nativePx: 205, nativeCanvas: 256, pixelArt: true },
@@ -220,6 +220,17 @@ export const ANIMATION_CLIPS: Record<string, Record<string, AnimationClip>> = {
       "restFill": 0.691964,
       "settlesInto": "idle",
       "src": "/sprites/benjamin/benjamin_ready.png"
+    },
+    "thinking": {
+      "anchorX": 0.596,
+      "aspect": 0.99375,
+      "footPad": 0.0,
+      "frames": 1,
+      "loops": false,
+      "normalised": 1.0,
+      "pxH": 320,
+      "restFill": 1.0,
+      "src": "/sprites/benjamin/benjamin_thinking.png"
     },
     "upgrade": {
       "anchorX": 0.5118,

@@ -3,6 +3,8 @@
 export { abilitySlug, slotAbilityName, abilityClipName, idleStances } from './clipNaming.ts';
 import { abilitySlug } from './clipNaming.ts';
 
+export { idleWeightFor } from './animationData.ts';
+
 import {
   ANIMATION_TUNING,
   CLIP_ORDER,

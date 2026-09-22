@@ -1692,9 +1692,30 @@ body {
   transform: translateY(-3px);
 }
 
+/*
+ * A picked die is INVERTED, not tinted.
+ *
+ * It was a slightly bluer fill and a border in the accent colour, which is a
+ * difference you can find if you go looking and not one you notice -- and
+ * "which dice am I spending" is read at a glance, several times a turn, while
+ * looking somewhere else on the board. Swapping ink and paper is the one
+ * change that cannot be missed, and it needs no colour of its own: the die
+ * keeps its own palette, reversed.
+ */
 .die.picked {
   border-color: var(--accent);
-  background: #26374f;
+  background: var(--text);
+  color: #121722;
+  /* Lifted as well as inverted. Two cues rather than one, because this is read
+     in a glance away from where the eye actually is. */
+  transform: translateY(-3px);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.45);
+}
+
+.die.picked .pip,
+.die.picked .val,
+.die.picked .was {
+  color: inherit;
 }
 
 .die.spent {
@@ -1727,9 +1748,18 @@ body {
   background: #e0a94f;
 }
 
+/*
+ * A lent die, picked. Inverted like any other, keeping its warm identity.
+ *
+ * This rule and `.die.contributed` above it both set a background AFTER
+ * `.die.picked`, and one of them at higher specificity -- so the contributed
+ * die was the one die on the board that could never show it was chosen. Both
+ * now invert; the tint is the only thing that stays different.
+ */
 .die.contributed.picked {
   border-color: #ffcc70;
-  background: #3a3120;
+  background: #f3e2bd;
+  color: #1d1a12;
 }
 
 /*
@@ -4436,9 +4466,27 @@ select {
  * Docked, it sits at the foot of the artwork with the tray safely below in its
  * own band; floating, that same spot is underneath the tray.
  */
-/* The tray moved to the top, so the foot of the picture is free again. */
+/*
+ * Narration in the middle of the frame, not along the bottom.
+ *
+ * At the foot of the picture it read as a subtitle -- something under the
+ * scene, describing it from outside. The line is the turn's own voice and it
+ * arrives at the moment the blow lands, so it belongs where the eye already is:
+ * the middle of the shot, above the cast and below the dice row that is not
+ * there while this is playing.
+ */
+/*
+ * Narration takes the tray's place at the top of the screen.
+ *
+ * The two never share the moment -- the tray is gone while a turn resolves and
+ * the line only exists while it does -- so they can have the same spot, and a
+ * player's eye does not have to move between "what I am doing" and "what just
+ * happened". At the foot of the picture it read as a subtitle: something under
+ * the scene, describing it from outside.
+ */
 .battle.cinema .hud-narration {
-  padding-bottom: 3vh;
+  align-self: start;
+  padding: 60px 0 0;
 }
 
 @media (max-width: 1100px) {
@@ -4474,9 +4522,52 @@ select {
  * makes it somewhere you learn rather than somewhere you look for, and there
  * is no anchor, no frame loop and nothing to drift.
  */
+/*
+ * The ACTION menu is centred and can be dragged; the info card is not.
+ *
+ * They want different things. A card is read while the camera holds a
+ * character off to one side, so it belongs in the half that leaves empty and
+ * should stay put. A menu is used while the whole board is visible and
+ * unzoomed, where there is no empty half -- so it starts in the middle, where
+ * nothing is, and anyone who disagrees can move it.
+ *
+ * The offset is remembered, because a player who has put a panel where they
+ * want it should not have to do it again every fight.
+ */
+.battle.cinema .hud-skills.menu-panel {
+  left: 50%;
+  right: auto;
+  top: 26%;
+  width: max-content;
+  max-width: min(420px, 40vw);
+}
+
+.battle.cinema .hud-skills.menu-panel .skill-menu {
+  /* The bar is the handle, so it says so. */
+  cursor: grab;
+}
+
+.battle.cinema .hud-skills.menu-panel.dragging .skill-menu {
+  cursor: grabbing;
+}
+
+/* The buttons inside it are still buttons, not handle. */
+.battle.cinema .hud-skills.menu-panel .skill-menu button {
+  cursor: pointer;
+}
+
 .battle.cinema .hud-skills {
   position: absolute;
-  top: 12%;
+  /*
+   * Below the dice row, with air between them.
+   *
+   * At 12% it butted straight up against the tray -- two panels touching read
+   * as one badly aligned panel. A fixed offset rather than a percentage,
+   * because what it has to clear is a fixed thing: the tray sits at a constant
+   * 52px with a constant height, so the gap should be constant too rather than
+   * growing and shrinking with the window.
+   */
+  top: 178px;
   /*
    * Just inside the centre line, not against the window edge.
    *
@@ -4920,29 +5011,49 @@ select {
  * the plan was visible and could not be edited, which is the one thing a plan
  * is for.
  */
+/*
+ * Clipped to its own rounded corners again.
+ *
+ * `overflow: visible` was set here for one reason: the plan queue was laid out
+ * in this row and its reorder buttons were being cut off the right-hand edge.
+ * The queue has since moved next to the commit button, so the exception has
+ * outlived its cause -- and left behind a panel whose square-cornered children
+ * painted past its rounded ones, showing as dark corners on a cream card.
+ */
 .battle.cinema .hud-bottom .tray {
-  overflow: visible;
+  overflow: hidden;
   width: auto;
 }
 
-.battle.cinema .hud-bottom .queue {
-  margin: 0;
-  max-height: 104px;
-  min-width: 210px;
+.battle.cinema .hud-commit .queue {
+  margin: 0 0 8px;
+  max-height: 150px;
+  min-width: 260px;
+  padding: 8px;
+  background: var(--paper);
+  backdrop-filter: blur(5px);
+  color: var(--paper-ink);
+  border: 3px solid var(--paper-edge);
+  border-radius: 13px;
+  box-shadow:
+    inset 0 0 0 2px var(--paper-ink),
+    0 3px 0 rgba(47, 37, 25, 0.32),
+    0 10px 22px rgba(0, 0, 0, 0.5);
+  pointer-events: auto;
 }
 
-.battle.cinema .hud-bottom .queue li {
+.battle.cinema .hud-commit .queue li {
   background: rgba(47, 37, 25, 0.07);
   font-size: 11.5px;
   padding: 1px 5px;
 }
 
-.battle.cinema .hud-bottom .queue li.chains {
+.battle.cinema .hud-commit .queue li.chains {
   background: rgba(196, 154, 60, 0.28);
 }
 
 /* The row controls: small, square, and actually present. */
-.battle.cinema .hud-bottom .queue button {
+.battle.cinema .hud-commit .queue button {
   padding: 0 5px;
   min-width: 20px;
   line-height: 1.5;
@@ -5157,4 +5268,184 @@ select {
 /* The band column is wider than the cost column it replaces. */
 .card-kit li:has(.band) {
   grid-template-columns: 46px 1fr;
+}
+
+/*
+ * The rest of the cast, while one Performer is picked.
+ *
+ * Deliberately much lighter than `.unfocused`, which is the full focus shot --
+ * brightness 0.32 with a blur, for a moment when the others really are
+ * scenery. Choosing an action is not that moment: the characters you are NOT
+ * commanding are the ones you are weighing this one against, so they have to
+ * stay readable. A dim is enough to say which one is answering the question.
+ *
+ * No blur, for the same reason. Blur reads as depth and pushes a figure out of
+ * the scene; this only needs to lower them, not move them.
+ */
+.battle .stage-slot.unpicked {
+  filter: brightness(0.55) saturate(0.7);
+}
+
+/* Focus wins when both apply: it is the stronger statement, and a shot that
+   was only half dimmed because of a stale selection would look like a fault. */
+.battle .stage-slot.unfocused.unpicked {
+  filter: brightness(0.32) saturate(0.35) blur(1.4px);
+}
+
+/*
+ * No prose in the cinema tray. Only dice.
+ *
+ * Everything the strip used to say is said better by the thing it was talking
+ * about: which dice are chosen is now legible on the dice themselves (they
+ * invert), what an ability costs is on its own chip, and whether a target can
+ * be clicked is drawn on the board while aiming. A line of text under the
+ * tray is a fourth place to look for facts already on screen in three.
+ *
+ * `error` survives on purpose. It is the one thing here that is NOT visible
+ * anywhere else -- an engine refusal has no other voice -- and it is rare and
+ * transient rather than permanent furniture.
+ */
+.battle.cinema .hud-bottom .hint {
+  display: none;
+}
+
+.battle.cinema .hud-bottom .hints:not(:has(.error)) {
+  display: none;
+}
+
+/*
+ * The plan, stacked above the button that commits it.
+ *
+ * `hud-commit` holds both now, bottom-centred: what you are about to do, and
+ * the control that does it. In the tray the queue was clipped at the right and
+ * lost its reorder and remove buttons entirely, which made the ordering -- the
+ * actual mechanic -- unreachable.
+ */
+.battle.cinema .hud-commit {
+  flex-direction: column;
+  align-items: center;
+}
+
+/* Cancel reads as a way out, not as an action. */
+.battle.cinema .skill-menu button.cancel {
+  background: #f3d7d3;
+  border-color: #7a3b33;
+  color: #5c2b25;
+}
+
+.battle.cinema .skill-menu button.cancel:hover:not(:disabled) {
+  background: #fbe6e2;
+}
+
+/*
+ * The tray goes while the turn plays out.
+ *
+ * There is nothing to do with dice during resolution, and the tray said as
+ * much in words -- "Playing out your turn...", or "Enemies do not roll" -- a
+ * caption explaining why a control is inert. Taking the control away says it
+ * without a sentence, and gives the whole window to the thing actually worth
+ * watching.
+ *
+ * Same fade as the focus one, for the same reason: this is a camera moment,
+ * and the furniture should leave on the camera's clock.
+ */
+.battle.cinema.resolving .hud-bottom {
+  opacity: 0;
+  visibility: hidden;
+}
+
+/*
+ * Nothing to commit while the turn is already committing.
+ *
+ * `hud-commit` carries the plan and the button that spends it; during
+ * resolution the plan is being consumed and the button does nothing. Leaving a
+ * large primary control on screen through the one stretch it cannot be used
+ * invites the click it will ignore.
+ */
+.battle.cinema.resolving .hud-commit {
+  opacity: 0;
+  visibility: hidden;
+}
+
+.battle.cinema .hud-commit {
+  transition: opacity 180ms ease, visibility 180ms ease;
+}
+
+/*
+ * Health as a colour: well, hurt, dying.
+ *
+ * Two palettes, because the panels sit on two different grounds. The docked
+ * sheet is light text on a dark panel, so the colours are bright; the cinema
+ * cards are ink on cream, where those same brights vibrate and go illegible,
+ * so they darken. Same three meanings, each mixed for what it sits on.
+ *
+ * `font-weight` moves with the band as well. Colour alone fails for the ~8% of
+ * players who cannot separate red from green, and a number that gets heavier as
+ * it gets worse still says so in greyscale.
+ */
+.hp.well {
+  color: #7fd6a0;
+}
+
+.hp.hurt {
+  color: #f0c85e;
+  font-weight: 700;
+}
+
+.hp.dying {
+  color: #ff8f7a;
+  font-weight: 700;
+}
+
+.battle.cinema .hud-skills .hp.well {
+  color: #2f6b45;
+}
+
+.battle.cinema .hud-skills .hp.hurt {
+  color: #8a6212;
+}
+
+.battle.cinema .hud-skills .hp.dying {
+  color: #9c2f1f;
+}
+
+/*
+ * The roster's health bar.
+ *
+ * Under the number rather than replacing it. The list is read as a column --
+ * "who needs help" is a shape you take in at a glance -- but the exact total
+ * still matters the moment you are deciding whether one heal covers it.
+ *
+ * Two pixels of track, because this sits in a row that already carries a name,
+ * a level, an intent and status chips; anything thicker turns a roster into a
+ * dashboard. The colour is the band, the width is the share.
+ */
+.roster .hp {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+}
+
+.hp-bar {
+  display: block;
+  width: 46px;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.14);
+  overflow: hidden;
+}
+
+.hp-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: currentColor;
+  /* Follows the damage rather than snapping, so a hit reads as a drop. */
+  transition: width 260ms ease;
+}
+
+/* A downed row keeps its shape but says nothing about health. */
+.roster .hp.dead {
+  color: var(--dim);
 }

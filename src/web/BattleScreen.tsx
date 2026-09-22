@@ -64,7 +64,7 @@ import {
   STANDARD_PARTY_SLOTS,
   type Slot,
 } from '../engine/formation.ts';
-import { actionLine, floaterClass, modifierGroups, type Floater } from './narrate.ts';
+import { actionLine, floaterClass, healthBand, modifierGroups, type Floater } from './narrate.ts';
 import {
   ROLE_LABEL,
   alive,
@@ -106,6 +106,7 @@ import {
   poseKeyframes,
   stepMsFor,
   idleStances,
+  idleWeightFor,
   placementFor,
   tuningFor,
 } from './clipAnimation.ts';
@@ -503,6 +504,63 @@ export function BattleScreen({
    */
   /** Which cinema menu is open, if any. One at a time, by design. */
   const [menu, setMenu] = useState<'abilities' | 'upgrades' | null>(null);
+  /**
+   * Where the player has dragged the action menu, as an offset from centre.
+   *
+   * Remembered, because a panel you have put somewhere should stay there --
+   * having to move it again every fight would make the feature worse than no
+   * feature. Stored as an offset rather than a position so it survives a
+   * resize: the menu stays centred-plus-a-nudge rather than pinned to a pixel
+   * that may be off screen on a smaller window.
+   */
+  const [menuNudge, setMenuNudge] = useState<{ x: number; y: number }>(() => {
+    try {
+      const raw = localStorage.getItem('sb.menuNudge');
+      const v = raw ? JSON.parse(raw) : null;
+      return v && typeof v.x === 'number' && typeof v.y === 'number' ? v : { x: 0, y: 0 };
+    } catch {
+      return { x: 0, y: 0 };
+    }
+  });
+  const [dragging, setDragging] = useState(false);
+
+  /**
+   * Dragging the menu by its bar.
+   *
+   * Pointer capture rather than window listeners: the pointer keeps reporting
+   * to this element even when it leaves it, which is most of a drag, and the
+   * browser cleans up if the gesture is cancelled. A button inside the bar
+   * stops the gesture before it starts, so the handle does not swallow the
+   * controls it is carrying.
+   */
+  function startMenuDrag(e: React.PointerEvent) {
+    if ((e.target as HTMLElement).closest('button')) return;
+    const from = { x: e.clientX, y: e.clientY };
+    const base = { ...menuNudge };
+    const el = e.currentTarget as HTMLElement;
+    el.setPointerCapture(e.pointerId);
+    setDragging(true);
+    const move = (ev: PointerEvent) =>
+      setMenuNudge({ x: base.x + (ev.clientX - from.x), y: base.y + (ev.clientY - from.y) });
+    const done = () => {
+      el.releasePointerCapture(e.pointerId);
+      el.removeEventListener('pointermove', move);
+      el.removeEventListener('pointerup', done);
+      el.removeEventListener('pointercancel', done);
+      setDragging(false);
+      setMenuNudge((v) => {
+        try {
+          localStorage.setItem('sb.menuNudge', JSON.stringify(v));
+        } catch {
+          /* private browsing; the nudge lasts the session */
+        }
+        return v;
+      });
+    };
+    el.addEventListener('pointermove', move);
+    el.addEventListener('pointerup', done);
+    el.addEventListener('pointercancel', done);
+  }
   /*
    * The cinema panels have no position state, and that is the point.
    *
@@ -802,26 +860,6 @@ export function BattleScreen({
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sel.unit, sel.dice, affordable, battle.turn, battle.phase]);
-
-  /**
-   * What the dice WOULD have bought if it were not cooling, and how long is
-   * left on it. Purely for the tray's hint, but the hint needs it: without this
-   * a roll covering a cooling ultimate and nothing else fell through to
-   * "Benjamin has nothing costing 10", which is a flat contradiction of the
-   * row sitting a few pixels away with 10 on its badge and a counter over it.
-   */
-  const coolingMatch = useMemo(() => {
-    if (!sel.unit || sel.unit.side !== 'player' || sel.dice.length === 0) return null;
-    const sum = pickedSum();
-    for (const a of sel.unit.def.abilities) {
-      const turns = sel.unit.cooldowns[a.name] ?? 0;
-      if (!turns) continue;
-      if (paysAsWildcard(a, sel.unit.freeCast) ? sel.dice.length === 1 : sum === a.cost)
-        return { name: a.name, turns };
-    }
-    return null;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sel.unit, sel.dice, battle.turn, battle.phase]);
 
   const diceCover = (cost: number): boolean => sel.dice.length > 0 && pickedSum() === cost;
 
@@ -1588,8 +1626,19 @@ export function BattleScreen({
     if (!step) {
       flushHit();
       finishEnemyPhase(battle);
-        setBusy(false);
+      setBusy(false);
       setNarration(null);
+      /*
+       * A new round starts with nobody picked.
+       *
+       * The selection survived the enemy phase, so a round opened with one
+       * Performer already chosen, their menu up and everyone else dimmed --
+       * a decision carried over from a turn that had already been spent, and
+       * a state nobody asked for. A round begins with the board, and you
+       * choose who speaks first.
+       */
+      setMenu(null);
+      setSel(NO_SELECTION);
       bump();
       if (battle.outcome === 'ongoing' && battle.phase === 'player') playDiceRoll(battle.dice);
       return;
@@ -1669,6 +1718,22 @@ export function BattleScreen({
     !sel.unit.hasActed &&
     !isPlanned(battle, sel.unit) &&
     !over;
+  /**
+   * The Performer currently being decided about, if any.
+   *
+   * Three things hang off this one question -- the action menu, the thinking
+   * pose, and the dim on everybody else -- and each of them had its own copy of
+   * the answer, which is how they drifted apart. Choosing an ability closed the
+   * menu but not the pose; queueing an action ended the turn's decision but
+   * left the menu open, because committing clears `sel.ability` while keeping
+   * `sel.unit` (deliberately: the docked sheet must not go blank mid-resolve).
+   *
+   * Deciding means all of it: picked, able to act, and not yet committed to
+   * anything. The moment any of those stops being true, everything pointing at
+   * them steps back together.
+   */
+  const deciding = canAct && !sel.ability ? sel.unit : null;
+
   // Recomputed on every plan change, which is what makes reordering legible:
   // move an action above its arming symbol and its chain marker goes out.
   const chained = chainPreview(battle.plan, battle.armed);
@@ -1866,6 +1931,79 @@ export function BattleScreen({
 
 
   /*
+   * The turn as built so far, as its own value.
+   *
+   * Two homes, one definition. In the dock it lives in the tray; in cinema the
+   * tray is a slim row at the top of the screen where a list of queued actions
+   * had nowhere to go -- it was there, clipped, with its reorder and remove
+   * buttons cut off the right-hand edge. A plan you can read and cannot edit is
+   * the worst of both: the ordering IS the mechanic, since these resolve top to
+   * bottom and an attack queued behind the kill it caused fizzles with its dice
+   * already spent.
+   *
+   * So in cinema it sits above the commit button, which is the other half of
+   * the same thought -- what you are about to do, and the button that does it.
+   */
+  // Numbered because the number IS the mechanic -- these resolve top to bottom,
+  // and an attack queued behind the kill it caused fizzles with its dice spent.
+  const planQueue =
+    battle.plan.length > 0 && !busy ? (
+      <ol className="queue">
+        {battle.plan.map((entry, i) => (
+          <li key={`${entry.unit.def.id}-${i}`} className={chained[i] ? 'chains' : ''}>
+            <span className="ord">{i + 1}</span>
+            <span className="who">{entry.unit.def.name}</span>
+            <span className="what">
+              {entry.ability?.name ?? 'Upgrade'}
+              {/* The symbol is on every carrier, lit only where it fires.
+                  Showing it on the arming action too is what makes the
+                  reorder buttons legible -- you can see WHY moving this
+                  above that one turns the chain on. */}
+              {entry.ability?.symbol && (
+                <em className={`sym ${chained[i] ? 'on' : ''}`} title={describeChain(entry.ability) ?? ''}>
+                  <SymbolIcon symbol={entry.ability.symbol} size={13} />
+                </em>
+              )}
+            </span>
+            {chained[i] && <span className="trigger">{entry.ability!.trigger!.text}</span>}
+            <button
+              className="quiet"
+              title="Resolve earlier"
+              disabled={i === 0}
+              onClick={() => {
+                movePlanned(battle, i, i - 1);
+                bump();
+              }}
+            >
+              ▲
+            </button>
+            <button
+              className="quiet"
+              title="Resolve later"
+              disabled={i === battle.plan.length - 1}
+              onClick={() => {
+                movePlanned(battle, i, i + 1);
+                bump();
+              }}
+            >
+              ▼
+            </button>
+            <button
+              className="quiet"
+              title="Take out of the turn and get the dice back"
+              onClick={() => {
+                unplan(battle, i);
+                bump();
+              }}
+            >
+              ×
+            </button>
+          </li>
+        ))}
+      </ol>
+    ) : null;
+
+  /*
    * Ending the phase: the one control that is always the next thing you might
    * do, so it gets a home of its own rather than a place in a queue of panels.
    *
@@ -1893,7 +2031,11 @@ export function BattleScreen({
         sides want opposite things hidden: reading an ally, the enemy roster is
         the furniture in the way, and reading an enemy it is your own.
       */
-      className={`game battle ${cinema ? 'cinema' : ''} ${pulse ? 'in-beat' : ''} ${
+      className={`game battle ${cinema ? 'cinema' : ''} ${
+        // Resolving: your committed plan is playing out, or the enemies are
+        // taking their phase. Either way the dice are not a control right now.
+        busy || battle.phase === 'enemy' ? 'resolving' : ''
+      } ${pulse ? 'in-beat' : ''} ${
         focusUnit ? `focusing focus-${focusUnit.side}` : ''
       }`}
       ref={rootRef}
@@ -2123,6 +2265,27 @@ export function BattleScreen({
             // one element means the later wins, and a focused-but-spent
             // character would pop back to full brightness.
             focusUnit && focusUnit !== u ? 'unfocused' : '',
+            /*
+             * Everyone who is not the Performer you have PICKED.
+             *
+             * Lighter than `unfocused`, and for a different moment. Focus is a
+             * shot -- the camera has pushed in and the rest of the cast is
+             * scenery. A selection is a decision still being made: the others
+             * are not the subject, but they are exactly who you are weighing
+             * this one against, so they stay legible.
+             *
+             * Off while aiming and during a beat. Aiming needs every target
+             * read clearly, and a beat has its own framing that this would
+             * fight.
+             */
+            /*
+             * ...and never the one the camera is looking at. Hovering a roster
+             * row focuses that character, and a focused character dimmed by a
+             * stale selection is the one thing on screen contradicting itself:
+             * the shot says "look at this" while the lighting says "not this
+             * one". Focus is the later, louder statement, so it wins.
+             */
+            deciding && deciding !== u && !pulse && focusUnit !== u ? 'unpicked' : '',
             // Which body the pointer is actually over. Sprites overlap and have
             // transparent margins, so "the one nearest the cursor" is a genuine
             // question the player was being left to guess at.
@@ -2179,6 +2342,10 @@ export function BattleScreen({
                 striking={pulse?.id === u.def.id}
                 actClip={pulse?.id === u.def.id && pulse.act ? (pulse.clip || null) : null}
                 stance={stances[u.def.id]}
+                /* The one being decided about: selected, not yet committed.
+                   Reads off the SELECTION rather than the hover, because a
+                   character you are merely looking at is not deliberating. */
+                thinking={deciding === u}
               />
               {u.pending && <span className="casting">!</span>}
               {/*
@@ -2621,7 +2788,7 @@ export function BattleScreen({
               <span className="stars">{'★'.repeat(shownUnit.def.rarity)}</span>
             </h3>
             <div className="stat-row">
-              <span>
+              <span className={`hp ${healthBand(shownUnit.hp, unitMaxHp(shownUnit))}`}>
                 HP {shownUnit.hp}/{unitMaxHp(shownUnit)}
               </span>
               <span>ATK {stat(unitAttack(shownUnit))}</span>
@@ -3106,19 +3273,33 @@ export function BattleScreen({
       {/*
         Two different panels, because they answer two different questions.
 
-        An ACTION menu is for a Performer of yours that you have picked and can
-        still move: it is a list of things to do. Everything else -- an enemy,
+        An ACTION menu is for a Performer of yours that you have picked, can
+        still move, and has not yet chosen: it is a list of things to do, and
+        once one is chosen the list has served its purpose. Aiming is a question
+        about the BOARD, so everything that was pointing at the character steps
+        back -- the menu, their thinking pose, and the dim on everybody else,
+        which is already off while aiming for the same reason. Everything else -- an enemy,
         or a character you are merely hovering in the roster -- is a question
         about what something IS, and the answer to that is a card you read, not
         a list you click. Offering "Abilities" over an enemy implied you could
         cast theirs.
+
+        Keyed on `rosterHover`, not on `previewing`. `previewing` means the shown
+        unit DIFFERS from the selected one, which is false in the one case that
+        matters: hovering the character you already have selected. That zoomed
+        the camera in and left the menu up, making the selected character the
+        only one on the roster that did not show a card when pointed at.
+        Hovering is hovering, whoever it lands on.
       */}
-      {cinema && shownUnit && !previewing && shownUnit.side === 'player' && (
-        <div className="hud hud-skills">
-          <div className="panel skill-menu">
+      {cinema && shownUnit && !rosterHover && deciding === shownUnit && (
+        <div
+          className={`hud hud-skills menu-panel${dragging ? ' dragging' : ''}`}
+          style={{ transform: `translate(calc(-50% + ${menuNudge.x}px), ${menuNudge.y}px)` }}
+        >
+          <div className="panel skill-menu" onPointerDown={startMenuDrag}>
             <span className="skill-who">
               {shownUnit.def.name}
-              <em>
+              <em className={`hp ${healthBand(shownUnit.hp, unitMaxHp(shownUnit))}`}>
                 {shownUnit.hp}/{unitMaxHp(shownUnit)}
               </em>
             </span>
@@ -3136,18 +3317,37 @@ export function BattleScreen({
                 Upgrades
               </button>
             )}
-            {boardAction && shownUnit.side === 'player' && (
+            {/*
+              The way back out of aiming.
+
+              It is a state you can enter by accident and, until now, could only
+              leave by finding a bit of bare stage to click -- which is not
+              something anyone guesses. It replaces Reposition rather than
+              sitting beside it, because the two cannot both be useful at once:
+              while an ability is in hand, the only move left is to take it back.
+            */}
+            {sel.ability ? (
               <button
-                className={sel.ability === boardAction ? 'on' : ''}
-                disabled={previewing || !canAct}
-                title="Pick dice, then a slot to trade places with"
-                onClick={() => {
-                  setMenu(null);
-                  chooseAbility(boardAction);
-                }}
+                className="cancel"
+                title="Put the ability back and choose again"
+                onClick={() => setSel((prev) => ({ ...prev, ability: null }))}
               >
-                Reposition
+                Cancel
               </button>
+            ) : (
+              boardAction &&
+              shownUnit.side === 'player' && (
+                <button
+                  disabled={previewing || !canAct}
+                  title="Pick dice, then a slot to trade places with"
+                  onClick={() => {
+                    setMenu(null);
+                    chooseAbility(boardAction);
+                  }}
+                >
+                  Reposition
+                </button>
+              )
             )}
           </div>
 
@@ -3283,7 +3483,7 @@ export function BattleScreen({
         play: nothing here is clickable, so pointing at it cannot change the
         turn.
       */}
-      {cinema && shownUnit && (previewing || shownUnit.side === 'enemy') && (
+      {cinema && shownUnit && (!!rosterHover || shownUnit.side === 'enemy') && (
         <div
           /*
             On the side the character is NOT. Focus slides an ally left and an
@@ -3301,7 +3501,7 @@ export function BattleScreen({
             </header>
 
             <div className="card-stats">
-              <span>
+              <span className={`hp ${healthBand(shownUnit.hp, unitMaxHp(shownUnit))}`}>
                 HP <b>{shownUnit.hp}</b>/{unitMaxHp(shownUnit)}
               </span>
               <span>
@@ -3420,7 +3620,12 @@ export function BattleScreen({
         </div>
       )}
 
-      {cinema && <div className="hud hud-commit">{commitControls}</div>}
+      {cinema && (
+        <div className="hud hud-commit">
+          {planQueue}
+          {commitControls}
+        </div>
+      )}
 
       {/* The turn's own voice, over the stage rather than in the dock.
           It belongs with the action it describes, and the dock is where you
@@ -3457,64 +3662,9 @@ export function BattleScreen({
             </div>
           )}
 
-          {/* The turn as built so far. Numbered because the number IS the
-              mechanic -- these resolve top to bottom and an attack queued behind
-              a kill it caused will fizzle with its dice already spent. */}
-          {battle.plan.length > 0 && !busy && (
-            <ol className="queue">
-              {battle.plan.map((entry, i) => (
-                <li key={`${entry.unit.def.id}-${i}`} className={chained[i] ? 'chains' : ''}>
-                  <span className="ord">{i + 1}</span>
-                  <span className="who">{entry.unit.def.name}</span>
-                  <span className="what">
-                    {entry.ability?.name ?? 'Upgrade'}
-                    {/* The symbol is on every carrier, lit only where it fires.
-                        Showing it on the arming action too is what makes the
-                        reorder buttons legible -- you can see WHY moving this
-                        above that one turns the chain on. */}
-                    {entry.ability?.symbol && (
-                      <em className={`sym ${chained[i] ? 'on' : ''}`} title={describeChain(entry.ability) ?? ''}>
-                        <SymbolIcon symbol={entry.ability.symbol} size={13} />
-                      </em>
-                    )}
-                  </span>
-                  {chained[i] && <span className="trigger">{entry.ability!.trigger!.text}</span>}
-                  <button
-                    className="quiet"
-                    title="Resolve earlier"
-                    disabled={i === 0}
-                    onClick={() => {
-                      movePlanned(battle, i, i - 1);
-                      bump();
-                    }}
-                  >
-                    ▲
-                  </button>
-                  <button
-                    className="quiet"
-                    title="Resolve later"
-                    disabled={i === battle.plan.length - 1}
-                    onClick={() => {
-                      movePlanned(battle, i, i + 1);
-                      bump();
-                    }}
-                  >
-                    ▼
-                  </button>
-                  <button
-                    className="quiet"
-                    title="Take out of the turn and get the dice back"
-                    onClick={() => {
-                      unplan(battle, i);
-                      bump();
-                    }}
-                  >
-                    ×
-                  </button>
-                </li>
-              ))}
-            </ol>
-          )}
+          {/* In cinema the plan is rendered beside the commit button instead --
+              see `hud-commit`. It is the same markup either way. */}
+          {!cinema && planQueue}
 
           {/* In cinema this same control is rendered on its own down at the
               foot of the screen -- see `hud-commit`. One definition, two
@@ -3537,22 +3687,20 @@ export function BattleScreen({
                 restating the premise is a sentence the eye has to skip past
                 every turn for the rest of the game.
               */}
-              {diceOnly && (
-                <span className={`hint ${matched.size > 0 || upgradeReady ? 'ok' : 'warn'}`}>
-                  <strong>{diceSum}</strong>
-                  {matched.size > 0
-                    ? ` — ${matched.size} ${matched.size === 1 ? 'ability' : 'abilities'} ready${
-                        upgradeReady && nextTier ? `, plus the ${nextTier.name} upgrade` : ''
-                      }`
-                    : upgradeReady && nextTier
-                      ? ` — pays for the ${nextTier.name} upgrade`
-                      : coolingMatch
-                        ? ` — pays for ${coolingMatch.name}, ready in ${coolingMatch.turns} turn${
-                            coolingMatch.turns === 1 ? '' : 's'
-                          }`
-                        : ` — ${diceOnly.def.name} has nothing costing ${diceSum}`}
-                </span>
-              )}
+              {/*
+                No running total any more.
+
+                "10 — 1 ability ready" counted something the ability list is
+                already saying, and saying better: the row that the dice buy is
+                lit gold, and the ones they do not are dimmed. A number plus a
+                count is a second, worse rendering of the same fact, sitting in
+                the one strip that has to stay narrow.
+
+                What it said that the list does not -- that a die total pays for
+                an upgrade, or for something still cooling -- went with it. Both
+                are visible on the thing itself: the upgrade chip lights the same
+                way an ability does, and a cooling ability wears its own count.
+              */}
               {sel.ability && (
                 <span className="hint ok">
                   <strong>
@@ -3659,34 +3807,28 @@ function Matchups({ def }: { def: CharacterDef }) {
 /**
  * Which resting stance each Performer is currently holding.
  *
- * Four idles exist so a waiting party does not read as four statues. The rule
- * is the simplest one that can look right: **play a stance all the way through,
- * then move to the next, in order, forever.**
+ * **One idle is the character; the others are things they occasionally do.**
  *
- * That is a correction. The first version held each stance for two to four
- * loops chosen at random, and staggered the first change by a random 400-3000ms
- * so the party would not move in unison -- and that stagger was the bug. A
- * delay picked at random is not a loop boundary, so the opening switch always
- * landed mid-animation, cutting a breath in half. A cut mid-loop reads as a
- * glitch rather than as a shift of weight, which is exactly the thing the
- * scheduling was supposed to avoid.
+ * The first version rotated through `idle`, `idle_2`, `idle_3`, `idle_4` in
+ * order, one full loop each. Every variant got equal airtime, so a Performer
+ * spent three quarters of the fight not in their own resting pose -- and since
+ * the variants differ from each other as much as they differ from the base,
+ * the party read as restless rather than alive. Fixing the timing had not
+ * helped, because the timing was not the problem: the *shape* was.
  *
- * Going round in order rather than picking at random fixes the other half. A
- * random pick can repeat a stance, or skip one for a minute at a time, and both
- * read as something misfiring rather than as a character shifting about.
+ * So `idle` is the base and holds the floor. Each alternate declares an
+ * `idleWeight` -- loops per hundred -- and after every base loop one roll
+ * decides whether any of them cuts in. An interlude plays ONCE and hands
+ * straight back, so the character always returns to themselves.
  *
- * Nothing stops the party from switching together now, and that turns out not
- * to need solving: every Performer's clips have their own frame counts and
- * their own `stepMs`, so they drift apart within a cycle or two on their own.
- * An artificial offset would only buy the first few seconds, at the cost of the
- * alignment that makes every switch land cleanly.
+ * Weights are shares of the same hundred, so they are read together: 12 and 8
+ * means one idle in five is an interlude and the base holds the other four.
+ * Nothing needs to know the loop durations to author that, which is what makes
+ * it tunable by eye.
  *
- * Held in state rather than derived at render. `Math.random()` inside a render
- * would re-roll on every unrelated state change -- a die landing, a floater
- * expiring -- and the board would strobe.
- *
- * A character with one idle is skipped entirely, so this costs nothing until
- * the alternate sheets exist.
+ * Held in state rather than derived at render: `Math.random()` inside a render
+ * would re-roll on every unrelated state change and the board would strobe.
+ * A character with one idle is skipped entirely.
  */
 function useIdleStances(units: Unit[]): Record<string, string> {
   const [stance, setStance] = useState<Record<string, string>>({});
@@ -3696,8 +3838,8 @@ function useIdleStances(units: Unit[]): Record<string, string> {
   useEffect(() => {
     const timers: number[] = [];
     for (const id of cast ? cast.split(',') : []) {
-      const options = idleStances(ANIMATION_CLIPS[id]);
-      if (options.length < 2) continue;
+      const [base, ...alts] = idleStances(ANIMATION_CLIPS[id]);
+      if (!base || !alts.length) continue;
 
       const runtime = (name: string): number => {
         const clip = ANIMATION_CLIPS[id]?.[name];
@@ -3709,23 +3851,29 @@ function useIdleStances(units: Unit[]): Record<string, string> {
           : 1200;
       };
 
+      /** Which interlude, if any, follows this loop of the base. */
+      const roll = (): string | null => {
+        let n = Math.random() * 100;
+        for (const alt of alts) {
+          n -= idleWeightFor(id, alt);
+          if (n < 0) return alt;
+        }
+        return null;
+      };
+
       /*
        * Scheduled against a running clock rather than by chaining delays.
-       *
-       * `setTimeout` fires late under load, and a chain of them accumulates
-       * every one of those late arrivals. A few milliseconds is nothing once;
-       * after a hundred switches it is enough to land a change in the middle of
-       * a loop, which is the whole thing this is arranged to avoid. Tracking
-       * when the NEXT switch is due and asking for the remaining time absorbs
-       * the lateness instead of compounding it.
+       * `setTimeout` fires late under load and a chain accumulates every late
+       * arrival, which would eventually land a change mid-loop -- the one thing
+       * this is arranged to avoid.
        */
-      let at = performance.now() + runtime(options[0]!);
-      let i = 0;
+      let at = performance.now() + runtime(base);
       const tick = () => {
-        i = (i + 1) % options.length;
-        const next = options[i]!;
-        setStance((s) => ({ ...s, [id]: next }));
-        at += runtime(next);
+        const next = roll();
+        // An interlude, then straight back: the next tick after one is always
+        // the base again, so a Performer can never string two together.
+        setStance((prev) => ({ ...prev, [id]: next ?? base }));
+        at += runtime(next ?? base);
         timers.push(window.setTimeout(tick, Math.max(16, at - performance.now())));
       };
       timers.push(window.setTimeout(tick, Math.max(16, at - performance.now())));
@@ -3818,6 +3966,7 @@ function UnitChip({
   striking,
   actClip,
   stance,
+  thinking = false,
   flinching = null,
   queued = false,
 }: {
@@ -3837,6 +3986,8 @@ function UnitChip({
   striking: boolean;
   /** The clip to PLAY, once they have arrived and taken their pause. */
   actClip: string | null;
+  /** Selected, and still deciding: holds the `thinking` stance if one exists. */
+  thinking?: boolean;
   /**
    * Which resting stance to hold. Falls back to `idle`, so a character with one
    * idle sheet is drawn exactly as they were before alternates existed.
@@ -3895,20 +4046,12 @@ function UnitChip({
     // The resting stance, which is `idle` unless this character has alternates
     // and the scheduler has moved them onto one.
     const resting = (stance && ANIMATION_CLIPS[unit.def.id]?.[stance]) || undefined;
-    const clipName = attack ? actClip! : ready ? 'ready' : (resting ? stance! : 'idle');
+    const clipName = attack ? actClip! : ready ? 'ready' : resting ? stance! : 'idle';
     const strip = attack ?? ready ?? resting ?? idle;
     const box = strip ? clipBox(strip, h, placementFor(unit.def.id, clipName)) : null;
     // The strip and the still are different files with different heights --
     // Maxine's strip is 105px against her 106px still -- so the rounding step
     // has to come from whichever one is actually being drawn.
-    const crispHeight = crispCss(
-      `${(box ? box.boxH : h) * 100}cqh`,
-      // The SNAP STEP, not the file height: for art drawn on a larger canvas
-      // those differ, and stepping by the file height rounds it to nothing.
-      // The strip and the still share a step, since both are that actor's art.
-      sheet.snapPx,
-      sheet.pixelated,
-    );
     // A hit reaction is one drawing held for a moment, so it replaces the strip
     // entirely rather than playing. Falls through to the normal path for an
     // actor who ships no `pain` pose.
@@ -3925,7 +4068,26 @@ function UnitChip({
     // Both stills are packed as one-frame clips so the lab can list them, which
     // is only useful if what the lab saves is what the battle draws.
     /*
-     * The hit reaction, sized like a FIGURE rather than like the box.
+     * A held STILL, when one replaces the animated body this frame.
+     *
+     * Two states are drawings rather than sequences -- the hit reaction, and
+     * the stance of being decided about -- and they are drawn by identical
+     * code, so they share it. Which one wins is a priority, not a choice: a
+     * character being struck is not deliberating, and a character mid-swing is
+     * doing neither.
+     *
+     * `thinking` also yields to a booked action, which `ready` already covers:
+     * the prop is false once the Performer is in the queue.
+     */
+    const stillName: 'pain' | 'thinking' | null = painting
+      ? 'pain'
+      : !striking && thinking && sheet.thinking
+        ? 'thinking'
+        : null;
+    const stillSrc = stillName === 'pain' ? sheet.pain : sheet.thinking;
+
+    /*
+     * The still, sized like a FIGURE rather than like the box.
      *
      * It used to be `height: 100%`, and 100% of what was the problem: the unit
      * element is as tall as the CLIP BOX, which is the union of every clip this
@@ -3946,37 +4108,50 @@ function UnitChip({
      * the animated path lands its feet there by pushing the clip down by
      * `footPad`, so a still whose feet are its own bottom edge simply sits on it.
      */
-    const painClip = ANIMATION_CLIPS[unit.def.id]?.pain;
-    const painBox = painClip ? clipBox(painClip, h, placementFor(unit.def.id, 'pain')) : null;
+    const stillClip = stillName ? ANIMATION_CLIPS[unit.def.id]?.[stillName] : undefined;
+    const stillBox = stillClip
+      ? clipBox(stillClip, h, placementFor(unit.def.id, stillName!))
+      : null;
+
     /*
-     * Pushed down to the ground line, not pinned to it.
+     * While a still is showing, the still owns the box.
      *
-     * `bottom: 0` was the obvious way and it silently did nothing: in a battle
-     * these sprites are `position: static` (`.battle .sprite-unit .sprite`), and
-     * insets have no effect on a static element. So the still sat at the TOP of
-     * a box 1.45x its own height and floated well above the mark -- which is
-     * why the size fix alone left it hanging in the air.
+     * The container used to take its size from the STRIP even when a held
+     * drawing was covering it -- and the strip changes underneath, because the
+     * resting stance rotates and every idle carries its own `placement`
+     * (Benjamin's are dx -1.5, -2.5, -2 and one with scale 1.02). So the box
+     * grew and shrank on the stance clock while the thinking pose sat inside
+     * it, and since `.stage-slot` is centred on its mark, a width change moves
+     * its left edge: the still drifted left and right every few seconds with
+     * nothing animating it.
      *
-     * A translate works in flow and composes with the mirror already on this
-     * element. The percentage is of the IMAGE's own height, so the distance from
-     * its bottom to the box's bottom has to be expressed in those terms.
+     * Reported as "are we re-rendering the images?", which is exactly what it
+     * looked like. Taking the geometry from whatever is actually on screen
+     * makes a still as static as it claims to be.
      */
-    const boxH = box ? box.boxH : h;
-    const body = painting ? (
+    const shownBox = stillName ? stillBox : box;
+    const crispHeight = crispCss(
+      `${(shownBox ? shownBox.boxH : h) * 100}cqh`,
+      // The SNAP STEP, not the file height: for art drawn on a larger canvas
+      // those differ, and stepping by the file height rounds it to nothing.
+      // The strip and the still share a step, since both are that actor's art.
+      sheet.snapPx,
+      sheet.pixelated,
+    );
+    const body = stillName ? (
       <img
         className={`sprite ${sheet.pixelated ? 'pixel' : ''}`}
-        src={sheet.pain}
+        src={stillSrc}
         alt=""
         draggable={false}
         style={{
-          height: painBox
-            ? crispCss(`${painBox.boxH * 100}cqh`, sheet.snapPx, sheet.pixelated)
-            : '100%',
+          // The container IS this drawing's box now, so there is nothing to
+          // correct: fill it, and mirror if the character faces the other way.
+          // The arithmetic that used to place it against the strip's box went
+          // with the wobble it was compensating for.
+          height: '100%',
           width: 'auto',
-          transform:
-            `translate(${painBox ? painBox.shiftPct : (0.5 - sheet.anchorX) * 100}%,` +
-            ` ${painBox ? ((boxH - painBox.boxH) / painBox.boxH) * 100 : 0}%)` +
-            ` scaleX(${facing})`,
+          transform: `translateX(${stillBox ? stillBox.shiftPct : (0.5 - sheet.anchorX) * 100}%) scaleX(${facing})`,
         }}
       />
     ) : strip && box ? (
@@ -4071,7 +4246,15 @@ function UnitChip({
           // known until layout. Width follows the ROUNDED height so the aspect
           // survives the rounding.
           height: crispHeight,
-          ...(box ? { width: `calc(${crispHeight} * ${idle!.aspect})` } : null),
+          // Width follows whichever drawing is in the box, for the same reason
+          // its height does -- a still and a strip are different shapes.
+          ...(shownBox
+            ? {
+                width: `calc(${crispHeight} * ${
+                  stillName && stillClip ? stillClip.aspect : idle!.aspect
+                })`,
+              }
+            : null),
         }}
       >
         {/* The hit reaction spins THIS, not the artwork inside it.
@@ -4285,8 +4468,27 @@ function TeamPanel({
                   first thing you want to know, and it was previously only
                   inferable from the stat line in the detail panel. */}
               <span className="lv">Lv {levelOf(u.def)}</span>
-              <span className="hp">
+              <span className={`hp ${alive(u) ? healthBand(u.hp, unitMaxHp(u)) : 'dead'}`}>
                 {alive(u) ? `${u.hp}/${unitMaxHp(u)}` : 'down'}
+                {/*
+                  A bar under the number, because the roster is read as a COLUMN.
+                  
+                  Ten rows of "44/88" is ten sums to do, and the question being
+                  asked of this list is never one character's exact total -- it
+                  is "who needs help", which is a shape, not a number. A bar
+                  answers that down the whole column at once, and the number
+                  stays for the moment you actually need it.
+                  
+                  Width is the share; the colour is the band. Both, rather than
+                  either: length alone makes a 30% and a 20% bar hard to tell
+                  apart at this size, and colour alone throws away the precision
+                  a bar is good at.
+                */}
+                {alive(u) && (
+                  <span className="hp-bar" aria-hidden="true">
+                    <i style={{ width: `${Math.max(2, (u.hp / unitMaxHp(u)) * 100)}%` }} />
+                  </span>
+                )}
                 {/* Net attack modifier, buffs and shreds together, so a row
                     says at a glance whether this unit is currently running hot
                     or has been cut down. */}

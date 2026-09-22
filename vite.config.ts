@@ -388,15 +388,17 @@ function animationSaver(): Plugin {
         });
         req.on('end', () => {
           try {
-            const { who, clip, placement, frames, order, stepMs, impacts } = JSON.parse(body) as {
+            const { who, clip, placement, frames, order, stepMs, impacts, idleWeight } =
+              JSON.parse(body) as {
               who?: string;
               clip?: string;
               placement?: Record<string, number>;
               frames?: Record<string, number>[];
               order?: number[];
-              stepMs?: number;
-              impacts?: unknown[];
-            };
+                stepMs?: number;
+                impacts?: unknown[];
+                idleWeight?: number;
+              };
             if (!who || !NAME.test(who)) return fail(400, 'bad actor name');
             if (!clip || !NAME.test(clip)) return fail(400, 'bad clip name');
 
@@ -425,6 +427,18 @@ function animationSaver(): Plugin {
               return fail(400, 'order must be an array of frame indices');
             }
 
+            /*
+             * Bounded as a percentage, because that is what it is: loops per
+             * hundred of the base idle. Zero is meaningful -- it is how an
+             * alternate is switched off -- so the floor is 0 and not 1.
+             */
+            if (
+              idleWeight != null &&
+              (!Number.isFinite(idleWeight) || idleWeight < 0 || idleWeight > 100)
+            ) {
+              return fail(400, 'idleWeight must be between 0 and 100');
+            }
+
             // Bounded, because this becomes a CSS animation duration: a zero
             // would divide by nothing and a negative would never play.
             if (stepMs != null && (!Number.isFinite(stepMs) || stepMs < 1 || stepMs > 5000)) {
@@ -447,10 +461,21 @@ function animationSaver(): Plugin {
             delete settings.frames;
             delete settings.order;
             delete settings.stepMs;
+            delete settings.idleWeight;
             if (placement && Object.keys(placement).length) settings.placement = placement;
             if (frames && frames.length) settings.frames = frames;
             if (order?.length) settings.order = order;
             if (stepMs != null) settings.stepMs = Math.round(stepMs);
+            /*
+             * Only kept where it does something. Every clip's save sends this
+             * field, so writing it unconditionally would scatter a meaningless
+             * `idleWeight` across attacks and stills -- data that looks
+             * authored, is never read, and outlives anyone's memory of why it
+             * is there.
+             */
+            if (idleWeight != null && /^idle_\d+$/.test(clip)) {
+              settings.idleWeight = Math.round(idleWeight);
+            }
             if (impacts !== undefined) {
               if (!Array.isArray(impacts)) return fail(400, 'impacts must be an array');
               for (const i of impacts) {

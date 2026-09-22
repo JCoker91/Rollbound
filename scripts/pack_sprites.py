@@ -299,7 +299,12 @@ PAPER_COLOURS = 4096
 # section; until then it lives here so the number is in one place.
 PAPER_STATURE = 0.66
 # Named single-frame poses an actor may ship beside their board sprite.
-EXTRA_POSES = ('pain', 'death')
+# `thinking` joins the stills rather than the clips: it is ONE drawing held for
+# as long as a Performer is the one being decided about. Packing it as a clip
+# would put a single frame through the strip machinery, and worse, through
+# `normalise` -- which scales every clip to a common figure height and would
+# resize a deliberately different pose to match the others.
+EXTRA_POSES = ('pain', 'death', 'thinking')
 #: Most frames a square-cell guess may claim before it is treated as nonsense
 #: rather than as a very long animation. Benjamin's longest authored clip is 16.
 MAX_INFERRED_COLS = 16

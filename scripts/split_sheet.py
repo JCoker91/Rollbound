@@ -288,7 +288,38 @@ def split(
         grid = tuple(int(v) for v in grid_override.lower().split('x'))
 
     if clip in EXTRA_POSES:
-        print(f'{path.name}: a still, not a clip -- left alone')
+        """
+        A pose is installed, not cut.
+
+        `pain`, `death` and `thinking` are single drawings held for a state, so
+        there is nothing to slice -- they go beside the clips as
+        `<actor>_<pose>.png` and the packer's stills pass handles them from
+        there.
+
+        This used to print "a still, not a clip -- left alone" and return
+        SUCCESS, which was fine while poses only ever arrived by hand. Through
+        the upload page it was a silent dead end: the file was analysed, the
+        commit reported no error, nothing was written, and the sheet sat in the
+        staging folder forever. A refusal has to be a refusal or an action, not
+        a shrug.
+
+        Copied byte for byte rather than re-encoded. There is no cut to make,
+        and the packer does its own keying, outlining and cropping afterwards --
+        a needless round trip through Pillow here would only change the bytes.
+        """
+        folder = out_dir or path.parent
+        dest = folder / f'{folder.parent.name}_{clip}.png'
+        print(f'{path.name}: a still  ->  {readable(dest)}')
+        if not write:
+            return 0
+        if dest.exists():
+            print(f'    refusing: {dest.name} is already there -- delete it to replace it')
+            return 1
+        dest.write_bytes(path.read_bytes())
+        print(f'    wrote {dest.name}')
+        if remove:
+            path.unlink()
+            print(f'    removed {path.name}')
         return 0
 
     sheet = Image.open(path).convert('RGBA')

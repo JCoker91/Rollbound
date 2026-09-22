@@ -149,3 +149,22 @@ export function modifierGroups(unit: Unit): ModGroup[] {
   }
   return out;
 }
+
+/**
+ * How badly hurt somebody is, in three bands.
+ *
+ * A fraction is a number you have to do arithmetic on; a colour is something
+ * you read while looking at something else, which is the only way health is
+ * ever actually read mid-turn. Three bands rather than a gradient because the
+ * decisions they feed are discrete -- heal now, heal soon, or get on with it --
+ * and a continuous ramp makes 41% and 44% look like different answers.
+ *
+ * Boundaries are inclusive upward: exactly half health is still `well`, exactly
+ * a quarter is still `hurt`. A band should not flip on the hit that takes you
+ * TO its edge, only on the one that takes you past it.
+ */
+export function healthBand(hp: number, max: number): 'well' | 'hurt' | 'dying' {
+  if (max <= 0) return 'dying';
+  const share = hp / max;
+  return share >= 0.5 ? 'well' : share >= 0.25 ? 'hurt' : 'dying';
+}

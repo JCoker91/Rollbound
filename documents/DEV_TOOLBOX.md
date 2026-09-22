@@ -76,6 +76,8 @@ every slot-named sheet.** The animation lab prints the binding (`ability_2 — S
 visible where you would notice.
 
 **Reserved clip names:** `ready` (held during the walk to the mark and while an action is queued),
+`thinking` (a **still**, held while selected and still deciding — yields to `ready` once an action is
+booked),
 `upgrade` (buying an in-battle upgrade), `pain` and `death` (stills), `celebration`, and
 `celebration_ending` (the pose `celebration` settles into — the `_ending` suffix is what wires that
 up). `move` has no renderer yet; a sheet for it will pack and sit unused.
@@ -204,6 +206,18 @@ duplicate (`⧉`) and disable them, tune placement, pose and timing live, and **
 back to `art/actors/<name>/<name>.anim.json` through a dev-only endpoint.
 
 Also there:
+
+- **Idle tuning.** An alternate idle (`idle_2` and up) gets a *Cuts in* slider — how often it
+  interrupts the main idle, in loops per hundred, with **0 meaning off**. And a **ghost option for
+  frame 1 of the main idle**, which is the thing an alternate has to match: it cuts into the base
+  mid-fight and hands straight back, so any drift in scale or footing shows as a twitch at both seams.
+
+  Matching a still only gets the pose right. To judge the *motion*, set Playback to
+  **Seam — the main idle, then this, over and over**: it plays `idle` once, the alternate once, and
+  repeats, so both joins go past on a loop. It is the only playback that shows what a battle shows —
+  looping the alternate on its own shows a join it never actually makes, itself to itself. The main
+  idle plays at its own saved speed, not at whatever the speed slider is set to, so the seam is the
+  real one. The mode is offered only on `idle_2` and up.
 
 - **A practice dummy** to land effects on. A `caster` impact plays on the performer instead, in a box
   the dummy's size, and those previews are not gated on the dummy being switched on.

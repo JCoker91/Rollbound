@@ -37,6 +37,7 @@ function clipsFor(id: string): { value: string; label: string }[] {
     ['idle_3', 'idle_3 — alternate stance'],
     ['idle_4', 'idle_4 — alternate stance'],
     ['ready', 'ready — held while walking out'],
+    ['thinking', 'thinking — still, held while selected'],
     ['upgrade', 'upgrade — buying an upgrade'],
     ['move', 'move — repositioning'],
     ['celebration', 'celebration — victory'],

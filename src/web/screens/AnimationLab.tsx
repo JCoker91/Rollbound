@@ -6,6 +6,7 @@ import { ANIMATION_CLIPS, EFFECTS, type AnimationClip } from '../../engine/sprit
 
 import {
   CLIP_IMPACTS,
+  DEFAULT_IDLE_WEIGHT,
   DEFAULT_STEP_MS,
   impactTimes,
   type ClipPlacement,
@@ -24,6 +25,7 @@ import {
   clipTimeline,
   frameTransform,
   orderFor,
+  idleWeightFor,
   placementFor,
   stepMsFor,
   tuningFor,
@@ -54,6 +56,7 @@ const BURST_MS = 380;
 const PLAYBACK = {
   loop: 'Loop (what an idle uses)',
   once: 'Play once, then settle',
+  seam: 'Seam — the main idle, then this, over and over',
   pingpong: 'Ping-pong (forward, then back)',
   step: 'Paused — step by hand',
 } as const;
@@ -184,7 +187,7 @@ export function AnimationLab() {
   /** Position within the played sequence, not a source frame index. */
   const [at, setAt] = useState(0);
   const [onBackdrop, setOnBackdrop] = useState(true);
-  const [ghost, setGhost] = useState<'none' | 'still' | 'incoming'>('incoming');
+  const [ghost, setGhost] = useState<'none' | 'still' | 'incoming' | 'base'>('incoming');
   const [tune, setTune] = useState<FrameTune[]>(() => blank(clip?.frames ?? 0));
   const [place, setPlace] = useState<ClipPlacement>({});
   /** Source frame indices, in play order. Frames absent from it are disabled. */
@@ -193,6 +196,8 @@ export function AnimationLab() {
   const [run, setRun] = useState(0);
   /** In `once` mode: has the one-shot finished and handed back? */
   const [settled, setSettled] = useState(false);
+  /** In `seam` mode: which half is on screen. False is the main idle. */
+  const [seamAlt, setSeamAlt] = useState(false);
   /*
    * A practice dummy, so effects can be judged instead of imagined.
    *
@@ -213,6 +218,15 @@ export function AnimationLab() {
    */
   const [shares, setShares] = useState<number[] | null>(null);
   const [sharesSaved, setSharesSaved] = useState<string | null>(null);
+  /**
+   * How often this alternate idle interrupts the base, in loops per hundred.
+   *
+   * Zero is OFF, and that is the whole enable/disable control: a clip that
+   * never comes up never plays, and there is no second switch to disagree with
+   * the number. Keeping "how often" and "whether" as one value means they can
+   * never say different things.
+   */
+  const [idleWeight, setIdleWeight] = useState<number>(DEFAULT_IDLE_WEIGHT);
   const [dummy, setDummy] = useState(true);
   const [bursts, setBursts] = useState<{ id: number; impact: Impact }[]>([]);
   const burstId = useRef(0);
@@ -236,16 +250,59 @@ export function AnimationLab() {
     // Seeded like every other authored setting. Left at its previous value the
     // slider would show one clip's pace while a different clip played.
     setStepMs(stepMsFor(who, clipName));
+    setIdleWeight(idleWeightFor(who, clipName));
     setImpacts((CLIP_IMPACTS[`${who}/${clipName}`] ?? []).map((i) => ({ ...i })));
     setAt(0);
     setSettled(false);
+    setSeamAlt(false);
+    // Seam mode has nothing to pair a non-idle clip with. Left selected it
+    // would quietly behave as a plain loop, which is worse than dropping back
+    // to one and saying so in the picker.
+    setMode((m) => (m === 'seam' && !/^idle_\d+$/.test(clipName) ? 'loop' : m));
     setDirty(false);
     setStatus(null);
     setRun((r) => r + 1);
   }, [who, clipName, clip?.frames]);
 
-  const showing = mode === 'once' && settled && rest ? rest : clip;
-  const showingName = mode === 'once' && settled && restName ? restName : clipName;
+  /*
+   * The main idle, when the clip being worked on is one of its alternates.
+   *
+   * Keyed off `clipName` rather than `showingName` on purpose: in seam mode
+   * `showingName` becomes `idle` for half of every cycle, and reading that
+   * would switch the mode off halfway through its own first loop.
+   */
+  const seamBase = /^idle_\d+$/.test(clipName) ? clips['idle'] : undefined;
+
+  /*
+   * Seam mode: the main idle, then this one, repeating.
+   *
+   * An alternate idle is never seen on its own -- it cuts into the base and
+   * hands straight back -- so the thing worth judging is not the clip but its
+   * two JOINS. Playing it alone shows neither of them, and looping it shows a
+   * join it never actually makes: itself to itself. A pose that starts a little
+   * higher than the base ends reads fine on repeat and twitches in a battle.
+   *
+   * Built on the hand-off `once` mode already had rather than on a second
+   * mechanism: swap which clip is showing, and everything downstream -- frame
+   * count, timing, placement, keyframes, impacts -- follows the name the way it
+   * already does for a one-shot settling into its ending.
+   */
+  const seaming = mode === 'seam' && !!seamBase;
+
+  const showing = seaming
+    ? seamAlt
+      ? clip
+      : seamBase
+    : mode === 'once' && settled && rest
+      ? rest
+      : clip;
+  const showingName = seaming
+    ? seamAlt
+      ? clipName
+      : 'idle'
+    : mode === 'once' && settled && restName
+      ? restName
+      : clipName;
   const editing = showingName === clipName;
 
   /* Which ability, if any, this clip animates. Matched on the name slug, the
@@ -394,6 +451,9 @@ ${poseCss}` : ''),
           frames: trimTune(tune),
           order: isNatural ? undefined : order,
           stepMs,
+          // Only meaningful on an alternate idle; the endpoint keeps it
+          // for the clip it is given for and ignores it elsewhere.
+          idleWeight,
           impacts,
         }),
       });
@@ -505,15 +565,58 @@ ${poseCss}` : ''),
   // so the still beside it, which is cropped tight, is a fair comparison.
   const box = clipBox(showing, height, livePlace);
 
-  // The pose this clip takes over from, drawn with ITS clip's placement so it
-  // sits exactly where it will sit at the hand-off.
-  const incoming = incomingFor(who, clips, showingName);
+  /*
+   * The pose this clip takes over from, drawn with ITS clip's placement so it
+   * sits exactly where it will sit at the hand-off.
+   *
+   * Pinned to the clip being AUTHORED rather than to the leg on screen, because
+   * seam mode changes the latter twice a cycle: nothing hands over into
+   * `idle_2`, but every one-shot settles into `idle`, so following the leg made
+   * a third figure appear and vanish in time with the loop. The reference is
+   * for the clip in the editor, and it should sit still while the preview runs.
+   */
+  const incoming = incomingFor(who, clips, seaming ? clipName : showingName);
   const incomingBox = incoming
     ? clipBox(incoming.clip, height, placementFor(who, incoming.name))
     : null;
-  const ghosting = ghost === 'incoming' && !incoming ? 'still' : ghost;
+  /*
+   * The base idle's first frame, for lining an alternate up against it.
+   *
+   * An alternate idle has one job the other clips do not: it has to be the same
+   * character, the same size, standing in the same place, because it cuts into
+   * the base mid-fight and hands straight back. Any drift in scale or footing
+   * shows as a twitch at both seams. The thing to match against is therefore
+   * not the board still -- it is frame one of `idle`, which is what the
+   * alternate is interrupting.
+   */
+  const baseBox = seamBase ? clipBox(seamBase, height, placementFor(who, 'idle')) : null;
+
+  /*
+   * How much headroom the stage reserves.
+   *
+   * Normally the showing clip's own box, but in seam mode that is two different
+   * boxes a second or so apart, and letting the padding follow it made the
+   * whole row jog on every hand-off. Reserve for the TALLER of the pair and
+   * neither leg moves the stage -- which matters here more than anywhere,
+   * because a seam check is looking for a few pixels of drift in the figure and
+   * cannot afford the backdrop supplying some of its own.
+   */
+  const stageBoxH = seaming
+    ? Math.max(box.boxH, (editing ? baseBox?.boxH : clipBox(clip, height, place).boxH) ?? 0)
+    : box.boxH;
+
+  const ghosting =
+    ghost === 'incoming' && !incoming ? 'still' : ghost === 'base' && !seamBase ? 'still' : ghost;
   const playing = mode !== 'step';
-  const duration = clipDuration(steps, stepMs);
+  /*
+   * The pace of what is ON SCREEN, which is not always the pace the slider is
+   * showing. While a one-shot has settled into its ending -- or while seam mode
+   * is playing the main idle -- the clip on screen is one the speed slider is
+   * not editing, and timing it by the slider would make the hand-off a
+   * comparison against something the battle never plays.
+   */
+  const shownStepMs = editing ? stepMs : stepMsFor(who, showingName);
+  const duration = clipDuration(steps, shownStepMs);
 
   /*
    * Spawn the clip's impacts on the clip's own schedule.
@@ -536,7 +639,7 @@ ${poseCss}` : ''),
     // The LIVE list, not the saved one: the dummy exists to show the edit you
     // are making. `editing` is false while previewing another actor's clip, and
     // then the saved catalogue is the right answer.
-    const marks = impactTimes(who, showingName, steps, stepMs, editing ? impacts : undefined);
+    const marks = impactTimes(who, showingName, steps, shownStepMs, editing ? impacts : undefined);
     if (!marks.length) return;
     const timers: number[] = [];
     const fire = () => {
@@ -562,8 +665,11 @@ ${poseCss}` : ''),
       if (loop) window.clearInterval(loop);
       setBursts([]);
     };
-  }, [dummy, playing, mode, who, showingName, steps, stepMs, duration, impacts, run, showing]);
+  }, [dummy, playing, mode, who, showingName, steps, shownStepMs, duration, impacts, run, showing]);
   const oneShot = mode === 'once' && !settled;
+  // Both modes run the strip exactly once, so that its end is an event: `once`
+  // settles on it, `seam` hands over on it.
+  const oneLeg = oneShot || seaming;
   const disabled = natural(clip.frames).filter((i) => !order.includes(i));
   const shownStep = steps[Math.min(at, steps.length - 1)];
 
@@ -574,8 +680,8 @@ ${poseCss}` : ''),
         animationDuration: `${duration}ms`,
         animationTimingFunction: 'linear' as const,
         animationDirection: mode === 'pingpong' ? ('alternate' as const) : ('normal' as const),
-        animationIterationCount: oneShot ? 1 : ('infinite' as const),
-        animationFillMode: oneShot ? ('forwards' as const) : ('none' as const),
+        animationIterationCount: oneLeg ? 1 : ('infinite' as const),
+        animationFillMode: oneLeg ? ('forwards' as const) : ('none' as const),
       }
     : {
         width: `${showing.frames * 100}%`,
@@ -631,12 +737,13 @@ ${poseCss}` : ''),
             onChange={(e) => {
               setMode(e.target.value as Mode);
               setSettled(false);
+              setSeamAlt(false);
               setRun((r) => r + 1);
             }}
           >
             {Object.entries(PLAYBACK).map(([k, v]) => (
-              <option key={k} value={k}>
-                {v}
+              <option key={k} value={k} disabled={k === 'seam' && !seamBase}>
+                {k === 'seam' && !seamBase ? 'Seam (alternate idles only)' : v}
               </option>
             ))}
           </select>
@@ -895,6 +1002,35 @@ ${poseCss}` : ''),
           })}
         </div>
 
+        {/*
+          How often this alternate idle cuts in, and whether it does at all.
+
+          Zero is off. One number rather than a checkbox plus a frequency,
+          because a switch and a value can disagree -- "enabled, weight 0" is a
+          state that means nothing and would sit in the data waiting to confuse
+          somebody. Shown only on an alternate idle: the base always plays, and
+          the other clips are not chosen this way at all.
+        */}
+        {/^idle_\d+$/.test(clipName) && (
+          <label>
+            Cuts in
+            <span className="lab-weight">
+              <input
+                type="range"
+                min={0}
+                max={50}
+                step={1}
+                value={idleWeight}
+                onChange={(e) => {
+                  setIdleWeight(Number(e.target.value));
+                  setDirty(true);
+                }}
+              />
+              <b>{idleWeight === 0 ? 'off' : `${idleWeight}%`}</b>
+            </span>
+          </label>
+        )}
+
         <label>
           Ghost
           {/* Shows what is actually ghosted, not what was picked: a clip with no
@@ -907,6 +1043,11 @@ ${poseCss}` : ''),
             <option value="incoming" disabled={!incoming}>
               {incoming ? `Incoming — ${incoming.name} f${incoming.step.source}` : 'Incoming (none)'}
             </option>
+            {/* Only offered where it means something: on an alternate idle,
+                which is the one kind of clip that has to line up with another. */}
+            <option value="base" disabled={!seamBase}>
+              {seamBase ? 'The main idle, frame 1' : 'Main idle (n/a)'}
+            </option>
           </select>
         </label>
 
@@ -914,11 +1055,13 @@ ${poseCss}` : ''),
           {showingName} · {steps.length}
           {steps.length !== showing.frames && ` of ${showing.frames}`} frames · {duration}ms
           {mode === 'once' && (settled ? ' · settled' : ' · playing once')}
+          {seaming && (editing ? ' · seam: this idle' : ' · seam: the main idle')}
         </span>
 
         <button
           onClick={() => {
             setSettled(false);
+            setSeamAlt(false);
             setRun((r) => r + 1);
           }}
         >
@@ -947,7 +1090,7 @@ ${poseCss}` : ''),
       */}
       <div
         className={`lab-stage ${onBackdrop ? 'backdrop' : ''}`}
-        style={{ paddingTop: Math.max(24, Math.ceil(box.boxH - height) + 24) }}
+        style={{ paddingTop: Math.max(24, Math.ceil(stageBoxH - height) + 24) }}
       >
         {/* The still it replaces, at the same figure height. */}
         {still && (
@@ -1007,6 +1150,29 @@ ${poseCss}` : ''),
                 draggable={false}
               />
             )}
+            {ghosting === 'base' && editing && seamBase && baseBox && (
+              <span
+                className="anim-clip lab-ghost-clip"
+                style={{
+                  width: baseBox.boxW,
+                  height: baseBox.boxH,
+                  transform: `translate(${baseBox.shiftPct}%, ${baseBox.dropPct}%)`,
+                }}
+              >
+                <img
+                  className="anim-strip"
+                  src={seamBase.src}
+                  alt=""
+                  draggable={false}
+                  style={{
+                    width: `${seamBase.frames * 100}%`,
+                    // Frame one, held: the pose the alternate departs from and
+                    // returns to.
+                    transform: frameTransform(0, seamBase.frames),
+                  }}
+                />
+              </span>
+            )}
             {ghosting === 'incoming' && incoming && incomingBox && (
               <span
                 className="anim-clip lab-ghost-clip"
@@ -1054,8 +1220,8 @@ ${poseCss}` : ''),
                         animationName: poseCss ? poseAnimName(who, showingName) : undefined,
                         animationDuration: poseCss ? `${duration}ms` : undefined,
                         animationTimingFunction: 'linear',
-                        animationIterationCount: mode === 'once' ? 1 : 'infinite',
-                        ...(mode === 'once' ? { animationFillMode: 'forwards' as const } : null),
+                        animationIterationCount: oneLeg ? 1 : 'infinite',
+                        ...(oneLeg ? { animationFillMode: 'forwards' as const } : null),
                       }
                     : // Stepping frame by frame: hold the picked frame's pose
                       // rather than running a track, or the pose would animate
@@ -1073,6 +1239,10 @@ ${poseCss}` : ''),
                   style={stripStyle}
                   onAnimationEnd={() => {
                     if (mode === 'once') setSettled(true);
+                    // Hand over to the other half. The name is part of the key,
+                    // so the swap remounts the strip and its keyframes start
+                    // again -- the same restart the clip picker already gets.
+                    if (seaming) setSeamAlt((v) => !v);
                   }}
                 />
               </span>
@@ -1132,7 +1302,13 @@ ${poseCss}` : ''),
       <div className="lab-tune panel">
         <div className="lab-tune-head">
           <strong>Placement — {clipName}</strong>
-          {!editing && <span className="dim">showing {showingName} — hit Replay to see edits</span>}
+          {/* Not shown in seam mode: there the other clip is expected on screen
+              half the time, so a warning that flashes on and off with it is
+              noise rather than news. */}
+          {!editing && !seaming && (
+            <span className="dim">showing {showingName} — hit Replay to see edits</span>
+          )}
+          {seaming && !editing && <span className="dim">the main idle is playing</span>}
           <button
             onClick={() => {
               setPlace({});

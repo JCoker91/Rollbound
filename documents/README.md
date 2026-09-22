@@ -333,6 +333,18 @@ gate matters: without `aiming` the board would sit half-dimmed during ordinary p
 > target caught by the hovered blast still turns orange. Reorder them and that feedback silently
 > disappears.
 
+**The tray shows no running total.** "10 — 1 ability ready" counted something the ability list
+already says, and says better: a row the dice buy is lit gold and one they do not is dimmed. A number
+plus a count is a second, worse rendering of the same fact, in the one strip that has to stay narrow.
+What it said that the list does not — that a total pays for an upgrade, or for something still
+cooling — is visible on the thing itself, since the upgrade chip lights like an ability and a cooling
+ability wears its own count. `coolingMatch` went with it.
+
+**A picked die is inverted, not tinted.** It was a slightly bluer fill with an accent border, which
+is a difference you can find if you go looking and not one you notice — and "which dice am I
+spending" is read at a glance, several times a turn, while looking elsewhere on the board. Swapping
+ink and paper cannot be missed and needs no colour of its own.
+
 **The splash preview is chain-aware.** A `scope: 'all'` ability needs nothing special — `unitsHit`
 returns the whole side and `canTarget` makes every slot a legal aim point, so hovering any one of
 them lights all of them. A chain that *retargets* is the case that broke: Rally is a single-target
@@ -2052,29 +2064,60 @@ their own he stopped reaching it, while for the rest of the roster it named a cl
 exist. An ability with no sheet is still playable: the Performer walks out, holds their `ready`
 stance for the beat and walks back, which is what everyone but Benjamin already did.
 
-**Four idle stances, played through in turn.** `idle`, `idle_2`, `idle_3`, `idle_4` — the packer
-needed no changes, because `LOOPING` matches by prefix, so all four already registered as looping
-clips. `idleStances` lists whichever exist and `useIdleStances` moves each Performer between them.
-The rule is the simplest one that can look right: **play a stance all the way through, then move to
-the next, in order, forever.** Benjamin cycles all four in about 5.9 seconds.
+**One idle is the character; the others are things they occasionally do.**
+`idle` is the base and holds the floor. Each alternate (`idle_2` and up) declares an `idleWeight` in
+its `*.anim.json` entry — **loops per hundred** — and after every base loop one roll decides whether
+any of them cuts in. An interlude plays once and hands straight back, so a Performer always returns
+to themselves and can never string two together.
 
-That is a correction, and worth recording because the first version was cleverer and worse. It held
-each stance for a random two-to-four loops and staggered the first change by a random 400–3000ms so
-the party would not move in unison — and **the stagger was the bug**: a delay picked at random is not
-a loop boundary, so the opening switch always landed mid-animation, cutting a breath in half. Going
-round in order fixed the other half; a random pick can repeat a stance or skip one for a minute, and
-both read as something misfiring rather than as a character shifting about.
+**Zero is off**, and that is the entire enable/disable control. A clip that never comes up never
+plays, so there is no second switch that can disagree with the number — "enabled, weight 0" is a
+state that means nothing and would sit in the data waiting to confuse somebody. The lab exposes it as
+a *Cuts in* slider on alternate idles only, reading `off` at zero.
 
-Nothing stops the party switching together now, and that turned out not to need solving: every
-Performer's clips have their own frame counts and `stepMs`, so they drift apart within a cycle or two
-on their own. An artificial offset would only buy the first few seconds, at the cost of the alignment
-that makes every switch land cleanly.
+Weights are shares of the same hundred, so they read together: Benjamin's 10 / 8 / 7 means about one
+idle in four is an interlude and the base holds the other three. Nothing needs to know the loop
+durations to author that, which is what makes it tunable by eye. Unweighted alternates default to 10,
+so a new one does something visible before it is tuned.
+
+**Authoring an alternate is a question about two joins, not about the clip.** It is never seen on
+its own: it cuts into the base and hands straight back. So the lab's *Seam* playback plays `idle`
+once, the alternate once, and repeats — both joins going past on a loop, which is the only playback
+that shows what a battle shows. Looping the alternate by itself shows a join it never actually
+makes, itself to itself, and a pose that starts slightly higher than the base ends will read fine
+that way and twitch on stage. The base leg runs at its own saved `stepMs` rather than at the speed
+slider's value, or the seam on show would be one nothing ever plays. The mode is built on the
+hand-off `once` mode already had — it swaps which clip is showing and lets frame count, timing,
+placement, keyframes and impacts follow the name downstream, as they already do for a one-shot
+settling into its ending.
+
+This replaced an earlier scheme, and the reason is worth keeping. That one rotated through every
+stance in order, one full loop each — so a Performer spent three quarters of a fight *not* in their
+own resting pose, and since the variants differ from each other as much as they differ from the base,
+the party read as restless rather than alive. Retiming it had not helped, because the timing was
+never the problem: the shape was. Equal airtime is the wrong model for variation, whatever its clock.
+
+The packer needed no changes for any of this: `LOOPING` matches by prefix, so every `idle_*` already
+registered as a looping clip. `idleStances` lists whichever exist, base first.
 
 Switches are scheduled against a running clock rather than by chaining delays, because `setTimeout`
-fires late under load and a chain accumulates every late arrival — after a hundred switches that is
-enough to land a change mid-loop again. Held in state, not derived at render: `Math.random()` inside a
-render would re-roll on every unrelated state change and the board would strobe. A character with one
-idle is skipped entirely.
+fires late under load and a chain accumulates every late arrival — after enough of them a change
+lands mid-loop, which is the one thing the scheduling exists to avoid. Held in state, not derived at
+render: `Math.random()` in a render would re-roll on every unrelated state change and the board would
+strobe. A character with one idle is skipped entirely.
+
+
+**`thinking` is the stance of being decided about** — held while a Performer is selected and has not
+committed yet, their menu up and the choice theirs. A **still**, joining `pain` and `death` in
+`EXTRA_POSES`: one drawing held for a state, not a sequence. Packing it as a clip would put a single
+frame through the strip machinery and, worse, through `normalise`, which scales every clip to a
+common figure height and would resize a deliberately different pose to match the others.
+
+All three stills are now drawn by one piece of code, since "replace the animated body with a held
+drawing" is the same job each time — sized through `clipBox` against the pose's own metrics, and set
+on the ground line. Which one wins is a priority rather than a choice: a character being struck is
+not deliberating, and one mid-swing is doing neither. `thinking` also yields to a booked action,
+which `ready` already covers, because the prop is false once a Performer is in the queue.
 
 **`upgrade` is the one reserved clip name.** Buying an in-battle upgrade is a real action — it costs
 the Performer's turn and their dice — but the engine records it as a planned action with a **null
@@ -2237,8 +2280,9 @@ once it started cutting on real gaps:
 
 **The animation lab** (`?dev=1#anim`, or the dev badge's **▶ Anim lab** button) is where all of this is judged and
 edited: swap character and clip, scrub frames by hand, play a one-shot into whatever it settles
-into, ghost the still behind the clip — or the **incoming frame**, the last frame of whatever clip
-settles into this one, which is the pose an ending actually has to continue from — reorder,
+into, play an alternate idle in **seam** with the main one, ghost the still behind the clip — or the
+**incoming frame**, the last frame of whatever clip settles into this one, which is the pose an
+ending actually has to continue from, or **frame 1 of the main idle** behind an alternate — reorder,
 duplicate (`⧉`) and disable frames, tune placement, pose and timing live, download a single frame as
 PNG — and **Save**, which writes the JSON
 through a dev-only endpoint (`vite.config.ts`).

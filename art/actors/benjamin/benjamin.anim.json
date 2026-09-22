@@ -248,10 +248,9 @@
     },
     "frames": [
       {
-        "hold": 1.25
+        "hold": 3.25
       },
       {
-        "hold": 0.5,
         "dx": -0.5
       },
       {
@@ -270,19 +269,21 @@
         "dy": -0.5
       }
     ],
+    "order": [
+      0,
+      1
+    ],
     "stepMs": 242
   },
   "idle_2": {
     "placement": {
-      "dx": -2.5
+      "scale": 1.035,
+      "dx": -4.5
     },
     "frames": [
+      {},
       {
-        "dx": 0.5
-      },
-      {
-        "hold": 5,
-        "dx": 0.5
+        "hold": 5
       },
       {
         "hold": 1.75,
@@ -293,11 +294,14 @@
       0,
       1
     ],
-    "stepMs": 260
+    "stepMs": 260,
+    "idleWeight": 0
   },
   "idle_3": {
     "placement": {
-      "dx": -2
+      "scale": 1.015,
+      "dx": -4,
+      "dy": 0.5
     },
     "frames": [
       {
@@ -309,7 +313,8 @@
         "dx": 4.5
       }
     ],
-    "stepMs": 260
+    "stepMs": 260,
+    "idleWeight": 10
   },
   "idle_4": {
     "frames": [
@@ -329,7 +334,8 @@
         "dx": -1.5
       }
     ],
-    "stepMs": 260
+    "stepMs": 260,
+    "idleWeight": 0
   },
   "move": {
     "placement": {
@@ -542,6 +548,14 @@
       }
     ],
     "stepMs": 206
+  },
+  "thinking": {
+    "placement": {
+      "scale": 1.005,
+      "dx": -6,
+      "dy": 9
+    },
+    "stepMs": 105
   },
   "upgrade": {
     "placement": {

@@ -119,6 +119,23 @@ export interface ClipSettings {
    * each, at the frame each lands.
    */
   impacts?: Impact[];
+  /**
+   * How often this idle interrupts the main one, in loops per hundred.
+   *
+   * Only meaningful on an alternate idle (`idle_2` and up). `idle` itself is
+   * the base and always plays; each alternate is an INTERLUDE that cuts in
+   * occasionally and hands straight back.
+   *
+   * Written as a share rather than a period because that is the question an
+   * animator is actually asking -- "how often should he roll his shoulders" is
+   * naturally "about one idle in ten", not "every 22 seconds". The weights of
+   * all the alternates sum to the chance that any interlude plays at all, so
+   * the base's share of the time is whatever is left.
+   *
+   * Default 10 when absent, so dropping in a new alternate does something
+   * visible without needing to be tuned first.
+   */
+  idleWeight?: number;
 }
 
 /**
@@ -234,6 +251,7 @@ const tuning: Record<string, ClipTuning> = {};
 const placement: Record<string, ClipPlacement> = {};
 const order: Record<string, number[]> = {};
 const stepMs: Record<string, number> = {};
+const idleWeight: Record<string, number> = {};
 const impacts: Record<string, Impact[]> = {};
 
 for (const [path, data] of Object.entries(files)) {
@@ -245,6 +263,7 @@ for (const [path, data] of Object.entries(files)) {
     }
     if (settings?.order?.length) order[key(who, clip)] = settings.order;
     if (settings?.stepMs) stepMs[key(who, clip)] = settings.stepMs;
+    if (settings?.idleWeight != null) idleWeight[key(who, clip)] = settings.idleWeight;
     if (settings?.impacts?.length) impacts[key(who, clip)] = settings.impacts;
   }
 }
@@ -253,6 +272,14 @@ export const ANIMATION_TUNING: Record<string, ClipTuning> = tuning;
 export const CLIP_PLACEMENT: Record<string, ClipPlacement> = placement;
 export const CLIP_ORDER: Record<string, number[]> = order;
 export const CLIP_STEP_MS: Record<string, number> = stepMs;
+export const CLIP_IDLE_WEIGHT: Record<string, number> = idleWeight;
+
+/** How often an alternate idle cuts in, in loops per hundred of the base. */
+export const idleWeightFor = (who: string, clip: string): number =>
+  CLIP_IDLE_WEIGHT[key(who, clip)] ?? DEFAULT_IDLE_WEIGHT;
+
+/** What an unauthored alternate is worth: visible, but not often. */
+export const DEFAULT_IDLE_WEIGHT = 10;
 export const CLIP_IMPACTS: Record<string, Impact[]> = impacts;
 
 /**

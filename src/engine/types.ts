@@ -893,6 +893,14 @@ export interface SpriteSheet {
    * body twice the size of anyone standing over it.
    */
   death?: string;
+  /**
+   * Held while this Performer is selected and has not committed yet.
+   *
+   * A still for the same reason `pain` is: it is one drawing held for a state,
+   * not a sequence. Yields to `ready` the moment an action is booked -- one is
+   * deciding, the other is waiting to go.
+   */
+  thinking?: string;
   /** width / height of the trimmed art. */
   aspect: number;
   anchorX: number;

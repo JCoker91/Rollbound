@@ -35,6 +35,7 @@ const NAMING: { path: string; what: string }[] = [
   { path: 'benjamin_sunder_4x1.png', what: 'Ability by NAME. Wins if both exist, and survives a reorder' },
   { path: 'benjamin_idle.png  _idle_2  _idle_3  _idle_4', what: 'Resting stances. All four loop automatically; the game rotates between them' },
   { path: 'benjamin_ready_2x1.png', what: 'Held during the walk to the mark, and while an action is queued' },
+  { path: 'benjamin_thinking_2x1.png', what: 'Held while this Performer is selected and still deciding' },
   { path: 'benjamin_upgrade_4x1.png', what: 'Buying an in-battle upgrade' },
   { path: 'benjamin_pain.png / benjamin_death.png', what: 'Stills. death is drawn lying down and is sized by width' },
   { path: 'benjamin_celebration_4x1.png', what: 'Victory. celebration_ending is the pose it settles into' },

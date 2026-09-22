@@ -1917,3 +1917,20 @@ button.big em {
   white-space: pre-wrap;
   color: #cdf3d2;
 }
+
+/* The frequency slider reads as a value, not as a setting: the number beside
+   it is what an animator is actually adjusting toward. */
+.lab-weight {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lab-weight input {
+  width: 120px;
+}
+
+.lab-weight b {
+  min-width: 34px;
+  font-variant-numeric: tabular-nums;
+}
