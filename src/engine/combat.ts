@@ -168,7 +168,7 @@ export function activePassives(u: Unit): Passive[] {
 export type NumericPassive = Extract<Passive, { percent: number }>['kind'];
 
 /** Summed, so buying a passive you already have stacks rather than replacing it. */
-const passive = (u: Unit, kind: NumericPassive): number =>
+export const passive = (u: Unit, kind: NumericPassive): number =>
   activePassives(u)
     .filter((p) => p.kind === kind)
     .reduce((n, p) => n + ('percent' in p ? p.percent : 0), 0);
@@ -642,6 +642,18 @@ export function scoreAction(
       return hits.reduce((sum, u) => sum + Math.min(amount, unitMaxHp(u) - u.hp), 0);
     }
     case 'buff': {
+      /*
+       * A summon is worth a body, so it is priced as one.
+       *
+       * Not a real appraisal -- a fresh creature's worth depends on the board
+       * and the AI has no way to read that -- but it has to be POSITIVE,
+       * because `chooseEnemyAction` drops anything scoring zero. The
+       * declared-intent path never consults this, so the only thing it decides
+       * is what a creature falls back on when the ally it declared against has
+       * since died. Zero left a Skitter standing there doing nothing at all,
+       * which looks exactly like the bug `targetStillLegal` used to have.
+       */
+      if (ability.effects?.some((fx) => fx.do === 'summon')) return 40;
       // A flat multiplier here made the AI turtle: a 5-target +30 atk buff scored
       // 300, beating almost every attack, and 25% of battles timed out. Instead
       // estimate the extra damage the buff actually produces before it decays.

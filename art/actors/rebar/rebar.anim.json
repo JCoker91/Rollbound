@@ -1,4 +1,33 @@
 {
+  "ability_3": {
+    "placement": {
+      "scale": 1.075,
+      "dx": -30,
+      "dy": -7
+    },
+    "frames": [
+      {},
+      {
+        "hold": 1.5
+      },
+      {
+        "hold": 1.5
+      },
+      {
+        "hold": 4
+      },
+      {
+        "hold": 1.5
+      }
+    ],
+    "order": [
+      1,
+      2,
+      4,
+      3
+    ],
+    "stepMs": 260
+  },
   "idle": {
     "frames": [
       {

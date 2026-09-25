@@ -33,6 +33,7 @@ import {
   baseStat,
   canTarget,
   computeDamage,
+  passive,
   computeHeal,
   regenTick,
   damageTypeOf,
@@ -109,6 +110,15 @@ export type Event =
   | { t: 'shatter'; target: string; stacks: number; amount: number; hpAfter: number }
   | { t: 'sleep'; unit: string }
   | { t: 'taunt'; unit: string; target: string; onto: string; refused?: string }
+  | { t: 'counter'; unit: string; target: string }
+  /** `resist` is where it ended up, not what it gained -- the total is the fact. */
+  | { t: 'adapt'; unit: string; element: Element; resist: number }
+  /** `spawned` is null when the formation was full and nothing arrived. */
+  | { t: 'summon'; unit: string; spawned: string | null }
+  /** `count` is how many answered, which is the size of the hit. */
+  | { t: 'encore'; unit: string; count: number }
+  /** A queued action whose victim died before its turn came round. */
+  | { t: 'retarget'; actor: string; ability: string; from: string; to: string }
   | { t: 'regen'; unit: string; charges: number }
   | { t: 'wake'; unit: string }
   | { t: 'move'; unit: string; from: Pos; to: Pos }
@@ -166,6 +176,19 @@ export interface BattleState {
   armed: ChainSymbol[];
   /** Undrawn elements for resistance rotation; refilled when empty. */
   rotationBag: Element[];
+  /**
+   * How many of each creature have EVER stood on this board, by def id stem.
+   *
+   * A monotonic high-water mark, and it has to be: the first version numbered a
+   * summon by counting the units currently present, which goes DOWN when a
+   * corpse is cleared to make room for its replacement. The boss fight duly
+   * produced two living creatures both called `understudy_blue~3`, and `def.id`
+   * is the identity everything from hit flashes to idle stances is keyed on.
+   *
+   * Seeded at deploy so the first summon continues the deployed numbering
+   * rather than restarting it.
+   */
+  copies: Record<string, number>;
 }
 
 /** One queued action. `ability` is null for an upgrade purchase. */
@@ -208,10 +231,43 @@ export function createBattle(
   // It is a rule of the board, not a thing a kit chose, so authoring it per
   // character would mean a new Performer could ship unable to move. Injected
   // after levels and stars are folded in, so nothing can accidentally scale it.
-  const mk = (defs: CharacterDef[], side: Side, slots: Slot[]): Unit[] =>
-    defs.map((rawDef, i) => {
+  /*
+   * Two of the same creature are two creatures.
+   *
+   * An encounter may field three Red Understudies, and until stages were
+   * authored as cast lists none ever fielded the same def twice -- so `id` and
+   * `name`, which are properties of a DEFINITION, were being used as the
+   * identity of a deployed unit all over the game. The rules were never at risk
+   * (the engine holds unit references and mutates them directly), but
+   * everything that has to map an event back to a body reads one or the other:
+   * the log records `def.name` as its target, and the battle screen keys hit
+   * flashes, flinches, idle stances and impact placement off `def.id`. Three
+   * Reds sharing both meant one of them taking a hit and all three flinching.
+   *
+   * So the copies are made distinct HERE, once, at the only moment that knows
+   * how many of each are being deployed. Numbering starts at 1 and is applied
+   * to every copy rather than to the second onward, because "Red Understudy"
+   * standing beside "Red Understudy 2" reads as a mistake in a log.
+   *
+   * The id suffix is `~`, which `clipsOf` strips when it resolves animations --
+   * art belongs to the definition, and all three Reds are drawn the same. It is
+   * not a character anything may appear in otherwise; see `NAME` in the dev
+   * endpoints, which is the strictest thing that validates an actor id.
+   */
+  const tally = new Map<string, number>();
+  const mk = (defs: CharacterDef[], side: Side, slots: Slot[]): Unit[] => {
+    const total = new Map<string, number>();
+    for (const d of defs) total.set(d.id, (total.get(d.id) ?? 0) + 1);
+    return defs.map((rawDef, i) => {
+      const copies = total.get(rawDef.id) ?? 1;
+      const nth = (tally.get(rawDef.id) ?? 0) + 1;
+      tally.set(rawDef.id, nth);
+      const named =
+        copies > 1
+          ? { ...rawDef, id: `${rawDef.id}~${nth}`, name: `${rawDef.name} ${nth}` }
+          : rawDef;
       const def =
-        side === 'player' ? { ...rawDef, abilities: [...rawDef.abilities, REPOSITION] } : rawDef;
+        side === 'player' ? { ...named, abilities: [...named.abilities, REPOSITION] } : named;
       return {
       def,
       hp: def.maxHp,
@@ -231,6 +287,7 @@ export function createBattle(
       intent: null,
       };
     });
+  };
 
   // Enemies are levelled here rather than by the caller, so every entry point --
   // the battle screen, a headless resolve, a test -- fields the encounter at the
@@ -256,6 +313,8 @@ export function createBattle(
     plan: [],
     armed: [],
     rotationBag: [],
+    // The deploy tally, which already counted every body put on the board.
+    copies: Object.fromEntries(tally),
   };
   beginPhase(state);
   return state;
@@ -413,7 +472,34 @@ function chooseIntents(s: BattleState): void {
     });
     if (usable.length === 0) continue;
 
-    const { ability, roll } = rollForAbility(s, usable);
+    /*
+     * Priority above the roll, which restores a field that had gone vestigial.
+     *
+     * `Ability.priority` was the selector before d20 bands arrived, and when
+     * they did it survived only in `chooseEnemyAction` -- the fallback path
+     * nothing normally reaches. The Fallen Seraph's kit still carries the
+     * comment describing how it was meant to work: "Judgment whenever it is off
+     * cooldown, Rebuke to punish anyone adjacent, Radiance as the filler."
+     *
+     * That is exactly what a boss wants and what a mob does not. A fight-
+     * defining ability on a raw band might fire on turn two before the player
+     * could possibly have answered it, or three times running, or never --
+     * and "clear the adds before the Encore" is only a decision if the Encore
+     * is a deadline you can count down to. Its cooldown is already drawn on the
+     * ability card, so the clock needs no new UI.
+     *
+     * `usable` has already dropped anything on cooldown, so "off cooldown" is
+     * the whole condition. Everything with no priority still rolls, which keeps
+     * the boss's filler unpredictable and every mob in the game unchanged.
+     */
+    const scheduled = [...usable]
+      .filter((a) => (a.priority ?? 0) > 0)
+      .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))[0];
+    // Rolled either way: the number is shown beside the intent, and a blank
+    // where a boss's roll should be reads as a bug rather than as a schedule.
+    const { ability, roll } = scheduled
+      ? { ability: scheduled, roll: s.rng.int(1, ENEMY_DIE) }
+      : rollForAbility(s, usable);
     const pool = ability.kind === 'attack' ? foes : allies;
     const legal = pool.filter((t) => canTarget(ability, u, t.pos, s.units));
     let target = legal[s.rng.int(0, legal.length - 1)]!;
@@ -775,25 +861,58 @@ export function commitNext(s: BattleState): PlannedAction | null {
       return entry;
     }
 
-    // A single-target ability whose victim is already down does nothing.
-    //
-    // Only `one` fizzles. Everything else is aimed at something other than a
-    // body: `all` takes the whole side, `column` and `row` name a LINE that the
-    // aimed slot merely identifies, and `slot` is aimed at a square that is
-    // very often empty on purpose -- that is what repositioning is for. Fizzing
-    // those on an empty square would make a reposition into a gap the one move
-    // that can never work.
-    if ((ability.scope ?? 'one') === 'one') {
-      const occupant = unitAt(s, target);
-      if (!occupant) {
+    /*
+     * A single-target ability whose victim died first TAKES THE NEXT ONE.
+     *
+     * The queue resolves top to bottom, so an attack aimed three actions ago at
+     * something the first action killed is the common case rather than an edge
+     * one -- and it used to fizzle. The Performer walked out, spent their dice,
+     * and did nothing, with a `fizzle` in a log that has no case for it (so it
+     * rendered as a blank line: see `LogPanel`). From the player's seat a
+     * character simply skipped their turn for no stated reason.
+     *
+     * Re-aiming is also the better RULE, not merely the kinder one. The dice
+     * were already spent and the ordering is the mechanic the whole queue is
+     * built on; punishing a good plan because it worked *too well* teaches
+     * players to aim their second attack at something they do not want dead,
+     * which is the opposite of the decision the queue is asking for.
+     *
+     * The next one down the line, front-first: `s.units` is in deployment
+     * order, which is slot order, which fills the front rank first. Legality is
+     * re-checked rather than assumed -- a reach-1 attack whose whole front rank
+     * has fallen has genuinely lost its target, and should still fizzle.
+     *
+     * Only `one` retargets. Everything else is aimed at something other than a
+     * body: `all` takes the whole side, `column` and `row` name a LINE the
+     * aimed slot merely identifies, and `slot` is aimed at a square that is
+     * very often empty on purpose -- that is what repositioning is for.
+     */
+    let aim = target;
+    if ((ability.scope ?? 'one') === 'one' && !unitAt(s, aim)) {
+      const side: Side =
+        ability.kind === 'attack' ? (unit.side === 'player' ? 'enemy' : 'player') : unit.side;
+      const next = livingOf(s, side).find((t) => canTarget(ability, unit, t.pos, s.units));
+      if (!next) {
         s.log.push({
           t: 'fizzle',
           actor: unit.def.name,
           ability: ability.name,
-          reason: 'its target was already down',
+          reason: 'nothing left it can reach',
         });
         continue;
       }
+      s.log.push({
+        t: 'retarget',
+        actor: unit.def.name,
+        ability: ability.name,
+        // The name of whoever the plan was aimed at is gone with them -- a
+        // corpse still stands on that slot but `unitAt` refuses the dead, and
+        // resolving it any other way would mean keeping a second index just to
+        // write one log line. The slot itself is the honest answer.
+        from: `rank ${target.x}, row ${target.y}`,
+        to: next.def.name,
+      });
+      aim = { ...next.pos };
     }
 
     unit.hasActed = true;
@@ -829,9 +948,25 @@ export function commitNext(s: BattleState): PlannedAction | null {
     // its own: arming is what the symbol does for the abilities AFTER it.
     if (ability.symbol && !s.armed.includes(ability.symbol)) s.armed.push(ability.symbol);
 
-    applyAbility(s, unit, ability, target, fires ? ability.trigger : undefined);
+    const before = new Map(s.units.map((u) => [u, u.hp]));
+    applyAbility(s, unit, ability, aim, fires ? ability.trigger : undefined);
+    answerAction(s, unit, ability, hurtBy(s, before));
     checkOutcome(s);
-    return entry;
+    /*
+     * Hand back the entry as it was RESOLVED, not as it was planned.
+     *
+     * The re-aim above was applied to `applyAbility` and to nothing else, so
+     * the engine hit the right creature and then told the caller it had hit the
+     * dead one: the battle screen reads `step.target` for its narration, so the
+     * line under the stage still named a corpse -- and with a body still lying
+     * on that slot, the whole turn read as a character walking out and swinging
+     * at nothing.
+     *
+     * The lesson is the same one this file keeps teaching: a function that
+     * corrects something internally has not finished until everything it hands
+     * back agrees with the correction.
+     */
+    return { ...entry, target: aim };
   }
 
   return null;
@@ -878,7 +1013,9 @@ export function commitAction(
     if (cd) unit.cooldowns[ability.name] = cd + 1;
   s.log.push({ t: 'act', side: s.phase, actor: unit.def.name, ability: ability.name, dice: values });
 
+  const before = new Map(s.units.map((u) => [u, u.hp]));
   applyAbility(s, unit, ability, target);
+  answerAction(s, unit, ability, hurtBy(s, before));
   checkOutcome(s);
   return null;
 }
@@ -955,7 +1092,10 @@ function applyEffects(
   override?: Effect[],
 ): void {
   for (const fx of override ?? ability.effects!) {
-    const targets = effectTargets(s, source, ability, centre, fx.on ?? 'target');
+    const boardwide = fx.do === 'summon' || fx.do === 'encore';
+    const targets = boardwide
+      ? []
+      : effectTargets(s, source, ability, centre, fx.on ?? 'target');
 
     switch (fx.do) {
       case 'damage': {
@@ -1006,6 +1146,14 @@ function applyEffects(
 
       case 'taunt':
         for (const target of targets) taunt(s, source, target);
+        break;
+
+      case 'summon':
+        summon(s, source, fx.of);
+        break;
+
+      case 'encore':
+        encore(s, source);
         break;
 
       case 'regen':
@@ -1131,6 +1279,31 @@ function strike(
     hit?: number;
   },
 ): void {
+  /*
+   * A blow cannot land on the dead. Full stop, and at the lowest level.
+   *
+   * `unitsHit` filters the living, but it does so ONCE, before the effect
+   * runs -- and several things strike the same list repeatedly afterwards. The
+   * worst is a multi-hit: Perfect Form splits into six blows over one target
+   * list, so a creature killed by the second went on being hit by the third,
+   * fourth, fifth and sixth. Measured on a level-40 Benjamin: four extra damage
+   * events against a body at 0 hp, each one re-logging the `ko`, and four sets
+   * of floating numbers landing on a corpse.
+   *
+   * Guarded here rather than in each caller because every caller means the same
+   * thing by it, and the next one to be written will mean it too. The same hole
+   * is open to an area ability whose later effects revisit an earlier effect's
+   * victims, and to `encore`, and to a counter-attack resolving after the thing
+   * it was answering already fell.
+   *
+   * NOT re-aimed. A queued ACTION whose target died takes the next one along
+   * (see `commitNext`) because its dice are already spent and the ordering is
+   * the mechanic; the later blows of one swing are a different thing, and
+   * having them cleave into the next creature would be a real change to what a
+   * multi-hit ability is worth rather than a bug fix.
+   */
+  if (!alive(target)) return;
+
   const shot: Ability = over
     ? {
         ...ability,
@@ -1346,7 +1519,11 @@ function triggeredEffects(ability: Ability, trigger: ChainTrigger): Effect[] {
     // pinned to `self` stays on the caster -- a trigger that widened the reach
     // of a self-buff would be changing what the ability IS, not amplifying it.
     const to = trigger.retarget;
-    fx = fx.map((e) => ((e.on ?? 'target') === 'target' ? { ...e, on: to } : e));
+    fx = fx.map((e) =>
+      e.do !== 'summon' && e.do !== 'encore' && (e.on ?? 'target') === 'target'
+        ? { ...e, on: to }
+        : e,
+    );
   }
 
   return trigger.effects ? [...fx, ...trigger.effects] : fx;
@@ -1708,6 +1885,97 @@ function addFrost(s: BattleState, target: Unit, stacks: number): void {
 }
 
 /**
+ * Who lost health over an action, by diffing rather than by reading the log.
+ *
+ * The log names its targets and would need resolving back to bodies; the HP
+ * diff already IS bodies, and it catches everything an action did rather than
+ * only what it announced. Downed units count -- an attack that killed what it
+ * hit still attacked it, and a counterer should not be able to duck its own
+ * rule by having the victim die.
+ */
+function hurtBy(s: BattleState, before: Map<Unit, number>): Unit[] {
+  return s.units.filter((u) => u.hp < (before.get(u) ?? u.hp));
+}
+
+/**
+ * Everything that answers an ACTION rather than a blow.
+ *
+ * Called once per resolved ability, which is the unit both of these are
+ * measured in -- a volley is one decision and pays one counter and teaches one
+ * lesson, however many times it lands. Hit counts are a presentation choice in
+ * this game and deliberately not a battle statistic.
+ *
+ * `hurt` is who the action actually damaged, which is what makes both rules
+ * exact: an attack that was aimed at a creature and killed a different one
+ * still counted as attacking the one it hit.
+ */
+function answerAction(s: BattleState, source: Unit, ability: Ability, hurt: Unit[]): void {
+  if (ability.kind !== 'attack' || hurt.length === 0) return;
+
+  /*
+   * A creature that learns the element it was hit by.
+   *
+   * Written into `resistMods`, which the False Lead's rotation already uses and
+   * the damage formula already reads, so nothing downstream had to change and
+   * the card already draws the result.
+   */
+  for (const target of hurt) {
+    const gain = passive(target, 'adapt');
+    if (gain <= 0) continue;
+    const element = ability.effects?.find((fx) => fx.do === 'damage')?.element ?? ability.element;
+    if (!element) continue;
+    const cap = target.def.passives?.find((p) => p.kind === 'adapt')?.max ?? 0;
+    const now = target.resistMods[element] ?? 0;
+    if (now >= cap) continue;
+    target.resistMods[element] = Math.min(cap, now + gain);
+    s.log.push({
+      t: 'adapt',
+      unit: target.def.name,
+      element,
+      resist: target.resistMods[element]!,
+    });
+  }
+
+  /*
+   * A creature that answers being walked past.
+   *
+   * Area attacks are exempt: one that catches its allies is not a player
+   * sneaking by, and charging Blizzard for landing on five bodies would tax the
+   * answer to the swarm standing next to it. So is any attack that damaged the
+   * counterer itself -- hitting it is the behaviour this exists to buy.
+   */
+  if ((ability.scope ?? 'one') !== 'one') return;
+  const side = hurt[0]!.side;
+  if (side === source.side) return;
+  for (const c of livingOf(s, side)) {
+    if (passive(c, 'counter') <= 0) continue;
+    if (hurt.includes(c)) continue;
+    // A creature that cannot take its own turn cannot answer on somebody
+    // else's. This is what makes frost an answer to a counterer.
+    if (!canAct(c)) continue;
+    const power = passive(c, 'counter') / 100;
+    s.log.push({ t: 'counter', unit: c.def.name, target: source.def.name });
+    strike(s, c, COUNTER_BLOW, source, { power });
+  }
+}
+
+/**
+ * The shape of a counter-blow.
+ *
+ * A physical single-target attack with no element and no reach limit -- reach
+ * is about choosing a target and a counter has already had one chosen for it.
+ * Named so the log and the floaters have something to say.
+ */
+const COUNTER_BLOW: Ability = {
+  name: 'Counterstrike',
+  cost: 0,
+  kind: 'attack',
+  damageType: 'physical',
+  power: 1,
+  range: 9,
+};
+
+/**
  * Point a creature's declared intent at whoever taunted it.
  *
  * Three refusals, all of them worth showing rather than swallowing, because a
@@ -1946,6 +2214,13 @@ function nextEnemyStep(s: BattleState, team: Unit[], foes: Unit[]): AiStep | nul
     // Lands on the slot named last turn. Nobody can move out of the way any
     // more, so the warning buys preparation -- heal, guard, or kill the caster
     // -- rather than a dodge.
+    //
+    // Logged as an ACT, which it was not for as long as telegraphs had no live
+    // user. The wind-up wrote a `telegraph` entry and the landing wrote only
+    // its damage, so the log read as a warning followed a turn later by
+    // unexplained injuries -- and the narration, which speaks from `act`, had
+    // nothing to say about the biggest hit in the fight.
+    s.log.push({ t: 'act', side: 'enemy', actor: u.def.name, ability: cast.ability.name, dice: [] });
     applyAbility(s, u, cast.ability, cast.target);
     checkOutcome(s);
     return { unit: u, kind: 'act', ability: cast.ability, target: cast.target };
@@ -2001,8 +2276,21 @@ function targetStillLegal(s: BattleState, unit: Unit, intent: Intent): boolean {
   // per side by convention (see `formation.ts`), and this is what stops a
   // convention being load-bearing: an occupant on the WRONG side is not the
   // target still standing there, it is a coordinate collision.
+  /*
+   * The side the ability is aimed at, which is not always the other one.
+   *
+   * This used to read `found.side !== unit.side` -- i.e. it assumed every
+   * declared intent pointed across the board. That held for as long as no
+   * creature had a non-attack ability, and the day one did (the Skitter calling
+   * for help, aimed at its own formation) every such intent was declared,
+   * rejected here as illegal, and silently dropped: 221 declarations and zero
+   * casts before anyone noticed, because the fallback path scores a summon at
+   * nothing and so chose to do nothing instead.
+   */
+  const aimedAt: Side =
+    intent.ability.kind === 'attack' ? (unit.side === 'player' ? 'enemy' : 'player') : unit.side;
   const found = unitAt(s, intent.target);
-  const occupant = found && found.side !== unit.side ? found : undefined;
+  const occupant = found && found.side === aimedAt ? found : undefined;
   if (occupant && !alive(occupant)) return false;
   // A whole-side ability does not care that one named slot emptied.
   if (intent.ability.scope === 'all') return true;
@@ -2039,6 +2327,159 @@ function chooseEnemyAction(s: BattleState, unit: Unit, foes: Unit[]): EnemyChoic
   }
 
   return best ? { ability: best.ability, target: best.target } : null;
+}
+
+/**
+ * Put another of `source` on the board, if the formation has room.
+ *
+ * Deployed into the first slot nobody is standing in, which is front-first --
+ * `STANDARD_ENEMY_SLOTS` is ordered that way, so a swarm grows forward into the
+ * player's face rather than piling up at the back where nothing can reach it.
+ * A body that has fallen does NOT free its slot: a corpse lies where it stood
+ * and the board it was standing on does not come back.
+ *
+ * It fizzles silently on a full formation. That is the only brake there is on a
+ * swarm whose spawn can spawn, and it is enough precisely because the slot
+ * count is small: growth doubles until the board is full and is flat after,
+ * which is a curve a player can outrun by clearing bodies faster than they
+ * arrive. A spawn cap would be a second number saying the same thing.
+ *
+ * The copy is a fresh unit at full health with its own cooldowns, and it is
+ * numbered by `createBattle`'s duplicate rule the moment it exists -- except
+ * that rule runs at deploy, so the numbering is done here instead, continuing
+ * from whatever is already on the board.
+ */
+/**
+ * Make the whole company act at once.
+ *
+ * The boss ability that turns a retinue into damage. Every ally still standing
+ * takes its OWN best attack -- the highest band it owns that is off cooldown --
+ * at a target picked uniformly at random, so it reads as a volley across the
+ * party rather than a second strike on whoever is in front.
+ *
+ * Marks are re-read every time round the loop. The company resolves in order
+ * and a Performer who went down to the second add is not a legal target for the
+ * third; taking the list once would have let a dead body keep being shot at.
+ *
+ * A taunt still wins, exactly as it does over a declared intent -- a provoked
+ * creature charges whoever provoked it, and being cued to act does not change
+ * who it is angry at. That is the counter-play: Kael can pull the whole volley
+ * onto himself.
+ */
+function encore(s: BattleState, source: Unit): void {
+  const chorus = livingOf(s, source.side).filter((u) => u !== source && canAct(u));
+  const other: Side = source.side === 'player' ? 'enemy' : 'player';
+  s.log.push({ t: 'encore', unit: source.def.name, count: chorus.length });
+
+  for (const u of chorus) {
+    const marks = livingOf(s, other);
+    if (marks.length === 0) return;
+    // Its best, by band: the strong attack is always the higher one, and
+    // reading it off the sheet rather than off an index keeps a creature with
+    // three abilities honest.
+    const best = [...u.def.abilities]
+      .filter((a) => a.kind === 'attack' && (u.cooldowns[a.name] ?? 0) === 0)
+      .sort((a, b) => (b.roll?.[0] ?? 0) - (a.roll?.[0] ?? 0))[0];
+    if (!best) continue;
+
+    const held = u.taunt;
+    const taunter =
+      held && held.turns > 0 ? s.units.find((x) => x.def.id === held.by && alive(x)) : undefined;
+    const target = taunter ?? marks[s.rng.int(0, marks.length - 1)]!;
+
+    s.log.push({ t: 'act', side: source.side, actor: u.def.name, ability: best.name, dice: [] });
+    applyAbility(s, u, best, target.pos);
+    checkOutcome(s);
+    if (s.outcome !== 'ongoing') return;
+  }
+}
+
+function summon(s: BattleState, source: Unit, of?: string): void {
+  const slots = source.side === 'enemy' ? s.encounter.enemySlots : s.encounter.partySlots;
+  /*
+   * A fallen body does not hold the stage.
+   *
+   * This used to look for a slot nobody was standing in AT ALL, corpses
+   * included, on the reasoning that the boards a body fell on do not come back.
+   * That reads well and it strangled the one kit built around refilling a
+   * company: the False Lead starts with three adds in five company slots, so it
+   * could summon exactly twice per fight and then never again however many of
+   * them died. Measured at exactly 2.00 summons a battle, which is what a hard
+   * cap looks like when you were expecting a rate.
+   *
+   * So a slot held only by the dead is free, and the body is cleared out of the
+   * way as the replacement walks on. For a company of understudies that is the
+   * most literal reading of the theme there is.
+   */
+  const at = (sl: Slot) => slotPos(sl);
+  const free =
+    slots.find((sl) => !s.units.some((u) => samePos(u.pos, at(sl)))) ??
+    slots.find((sl) => !s.units.some((u) => alive(u) && samePos(u.pos, at(sl))));
+  if (!free) {
+    s.log.push({ t: 'summon', unit: source.def.name, spawned: null });
+    return;
+  }
+
+  /*
+   * What arrives: a named reinforcement, or another of the caster.
+   *
+   * `of` is looked up in the ENCOUNTER rather than in a global bestiary, which
+   * is what keeps the engine from having to import `content.ts` -- content
+   * imports the engine, and the cycle would be real. An encounter that wants
+   * a creature summoned into it says so by carrying it.
+   *
+   * Levelled on arrival, because `createBattle` levels the roster it is handed
+   * and a reinforcement was never in that list. A copy of the caster is already
+   * levelled and must NOT be put through it twice.
+   */
+  const named = of ? s.encounter.reinforcements?.find((d) => d.id === of) : undefined;
+  if (of && !named) {
+    s.log.push({ t: 'summon', unit: source.def.name, spawned: null });
+    return;
+  }
+  const from = named ? applyLevel(named, s.encounter.enemyLevel ?? 1) : source.def;
+
+  /*
+   * The stem is whatever the summoner is a copy OF, so the third generation is
+   * `Skitter 5` rather than `Skitter 2 2`.
+   *
+   * Numbered off `s.copies`, which only ever goes up. Counting the units
+   * currently on the board looks equivalent and is not: a corpse cleared to
+   * make room for its replacement takes its number with it, and the next
+   * summon reuses it. Two living creatures then share an id, which is the
+   * identity hit flashes, flinches, idle stances and impact placement are all
+   * keyed on -- so a blow on one made the other flinch.
+   */
+  const stem = from.id.split('~')[0]!;
+  const label = from.name.replace(/ \d+$/, '');
+  const nth = (s.copies[stem] ?? 0) + 1;
+  s.copies[stem] = nth;
+
+  const def: CharacterDef = { ...from, id: `${stem}~${nth}`, name: `${label} ${nth}` };
+  // Whoever fell here makes room. Removed rather than left underneath, because
+  // two units sharing a square is the coordinate collision `targetStillLegal`
+  // is written to distrust.
+  const spot = slotPos(free);
+  s.units = s.units.filter((u) => alive(u) || !samePos(u.pos, spot));
+  s.units.push({
+    def,
+    hp: def.maxHp,
+    modifiers: [],
+    statuses: noStatuses(),
+    grudge: 0,
+    taunt: null,
+    side: source.side,
+    pos: slotPos(free),
+    hasActed: true,
+    upgrades: 0,
+    cooldowns: {},
+    carry: {},
+    resistMods: {},
+    freeCast: null,
+    pending: null,
+    intent: null,
+  });
+  s.log.push({ t: 'summon', unit: source.def.name, spawned: def.name });
 }
 
 /**

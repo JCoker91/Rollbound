@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ROSTER, BESTIARY } from '../../engine/content.ts';
 import { accrued, claim, duration, ratesFor, short, type Profile } from '../../engine/idle.ts';
+import { ITEMS, itemValue, useItem } from '../../engine/items.ts';
 import { Figure } from '../Figure.tsx';
 
 /**
@@ -129,6 +130,47 @@ export function Home({
           </button>
         </div>
       </section>
+
+      {/*
+        Bounty tokens: battle rewards banked as TIME rather than as currency.
+        Each pays its duration at the rate you are earning now, so the figure
+        beside it is what spending it would fetch today -- and it climbs with
+        the ladder, which is the argument for holding one.
+
+        The section is absent rather than empty when nothing is held. A drawer
+        with nothing in it is a permanent reminder of a reward you have not
+        earned, and the first one arrives on stage 5.
+      */}
+      {ITEMS.some((i) => (profile.items[i.id] ?? 0) > 0) && (
+        <section className="panel bounty">
+          <div className="claim-head">
+            <strong>Bounties</strong>
+            <span className="dim">worth an hour of idling each, at today's rate</span>
+          </div>
+          <ul className="bounty-list">
+            {ITEMS.filter((i) => (profile.items[i.id] ?? 0) > 0).map((i) => (
+              <li key={i.id}>
+                <span className={`coin ${i.bounty}`} />
+                <span className="nm">
+                  {i.name}
+                  <em>
+                    {i.hours}h {i.bounty}
+                  </em>
+                </span>
+                <span className="have">x{profile.items[i.id]}</span>
+                <button
+                  onClick={() => {
+                    const used = useItem(profile, i.id);
+                    if (used) onProfile(used.profile);
+                  }}
+                >
+                  Use — {short(itemValue(i, profile.stage))}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <section className="quick">
         <button className="primary big" onClick={onBattle}>

@@ -234,6 +234,41 @@ export type Effect =
    */
   | { do: 'regen'; turns: number; on?: EffectTarget }
   /**
+   * Put another of the CASTER on the board, in the first free slot.
+   *
+   * Another of the caster specifically, rather than a named creature, and that
+   * is a deliberate limit rather than a shortcut. A summon that names its spawn
+   * needs a registry the engine does not have -- `content.ts` imports the
+   * engine, so the engine cannot import the bestiary back without a cycle --
+   * and "it makes more of itself" is the whole of what a swarm needs. A
+   * creature that summons something ELSE can be added the day something wants
+   * it, and it will want a registry passed in rather than reached for.
+   *
+   * Fizzles when the formation is full: the ability is still declared and still
+   * spends the creature's action, it simply does nothing. That is the brake on
+   * a swarm that can spawn swarmers -- growth is exponential right up to the
+   * slot count and then flat, and the slot count is the only cap there is.
+   */
+  | { do: 'summon'; of?: string }
+  /**
+   * Every ally takes their best attack, now, at somebody chosen at random.
+   *
+   * The boss ability that turns its retinue into its damage. What makes it work
+   * is not the burst -- it is that the player sets the size of it: every add
+   * left standing is damage agreed to, at a moment you can see coming.
+   *
+   * Targets are picked UNIFORMLY at random per add rather than focused, so it
+   * reads as a volley across the party instead of a second attack on whoever is
+   * in front. A taunt still overrides it, for the same reason it overrides a
+   * declared intent: the provoked creature charges whoever provoked it.
+   *
+   * The adds use their own BEST attack, not a script written on the boss. A
+   * creature is whatever its sheet says it is, wherever it is being made to
+   * act, and a boss that rewrote its minions' kits would make the adds
+   * unreadable from their own cards.
+   */
+  | { do: 'encore' }
+  /**
    * Walk the CASTER to the slot the ability was aimed at, swapping with
    * whoever is standing there.
    *
@@ -621,6 +656,47 @@ export type Passive = {
 } & (
   | { kind: 'regen'; percent: number }
   | { kind: 'thorns'; percent: number }
+  /**
+   * Strikes back at anyone who attacks one of its ALLIES.
+   *
+   * The mirror of a taunt, and the honest version of "deal with me first": a
+   * timer only says the fight gets worse, where this punishes the specific
+   * choice being made. `percent` is a share of the counter-attacker's own ATK.
+   *
+   * Three limits, and each is load-bearing:
+   *
+   * - **Per action, never per hit.** A volley is one decision and pays one
+   *   counter; charging per blow would make hit count a battle statistic, and
+   *   it is a presentation choice.
+   * - **Single-target attacks only.** An area attack that catches its allies is
+   *   not a player sneaking past it, and taxing Blizzard for landing on five
+   *   creatures at once would tax the answer to the swarm standing next to it.
+   * - **Never for an attack that lands on IT.** Hitting it is the behaviour
+   *   this is trying to buy; charging for that too leaves no safe move at all,
+   *   which is where demanding tips into unfair.
+   *
+   * Reactive rather than declared, so a taunt cannot pull it -- Challenge
+   * rewrites an intent and this is not one. Frost can still stop it: a creature
+   * that cannot act cannot answer, which gives freeze a third job.
+   */
+  | { kind: 'counter'; percent: number }
+  /**
+   * Learns the element it is hit by, and stops taking it as hard.
+   *
+   * Each ACTION that deals it elemental damage adds `percent` resistance to
+   * that element, up to `max`. Physical damage carries no element and teaches
+   * it nothing, so a party's unaligned attackers are the constant and its
+   * casters are the ones who have to rotate.
+   *
+   * Written against `Unit.resistMods`, which already existed for the False
+   * Lead's rotation and is already read by `elementResistance` and drawn on the
+   * creature's card. The difference is who causes it: the boss's rotation
+   * happens TO the player, and this is a consequence of what the player chose
+   * to do, which is the better version of the same idea.
+   *
+   * Per action rather than per hit, for the reason `counter` is.
+   */
+  | { kind: 'adapt'; percent: number; max: number }
   | { kind: 'resilient'; percent: number }
   | { kind: 'frenzy'; percent: number }
   | { kind: 'lifesteal'; percent: number }
@@ -1053,7 +1129,38 @@ export interface CharacterDef {
    * fight at x1.2 and puts the staller at x2.0 by turn 30.
    */
   ramp?: { percent: number; after: number };
+  /**
+   * Out of arm's reach, wherever it is standing.
+   *
+   * Two rules, one idea. A flyer **needs a reach of 2 or more to be attacked**
+   * -- a `range: 1` ability cannot touch it even when it is standing in the
+   * front rank -- and it **does not hold a rank**, so it shields nothing behind
+   * it and clearing the ground in front of it does not bring it into melee.
+   *
+   * It has to be a property of the CREATURE rather than of where it stands,
+   * which is what ruled out the first attempt: parking it in the back column
+   * produces the same effect for any creature at all, so it made the Bat a
+   * placement rather than a thing. And it has to be deterministic, which is
+   * what ruled out the second: a miss chance is a coin flip resolved after the
+   * dice are committed, and BATTLE_DESIGN's standing rule is that a fight is
+   * plannable.
+   *
+   * What it actually taxes is CHEAP attacks. Every Performer's wildcard basic
+   * is `range: 1` -- Maul, Cleave, Quick Cut -- and every one of them keeps a
+   * reach-2 ability that works fine. So a flyer cannot be answered by spamming
+   * basics at it, and nobody is locked out of the fight.
+   */
+  flying?: boolean;
 }
+
+/**
+ * A modifier duration that never counts down.
+ *
+ * Chosen over a `permanent?: boolean` flag because the expiry tick already
+ * reads `turns` and this needs no branch there: a second field describing the
+ * same thing is a second field to forget in a comparison.
+ */
+export const PERMANENT = Infinity;
 
 /** A stat a modifier can move. Not max HP -- see `Modifier`. */
 export type ModStat = 'attack' | 'physicalDefense' | 'magicalDefense';
@@ -1128,7 +1235,13 @@ export interface Modifier {
    * not consulted for them because a resistance percentage is already absolute.
    */
   amount: number;
-  /** Turns left, counted down at the End Turn of the side that applied it. */
+  /**
+   * Turns left, counted down at the End Turn of the side that applied it.
+   *
+   * `PERMANENT` for one that never lapses. `Infinity - 1` is still `Infinity`,
+   * so the expiry tick needs no special case -- but the sheet does, and prints
+   * an infinity mark where it would otherwise print a turn count.
+   */
   turns: number;
   /**
    * Frost the attacker when the holder takes damage of this type.

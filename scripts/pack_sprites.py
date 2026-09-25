@@ -308,9 +308,38 @@ EXTRA_POSES = ('pain', 'death', 'thinking')
 #: Most frames a square-cell guess may claim before it is treated as nonsense
 #: rather than as a very long animation. Benjamin's longest authored clip is 16.
 MAX_INFERRED_COLS = 16
-#: Transparent pixels left either side of every frame in a packed strip, so a
-#: fractional scale cannot sample a neighbour's ink. See `build_animations`.
+#: Least transparent margin left either side of every frame in a packed strip,
+#: so a fractional scale cannot sample a neighbour's ink. See `build_animations`.
 FRAME_GUTTER = 2
+#: ...and the same margin as a share of the cell, which is the one that actually
+#: has to hold. See `gutter_for`.
+GUTTER_SHARE = 0.025
+
+
+def gutter_for(cell_w: int) -> int:
+    """
+    How much clearance one frame needs from the next, in output pixels.
+
+    A FIXED two pixels was the first answer and it is the wrong unit. What has
+    to survive is the browser's RESAMPLING, and the reach of that is set by the
+    ratio between the packed cell and the slot it is drawn into -- so the wider
+    the cell, the harder it is downscaled, and the further a filter reaches
+    across the boundary in source pixels.
+
+    Measured across the roster when Kael arrived: every clip had exactly 2px,
+    but as a share of its cell that ran from 2.2% on Veyra's 92px cell down to
+    0.8% on Kael's 255px one. Kael's axe fills its cell to the edge and his
+    frames are the widest anything packs to, so at roughly 2.5x down his two
+    pixels came to less than one output pixel and the filter straddled the
+    boundary -- the previous frame's axe head appearing at the left edge of the
+    next one. Veyra, packing to a third of the width, never showed it.
+
+    So: a share of the cell, with the old constant kept as the floor for small
+    cells where a percentage would round to nothing. 2.5% is two and a half
+    output pixels at a 2.5x reduction, which is a whole pixel of margin past
+    where any box filter reaches.
+    """
+    return max(FRAME_GUTTER, round(cell_w * GUTTER_SHARE))
 # The grid statures are expressed against, shared with content.ts's BASE_CANVAS.
 BASE_DENSITY = 128
 
@@ -1906,16 +1935,21 @@ def build_animations(name: str) -> dict:
         of this one. Every "the frames are clean but I can still see the next
         one" report is this, not the cut.
 
-        Two pixels of OUTPUT space, added after the resize so the gap is exactly
-        two pixels rather than whatever the source scale happens to make it.
+        OUTPUT space, added after the resize so the gap is the size it claims
+        to be rather than whatever the source scale happens to make it. How much
+        is `gutter_for`, which reads it off the cell width -- a fixed two pixels
+        is a different amount of protection on a 92px cell than on a 255px one,
+        and the 255px one is where it ran out.
+
         `anchorX` and `aspect` are restated below against the padded cell, so
         the figure lands in the same place on stage -- the gutter buys clearance,
         it does not move anybody.
         '''
-        cell = cw + 2 * FRAME_GUTTER
+        gutter = gutter_for(cw)
+        cell = cw + 2 * gutter
         strip = Image.new('RGBA', (cell * len(cropped), ch), (0, 0, 0, 0))
         for i, f in enumerate(cropped):
-            strip.paste(f, (i * cell + FRAME_GUTTER, 0))
+            strip.paste(f, (i * cell + gutter, 0))
         path = out_dir / f'{name}_{clip}.png'
         save_if_changed(strip, path)
 
@@ -1931,7 +1965,7 @@ def build_animations(name: str) -> dict:
             # Against the PADDED cell. The anchor is a fraction of the cell
             # width, so widening the cell without restating it would slide every
             # character off their mark by the width of the gutter.
-            'anchorX': round((anchor_x * cw + FRAME_GUTTER) / cell, 4),
+            'anchorX': round((anchor_x * cw + gutter) / cell, 4),
             'loops': looping,
             'normalised': round(factor.get(clip, 1.0), 4),
             'trimmed': total - len(cropped),

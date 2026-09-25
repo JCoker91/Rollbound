@@ -274,18 +274,79 @@ was too easy to lose. It reveals the anim lab, the stage lab, stage/party-level 
 The distinction it draws is deliberate: **live testing** is what a player meets; **dev testing** is
 under parameters you chose.
 
+### Stature: how big a figure stands, and which way it faces
+
+The lab's top bar carries **height**, **x**, **y** and a **facing** toggle. These belong to the
+ACTOR rather than to a clip, which is why they are not in the Placement panel below: a creature
+owns one drawing and has no clip to hang them on.
+
+The packed `scale` is the figure's share of its own canvas — a fact about the *file*, not a
+decision about the character. A creature generated with a lot of headroom packs small and nothing in
+the art pipeline could know it was meant to loom, so the multiplier is authored. **Facing** exists
+because the renderer mirrors every enemy (`facing = -1`) on the assumption the art faces right like
+the party's does; a creature drawn the other way fights with its back to the stage, and this is
+cheaper than re-exporting it.
+
+They **save the moment you change them**, not on the Save button, because the right value is found
+by watching the number move.
+
+Where they land:
+
+| | |
+| --- | --- |
+| actors | `art/actors/<id>/<id>.anim.json` |
+| creatures | `art/enemies/creatures/<id>.anim.json` |
+
+Both under a reserved **`stature`** key holding a `placement` plus `flip`. Reserved rather than
+given a file of its own so it rides the save endpoint and the placement validation that already
+exist — a second shape would have meant a second validator, a second writer, and a second thing to
+forget.
+
+**The picker lists everything with a sprite**, not everything with clips. It used to list
+`ANIMATION_CLIPS`, so every creature in the game was invisible to the one screen that can tune how
+it stands.
+
+### Testing a stage at the right level
+
+**The stage picker does not change your party's level.** The battle fields the levels in your save,
+and enemies are `enemyLevel: stage` (the boss `stage + 3`), so picking stage 9 on a fresh profile is
+a level-1 party against level-9 enemies — a **7% win rate**, which looks like a broken encounter and
+is a level gap.
+
+Use the **`party lv`** box beside the stage picker (placeholder `save`, meaning "use the profile").
+Set it to the stage you are testing; **13** for the stage-10 boss, which is what the gate is tuned
+for. It re-levels every sheet from the base roster, which also drops star picks — costless today,
+since every tree is placeholder.
+
+Why it matters more than it sounds: mitigation is `ATK / (ATK + DEF)` and both sides use the same
+`applyLevel`, so **matched levels cancel exactly** — a level-30 fight plays identically to a level-1
+fight. Level is never an absolute difficulty; it is only ever the gap.
+
+### Playing the loop rather than a stage
+
+Without dev mode the game plays its own ladder: the Home screen fields `profile.stage`, clearing it
+pays out and raises the high-water mark, and the idle rate is a function of that mark. Clearing
+stages 1–10 in order banks about 17,800 xp — a party of five at **level 8** against a boss that
+wants 13, which is the intended wall: try another composition, or idle about two hours and come
+back.
+
 ---
 
 ## Where to look when something is odd
 
 | symptom | look at |
 | --- | --- |
-| A sliver of the next frame shows, but the source PNGs are clean | Not the cut. Packed strips need their 2px gutter (`FRAME_GUTTER`) — without it a fractional scale samples across the frame boundary. Re-pack. |
+| A sliver of the next frame shows, but the source PNGs are clean | Not the cut. It is the packed strip's gutter (`gutter_for`) being too thin for the downscale — a fractional scale samples across the frame boundary. The gutter is 2.5% of the cell, floored at 2px; a wider cell is downscaled harder and needs proportionally more. Re-pack. |
 | A new animation "does not show up" | Is it in `animations/`? `art/samples/` is never packed. |
 | Frames sliced wrong, or the page eats memory | Missing `_NxM` on a sheet. See the table above. |
 | A frame contains part of the one before it | A seam cuts through a drawing — `--bleed`. |
 | The lab reloads and loses your place | Something under `art/` changed. A no-op pack no longer reloads. |
 | An ability animates as the wrong one | A slot-named sheet after a kit reorder. Check the lab's `ability_N — Name` label. |
 | The packer refuses an actor | `<name>.pack.json` was wiped. Delete `public/sprites/<name>/` and re-run. |
+| A creature is a role badge, not a sprite | No art packed for that id. Supported state, not a bug — `npm run art` and the `SpriteId` union say who has what. |
+| A stage looks impossible | Check `party lv` against the stage. Matched levels cancel; a gap does not. |
+| An enemy "does nothing" on its turn | Its declared intent was rejected at execution (`targetStillLegal`) and the fallback scored everything at zero. Check the `intent` log entries against the `act` ones — a count mismatch is the tell. |
+| Damage appears with nothing explaining it | An unhandled log event. `LogPanel`'s switch has no `default`, so a new event kind renders as a blank line. |
+| Two units drawn on top of each other | The encounter fields more bodies than its slot layout has slots; the surplus reuse the last one. |
 
 More in `README.md` §11.

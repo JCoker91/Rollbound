@@ -1,8 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ROSTER } from '../../engine/content.ts';
+import { ROSTER, sprite } from '../../engine/content.ts';
 import { HIT_SPLITS, hitSplitKey } from '../../engine/hitSplits.ts';
-import { abilitySlug, slotAbilityName } from '../clipAnimation.ts';
-import { ANIMATION_CLIPS, EFFECTS, type AnimationClip } from '../../engine/sprites.generated.ts';
+import { abilitySlug, slotAbilityName, statureFor, type Stature } from '../clipAnimation.ts';
+import { STATURE } from '../animationData.ts';
+import {
+  ANIMATION_CLIPS,
+  EFFECTS,
+  SPRITE_METRICS,
+  type AnimationClip,
+  type SpriteId,
+} from '../../engine/sprites.generated.ts';
 
 import {
   CLIP_IMPACTS,
@@ -165,8 +172,30 @@ function LabBurst({ impact }: { impact: Impact }) {
 }
 
 export function AnimationLab() {
-  const owners = Object.keys(ANIMATION_CLIPS).sort();
-  const [who, setWho] = useState(owners[0] ?? '');
+  /*
+   * Everything with a SPRITE, not everything with clips.
+   *
+   * The picker used to list `ANIMATION_CLIPS`, which is only actors who have
+   * been drawn an animation -- so every creature in the game was invisible to
+   * the one screen that can tune how a figure stands. A creature is exactly the
+   * thing that needs it: it arrives as one drawing on whatever canvas the
+   * generator produced, so its packed stature is the ratio of body to canvas
+   * rather than a decision anyone made, and until now the only way to change it
+   * was to re-export the art.
+   */
+  const owners = Object.keys(SPRITE_METRICS).sort();
+  /*
+   * Open on an actor who has clips.
+   *
+   * `owners` lists everything with a sprite now, and it is sorted -- so the
+   * default became whichever creature happens to sort first, which has no
+   * animations, which took the whole screen to its empty state. The picker
+   * should still OFFER the clipless ones (that is the point of widening it);
+   * it should just not start on one.
+   */
+  const [who, setWho] = useState(
+    owners.find((o) => Object.keys(ANIMATION_CLIPS[o] ?? {}).length > 0) ?? owners[0] ?? '',
+  );
   const clips = ANIMATION_CLIPS[who] ?? {};
   const names = Object.keys(clips).sort();
   const [clipName, setClipName] = useState(names[0] ?? '');
@@ -227,6 +256,14 @@ export function AnimationLab() {
    * never say different things.
    */
   const [idleWeight, setIdleWeight] = useState<number>(DEFAULT_IDLE_WEIGHT);
+  /**
+   * How this ACTOR stands, as opposed to how one of its clips is placed.
+   *
+   * Saved on the reserved `stature` key, which is why it is a placement plus a
+   * flag rather than a shape of its own: it rides the save endpoint and the
+   * validation that already exist for placements.
+   */
+  const [stature, setStature] = useState<Stature>({});
   const [dummy, setDummy] = useState(true);
   const [bursts, setBursts] = useState<{ id: number; impact: Impact }[]>([]);
   const burstId = useRef(0);
@@ -235,12 +272,19 @@ export function AnimationLab() {
   const stripRef = useRef<HTMLImageElement>(null);
 
   const def = ROSTER.find((d) => d.id === who);
-  const still = def?.sprite;
+  // A creature has no roster entry, so the sheet comes from the packed metrics
+  // instead -- which is where an actor's comes from too, one step down.
+  const still = def?.sprite ?? (who in SPRITE_METRICS ? sprite(who as SpriteId) : undefined);
   const restName = restingClip(clips, clipName);
   const rest = restName ? clips[restName] : undefined;
 
   // A new clip means a new frame count, so the working copy starts over --
   // seeded from whatever is already saved for it.
+  // Per ACTOR, so it reloads on `who` rather than on the clip.
+  useEffect(() => {
+    setStature({ ...statureFor(who) });
+  }, [who]);
+
   useEffect(() => {
     if (!clip) return;
     const committed = tuningFor(who, clipName) ?? [];
@@ -352,6 +396,21 @@ export function AnimationLab() {
 
   const livePlace = editing ? place : placementFor(who, showingName);
 
+  const playing = mode !== 'step';
+  /*
+   * The pace of what is ON SCREEN, which is not always the pace the slider is
+   * showing. While a one-shot has settled into its ending -- or while seam mode
+   * is playing the main idle -- the clip on screen is one the speed slider is
+   * not editing, and timing it by the slider would make the hand-off a
+   * comparison against something the battle never plays.
+   *
+   * Computed up here, well before they are read, for a reason that is not
+   * about timing at all: the impact-spawning effect below them is a HOOK, and
+   * it has to run on the clipless branch too. See the note on that effect.
+   */
+  const shownStepMs = editing ? stepMs : stepMsFor(who, showingName);
+  const duration = clipDuration(steps, shownStepMs);
+
   // The pose track, regenerated on every edit so a scale typed into the grid
   // shows up on the next frame rather than on the next save.
   const poseCss = useMemo(
@@ -420,6 +479,35 @@ ${poseCss}` : ''),
    * case is every frame in order, and writing that out would bury the real
    * decisions in files full of `[0,1,2,3...]`.
    */
+  /**
+   * Stature saves on its own, and has to.
+   *
+   * It belongs to the ACTOR rather than to a clip, and the creatures that most
+   * need it have no clip at all -- so it cannot ride along with the clip write
+   * the way every other setting does. It goes to the same endpoint under the
+   * reserved `stature` key, which is what lets it reuse the placement
+   * validation already there.
+   */
+  async function saveStature(next: Stature) {
+    setStature(next);
+    try {
+      const res = await fetch('/__anim/save', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          who,
+          clip: STATURE,
+          placement: trimPlacement({ scale: next.scale, dx: next.dx, dy: next.dy }),
+          flip: next.flip,
+        }),
+      });
+      const body = (await res.json()) as { error?: string; file?: string };
+      setStatus(res.ok && !body.error ? `stature -> ${body.file}` : `failed: ${body.error}`);
+    } catch (e) {
+      setStatus(`failed: ${e instanceof Error ? e.message : 'dev server unreachable'}`);
+    }
+  }
+
   async function save() {
     if (!clip) return;
     /*
@@ -550,13 +638,164 @@ ${poseCss}` : ''),
     if (mode === 'step') setAt(to);
   }
 
+  /*
+   * The controls that belong to the ACTOR rather than to one of its clips.
+   *
+   * Declared once and rendered by both branches below. Two copies of a control
+   * row is how one of them quietly stops matching the other.
+   */
+  const actorBar = (
+    <>
+        <label>
+          Character
+          <select
+            value={who}
+            onChange={(e) => {
+              setWho(e.target.value);
+              setClipName(Object.keys(ANIMATION_CLIPS[e.target.value] ?? {}).sort()[0] ?? '');
+            }}
+          >
+            {owners.map((o) => (
+              <option key={o} value={o}>
+                {o}
+              </option>
+            ))}
+          </select>
+        </label>
+        {/*
+          How this ACTOR stands, which is a different question from how one of
+          its clips is placed -- and the only one a creature with a single
+          drawing can answer. Saved the moment it changes rather than on the
+          Save button, because the answer is found by watching the number move.
+        */}
+        <label className="lab-stature" title="Figure height, as a multiple of what the art packs to">
+          height
+          <input
+            type="range"
+            min={0.5}
+            max={2.5}
+            step={0.05}
+            value={stature.scale ?? 1}
+            onChange={(e) => saveStature({ ...stature, scale: Number(e.target.value) })}
+          />
+          <b>{(stature.scale ?? 1).toFixed(2)}x</b>
+        </label>
+        <label className="lab-stature" title="Nudge across the stage, in percent">
+          x
+          <input
+            type="number"
+            step={0.5}
+            value={stature.dx ?? 0}
+            onChange={(e) => saveStature({ ...stature, dx: Number(e.target.value) })}
+          />
+        </label>
+        <label className="lab-stature" title="Nudge up or down the stage, in percent">
+          y
+          <input
+            type="number"
+            step={0.5}
+            value={stature.dy ?? 0}
+            onChange={(e) => saveStature({ ...stature, dy: Number(e.target.value) })}
+          />
+        </label>
+        <button
+          className={stature.flip ? 'on' : ''}
+          title="Mirror this actor, for art drawn facing the other way"
+          onClick={() => saveStature({ ...stature, flip: !stature.flip })}
+        >
+          {stature.flip ? '◀ Flipped' : '▶ Facing'}
+        </button>
+    </>
+  );
+
+  /*
+   * Spawn the clip's impacts on the clip's own schedule.
+   *
+   * Sits ABOVE the clipless early return, and must: it is a hook, and a hook
+   * after a conditional return is only called on some renders. Picking a
+   * creature out of the character list stopped rendering it, React counted
+   * fewer hooks than the render before, and the whole screen went black --
+   * which is what "no packed animations" looked like from the outside.
+   * Everything it reads is computed unconditionally for the same reason.
+   *
+   * Driven by `impactTimes`, the same function the battle calls, so a spark
+   * that lands here lands there -- including several sharing a frame and
+   * separating themselves with `delay`, and a duplicated frame throwing one
+   * each time it plays.
+   *
+   * Re-armed whenever the clip, its timing or its impacts change, which is what
+   * makes dragging a slider show its result immediately. `run` is in the deps
+   * so the replay button restarts the volley along with the animation.
+   */
+  useEffect(() => {
+    // Not gated on the dummy any more. A `caster` burst plays on the performer,
+    // so it is visible whether or not there is a stand-in target on screen --
+    // and an animator turning the dummy off to see the figure clearly was the
+    // most likely person to be tuning one.
+    if (!playing || !showing) return;
+    // The LIVE list, not the saved one: the dummy exists to show the edit you
+    // are making. `editing` is false while previewing another actor's clip, and
+    // then the saved catalogue is the right answer.
+    const marks = impactTimes(who, showingName, steps, shownStepMs, editing ? impacts : undefined);
+    if (!marks.length) return;
+    const timers: number[] = [];
+    const fire = () => {
+      for (const { at, impact } of marks) {
+        timers.push(
+          window.setTimeout(() => {
+            const id = burstId.current++;
+            setBursts((b) => [...b, { id, impact }]);
+            window.setTimeout(
+              () => setBursts((b) => b.filter((x) => x.id !== id)),
+              impact.ms ?? BURST_MS,
+            );
+          }, at),
+        );
+      }
+    };
+    fire();
+    // A looping clip replays its impacts every lap; a one-shot fires once, the
+    // same as it does in a battle.
+    const loop = mode === 'loop' ? window.setInterval(fire, Math.max(1, duration)) : null;
+    return () => {
+      timers.forEach(window.clearTimeout);
+      if (loop) window.clearInterval(loop);
+      setBursts([]);
+    };
+  }, [dummy, playing, mode, who, showingName, steps, shownStepMs, duration, impacts, run, showing]);
+
+  /*
+   * An actor with no clips is not an empty screen.
+   *
+   * It used to be: the whole lab short-circuited to a "put a sheet in
+   * animations/" message. That was fine while the picker only listed actors who
+   * had clips, and became actively wrong the moment it listed creatures -- who
+   * have exactly one drawing, need their stature tuned, and were sent to a page
+   * telling them to go and draw an animation first.
+   *
+   * So the character picker and the actor-level controls stay, and only the
+   * clip machinery below is replaced. `actorBar` is rendered by both branches
+   * rather than duplicated into them, because two copies of a control row is
+   * how one of them quietly stops matching the other.
+   */
   if (!clip || !showing) {
     return (
       <div className="lab">
-        <p className="dim">
-          No packed animations. Put a sheet in <code>art/actors/&lt;name&gt;/animations/</code> and
-          run <code>python scripts/pack_sprites.py</code>.
+        <div className="lab-controls panel">{actorBar}</div>
+        <p className="dim lab-noclips">
+          <strong>{who}</strong> has no packed animations — the height, nudge and facing above
+          are all it can be given. To draw it one, put a sheet in{' '}
+          <code>art/actors/&lt;name&gt;/animations/</code> and run{' '}
+          <code>python scripts/pack_sprites.py</code>.
         </p>
+        {still && (
+          <div className="lab-stage">
+            <figure>
+              <img src={still.src} alt="" style={{ height: 220 }} draggable={false} />
+              <figcaption className="dim">still</figcaption>
+            </figure>
+          </div>
+        )}
       </div>
     );
   }
@@ -607,65 +846,7 @@ ${poseCss}` : ''),
 
   const ghosting =
     ghost === 'incoming' && !incoming ? 'still' : ghost === 'base' && !seamBase ? 'still' : ghost;
-  const playing = mode !== 'step';
-  /*
-   * The pace of what is ON SCREEN, which is not always the pace the slider is
-   * showing. While a one-shot has settled into its ending -- or while seam mode
-   * is playing the main idle -- the clip on screen is one the speed slider is
-   * not editing, and timing it by the slider would make the hand-off a
-   * comparison against something the battle never plays.
-   */
-  const shownStepMs = editing ? stepMs : stepMsFor(who, showingName);
-  const duration = clipDuration(steps, shownStepMs);
 
-  /*
-   * Spawn the clip's impacts on the clip's own schedule.
-   *
-   * Driven by `impactTimes`, the same function the battle calls, so a spark
-   * that lands here lands there -- including several sharing a frame and
-   * separating themselves with `delay`, and a duplicated frame throwing one
-   * each time it plays.
-   *
-   * Re-armed whenever the clip, its timing or its impacts change, which is what
-   * makes dragging a slider show its result immediately. `run` is in the deps
-   * so the replay button restarts the volley along with the animation.
-   */
-  useEffect(() => {
-    // Not gated on the dummy any more. A `caster` burst plays on the performer,
-    // so it is visible whether or not there is a stand-in target on screen --
-    // and an animator turning the dummy off to see the figure clearly was the
-    // most likely person to be tuning one.
-    if (!playing || !showing) return;
-    // The LIVE list, not the saved one: the dummy exists to show the edit you
-    // are making. `editing` is false while previewing another actor's clip, and
-    // then the saved catalogue is the right answer.
-    const marks = impactTimes(who, showingName, steps, shownStepMs, editing ? impacts : undefined);
-    if (!marks.length) return;
-    const timers: number[] = [];
-    const fire = () => {
-      for (const { at, impact } of marks) {
-        timers.push(
-          window.setTimeout(() => {
-            const id = burstId.current++;
-            setBursts((b) => [...b, { id, impact }]);
-            window.setTimeout(
-              () => setBursts((b) => b.filter((x) => x.id !== id)),
-              impact.ms ?? BURST_MS,
-            );
-          }, at),
-        );
-      }
-    };
-    fire();
-    // A looping clip replays its impacts every lap; a one-shot fires once, the
-    // same as it does in a battle.
-    const loop = mode === 'loop' ? window.setInterval(fire, Math.max(1, duration)) : null;
-    return () => {
-      timers.forEach(window.clearTimeout);
-      if (loop) window.clearInterval(loop);
-      setBursts([]);
-    };
-  }, [dummy, playing, mode, who, showingName, steps, shownStepMs, duration, impacts, run, showing]);
   const oneShot = mode === 'once' && !settled;
   // Both modes run the strip exactly once, so that its end is an event: `once`
   // settles on it, `seam` hands over on it.
@@ -693,22 +874,7 @@ ${poseCss}` : ''),
       <style>{css}</style>
 
       <div className="lab-controls panel">
-        <label>
-          Character
-          <select
-            value={who}
-            onChange={(e) => {
-              setWho(e.target.value);
-              setClipName(Object.keys(ANIMATION_CLIPS[e.target.value] ?? {}).sort()[0] ?? '');
-            }}
-          >
-            {owners.map((o) => (
-              <option key={o} value={o}>
-                {o}
-              </option>
-            ))}
-          </select>
-        </label>
+        {actorBar}
 
         <label>
           Clip

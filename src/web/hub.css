@@ -1934,3 +1934,80 @@ button.big em {
   min-width: 34px;
   font-variant-numeric: tabular-nums;
 }
+
+
+/*
+ * Bounty tokens.
+ *
+ * A list rather than the grid the idle claim uses: that panel shows three
+ * fixed currencies and this one shows however many kinds you happen to hold,
+ * so rows that stack beat columns that reflow.
+ */
+.bounty-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.bounty-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.bounty-list .nm {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-weight: 600;
+}
+
+/* What it actually is, under the name it is collected under. */
+.bounty-list .nm em {
+  font-style: normal;
+  font-size: 11px;
+  opacity: 0.6;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.bounty-list .have {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.7;
+}
+
+/* The figure on the button is what it fetches TODAY, which is the number the
+   decision turns on -- so the button carries it rather than a bare verb. */
+.bounty-list button {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The clipless branch: an actor with a sprite and no animations. Not an error
+   state -- every creature in the game is one. */
+.lab-noclips {
+  margin: 10px 0;
+  max-width: 62ch;
+  line-height: 1.5;
+}
+
+/* The actor-level controls in the lab's top bar: compact, because they sit in a
+   row that already holds the character, clip and playback pickers. */
+.lab-stature {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+}
+
+.lab-stature input[type='number'] {
+  width: 56px;
+}
+
+.lab-stature input[type='range'] {
+  width: 90px;
+}

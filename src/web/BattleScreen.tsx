@@ -40,6 +40,7 @@ import {
   canTarget,
   computeDamage,
   activePassives,
+  baseStat,
   effectiveDefense,
   modifierTotal,
   damageTypeOf,
@@ -52,6 +53,8 @@ import {
 import {
   describeAbility,
   describeChain,
+  describeShort,
+  describeCost,
   describeElement,
   describeEnemyUsage,
   describePassive,
@@ -81,6 +84,8 @@ import {
 } from '../engine/types.ts';
 import { Avatar, ElementIcon, SymbolIcon, themeOf } from './Avatar.tsx';
 import { ANIMATION_CLIPS, EFFECTS } from '../engine/sprites.generated.ts';
+import type { ClearReward } from '../engine/idle.ts';
+import { itemById } from '../engine/items.ts';
 import { impactTimes, type Impact } from './animationData.ts';
 import { sceneActs, sceneIdForStage, sceneLayers, sceneSlots } from './sceneData.ts';
 import {
@@ -98,6 +103,7 @@ import {
   clipAnimName,
   clipBox,
   clipDuration,
+  clipsOf,
   clipTimeline,
   abilityClipName,
   keyframesFor,
@@ -107,6 +113,7 @@ import {
   stepMsFor,
   idleStances,
   idleWeightFor,
+  statureFor,
   placementFor,
   tuningFor,
 } from './clipAnimation.ts';
@@ -170,6 +177,16 @@ const SLOT_H = 0.132;
  * Comes out when the enemy art is redrawn to match.
  */
 const ENEMY_SCALE = 0.78;
+/**
+ * How much bigger a boss is drawn than its own retinue.
+ *
+ * A boss that is the same size as the creatures it summoned reads as one of
+ * them. The back rank of `BOSS_ENEMY_SLOTS` is left empty beside it on purpose
+ * -- five slots for the company and one for the boss, out of a block that
+ * otherwise holds seven -- so the extra width is standing in real space rather
+ * than overlapping anybody.
+ */
+const BOSS_SCALE = 1.55;
 
 /**
  * Sprites further up the stage are further away. A gentle scale keeps the two
@@ -326,7 +343,7 @@ function beatOf(
   holdStart: number;
   holdEnd: number;
 } {
-  const c = ANIMATION_CLIPS[id]?.[clipName];
+  const c = clipsOf(id)?.[clipName];
   const clipMs = c
     ? clipDuration(
         clipTimeline(c.frames, tuningFor(id, clipName), orderFor(id, clipName)),
@@ -437,6 +454,14 @@ const FLOOR_TOP = 0.56;
  * the whole volley.
  */
 const PAIN_MS = 1000;
+/**
+ * How long a body takes to fall: the stretch, and the collapse after it.
+ *
+ * Must match `paper-fall` in styles.css, which is what actually draws it -- the
+ * unit is swapped for its corpse on this timer, so a CSS animation that ran
+ * longer would be cut off halfway down.
+ */
+const FALL_MS = 520;
 /** How long an impact burst is on screen. Matches `burst-pop` in styles.css. */
 const BURST_MS = 380;
 
@@ -456,7 +481,21 @@ const BURST_MS = 380;
  * at the floater it explains; anything with a longer animation simply takes
  * longer, and the queue waits for it.
  */
-const AFTER_BEAT_MS = 180;
+/**
+ * The pause between one Performer finishing and the next stepping out.
+ *
+ * It was 180ms, which is not a pause so much as the absence of one: five
+ * actions ran together as a single continuous motion, and the eye had nowhere
+ * to rest between "what just happened" and "who is next". Reading a turn is the
+ * whole reason the queue resolves one character at a time rather than all at
+ * once, and that reading needs a beat of nothing to happen in.
+ *
+ * Scaled by the speed setting, unlike the walk either side of a performance.
+ * That is a deliberate exception to "the performance scales, the transit does
+ * not": this gap is not travel, it is comprehension time, which is exactly what
+ * the speed control is for.
+ */
+const AFTER_BEAT_MS = 620;
 /** How long a reposition holds the screen. It has no clip and no walk. */
 const MOVE_MS = 520;
 /** The pause on handing the turn between sides, with the box cleared. */
@@ -466,9 +505,21 @@ const COMMIT_LEAD_MS = 400;
 
 export function BattleScreen({
   party: basePartyProp,
+  stage: startStage = 1,
+  onWin,
   onExit,
 }: {
   party: CharacterDef[];
+  /** Which rung to field. The save's high-water mark; 1 for a fresh profile. */
+  stage?: number;
+  /**
+   * A stage was cleared. Fired ONCE per battle, on the transition into victory.
+   *
+   * The screen does not know what a clear is worth and should not: rewards are
+   * an economy decision and live with the economy. It reports the rung it won
+   * on and lets the caller price it.
+   */
+  onWin?: (stage: number) => { reward: ClearReward; dropped: string[] } | void;
   onExit: () => void;
 }) {
   const [seed, setSeed] = useState(() => Math.floor(Math.random() * 100000));
@@ -477,7 +528,7 @@ export function BattleScreen({
    * encounter list is generated from this one number, so testing levelling and
    * idle accrual does not need thirty hand-authored fights.
    */
-  const [stage, setStage] = useState(1);
+  const [stage, setStage] = useState(startStage);
   /**
    * Dev only: re-level the party to test a stage without grinding to it.
    *
@@ -663,6 +714,38 @@ export function BattleScreen({
   /** What every performance duration is multiplied by. See `SPEEDS`. */
   const slow = slowdown(speed);
 
+  /*
+   * Dev only: watch a turn WITHOUT the camera pushing in.
+   *
+   * Narrowly the push, and nothing else. The focus zoom on hover, the ambient
+   * sway and the resting shot all stay -- those answer "what am I looking at",
+   * where the push answers "look at THIS, now", and only the second one is in
+   * question. A first pass replaced the whole shot with a static one and took
+   * hover focus with it, which made the comparison useless: you cannot judge
+   * one effect by switching off three.
+   *
+   * Two switches, because the push is two things. The inline `shot` aims the
+   * camera and the `closing-in` class supplies the zoom, so disabling either
+   * on its own leaves half a push-in -- a 2.6x zoom still centred on the
+   * resting shot, which is worse than either whole state.
+   *
+   * In localStorage, because comparing two looks means reloading between them.
+   */
+  const [noPush, setNoPush] = useState(() => {
+    try {
+      return localStorage.getItem('sb.noPush') === '1';
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem('sb.noPush', noPush ? '1' : '0');
+    } catch {
+      /* private browsing; the preference simply does not persist */
+    }
+  }, [noPush]);
+
   const [restZoom, setRestZoom] = useState(() => {
     try {
       const v = Number(localStorage.getItem('sb.restZoom'));
@@ -681,6 +764,14 @@ export function BattleScreen({
   }, [restZoom]);
   const [narration, setNarration] = useState<string | null>(null);
   const [showLog, setShowLog] = useState(false);
+  /**
+   * The unit whose full sheet is open, or null.
+   *
+   * Held by REFERENCE rather than by id so the modal re-reads the live unit on
+   * every render: its modifiers tick down and its HP moves while it is open,
+   * and a snapshot would quietly become a lie about the board behind it.
+   */
+  const [inspecting, setInspecting] = useState<Unit | null>(null);
 
   // `clip` rides along so the sprite knows WHICH animation this beat is, not
   // merely that one is happening -- an actor can have a different sheet per
@@ -850,6 +941,47 @@ export function BattleScreen({
   const over = battle.outcome !== 'ongoing';
 
   /*
+   * Pay out a clear, exactly once.
+   *
+   * Guarded on the BATTLE OBJECT rather than on the outcome, because `restart`
+   * hands back a fresh state and a flag keyed on "have I paid" would have to
+   * remember to reset itself on every path that starts a fight -- the dev stage
+   * picker, the seed button, the party builder. Holding the battle that was
+   * paid for cannot go stale: a new battle is a different object, and the same
+   * battle reaching victory twice is not a thing that happens.
+   */
+  const paidFor = useRef<BattleState | null>(null);
+  /*
+   * Bodies the RULES have killed and the picture has not.
+   *
+   * The engine resolves a whole action the instant it commits; the animation
+   * for it plays over the beat afterwards. So a creature stopped existing the
+   * moment its killer stepped onto the mark, and a six-hit ability landed five
+   * of its blows on bare boards.
+   *
+   * `holding` keeps them standing -- for the STAGE only, never for the rules --
+   * until the beat's last blow has landed, at which point they move to
+   * `falling` and play the collapse. Everything that decides anything still
+   * reads `alive`; this decides only which picture is drawn.
+   */
+  const [holding, setHolding] = useState<Set<string>>(() => new Set());
+  const [falling, setFalling] = useState<Set<string>>(() => new Set());
+
+  /** What the clear paid, so the victory card can say so. */
+  const [earned, setEarned] = useState<{ reward: ClearReward; dropped: string[] } | null>(null);
+  useEffect(() => {
+    if (battle.outcome !== 'victory' || paidFor.current === battle) return;
+    paidFor.current = battle;
+    // The caller prices the clear and hands the figures back, so the card can
+    // show them. A reward the player is never told about is an accounting
+    // entry, not a reward.
+    setEarned(onWin?.(stage) ?? null);
+    // `stage` is read, not watched: it cannot change while a battle is being
+    // won, and listing it would re-run this on the dev picker.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [battle, battle.outcome]);
+
+  /*
    * Which set this stage is dressed with.
    *
    * A scene that claims this stage number wins over the one named on the
@@ -905,6 +1037,8 @@ export function BattleScreen({
     setHits({});
     setFloaters([]);
     setTally(null);
+    setHolding(new Set());
+    setFalling(new Set());
     setSeed(nextSeed);
     setStage(nextStage);
     const scene = sceneFor(nextStage);
@@ -1052,13 +1186,44 @@ export function BattleScreen({
    */
   const threat = useMemo(() => {
     const slots = new Set<string>();
-    const byEnemy = new Map<string, { ability: string; targets: Set<string> }>();
+    const byEnemy = new Map<
+      string,
+      { ability: string; targets: Set<string>; victim: string | null; forced: boolean }
+    >();
+    const party = livingOf(battle, 'player');
     for (const u of battle.units) {
       if (!alive(u) || u.side !== 'enemy' || !u.intent) continue;
-      const hit = unitsHit(u.intent.ability, u.intent.target, livingOf(battle, 'player'));
+      const hit = unitsHit(u.intent.ability, u.intent.target, party);
       const targets = new Set(hit.map((t) => pk(t.pos)));
       for (const k of targets) slots.add(k);
-      byEnemy.set(u.def.id, { ability: u.intent.ability.name, targets });
+      /*
+       * WHO, in as few words as it takes.
+       *
+       * Targeting is uniformly random among legal targets, and the only thing
+       * that makes that fair is this line -- it is declared before the player
+       * spends a die, so a back-rank strike is a problem you are shown and can
+       * answer rather than a coin flip on a committed turn. The reveal was half
+       * built: the ability name arrived and the victim never did, which left
+       * the player knowing a creature was about to use Scene Stealer and not
+       * which of their five it was pointed at.
+       *
+       * A whole-side ability names no one because there is nobody to name; a
+       * count is the honest answer for anything in between.
+       */
+      const victim =
+        hit.length === 0
+          ? null
+          : hit.length === 1
+            ? hit[0]!.def.name
+            : hit.length >= party.length
+              ? 'everyone'
+              : `${hit.length} of you`;
+      byEnemy.set(u.def.id, {
+        ability: u.intent.ability.name,
+        targets,
+        victim,
+        forced: !!u.intent.forced,
+      });
     }
     return { slots, byEnemy };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1178,6 +1343,17 @@ export function BattleScreen({
    * and no name matching.
    */
   function withHitReactions(act: () => void) {
+    /*
+     * Nothing may still be held up when a new action begins.
+     *
+     * The release is driven by the impact schedule, and a schedule can be cut
+     * short -- the fight ends, the player restarts, an ability turns out to
+     * have no clip and no targets. A body left in `holding` would stand there
+     * for the rest of the battle at 0 hp, which is a worse bug than the one
+     * this whole mechanism exists to fix. Clearing here costs nothing in the
+     * normal case, where the previous beat released it a moment ago.
+     */
+    setHolding(new Set());
     lastAffected.current = { all: [], struck: [], aided: [] };
     const before = new Map(battle.units.map((u) => [u.def.id, u.hp]));
     // Where the log stood before the action, so the events it appends can be
@@ -1261,6 +1437,19 @@ export function BattleScreen({
     if (changed.length === 0) return;
 
     const hurt = changed.filter((c) => c.delta < 0);
+
+    /*
+     * Who this action killed, held standing until its blows have landed.
+     *
+     * Read off the HP diff rather than the `ko` log, because the diff is the
+     * set the floaters and flinches are already built from -- one source for
+     * the whole beat's presentation, so a body cannot be flinching in one pass
+     * and buried in another.
+     */
+    const slain = changed
+      .filter((c) => c.delta < 0 && !alive(c.unit))
+      .map((c) => c.unit.def.id);
+    if (slain.length) setHolding((h) => new Set([...h, ...slain]));
 
     /*
      * The blows of a multi-hit, each as its own batch of floaters.
@@ -1415,6 +1604,30 @@ export function BattleScreen({
       // that changes while you are reading it, which is the problem rather than
       // the fix. The gap between the final impact and the walk home is where it
       // lands, which is the one moment in a beat with nothing else happening.
+      /*
+       * The last blow is what lets them fall.
+       *
+       * Not the first: a multi-hit is one action and its victim should take the
+       * whole volley standing, which is the entire point of holding them. The
+       * flinch fires per blow as it always did, so they spin under the hits and
+       * only then collapse.
+       */
+      if (last && slain.length) {
+        setHolding((h) => {
+          const next = new Set(h);
+          for (const id of slain) next.delete(id);
+          return next;
+        });
+        setFalling((f) => new Set([...f, ...slain]));
+        window.setTimeout(() => {
+          setFalling((f) => {
+            const next = new Set(f);
+            for (const id of slain) next.delete(id);
+            return next;
+          });
+        }, FALL_MS * slow);
+      }
+
       if (last && worthTotalling) {
         const id = tallyId.current++;
         setTally({ id, total, blows: blows.size, struck: struck.size });
@@ -1509,7 +1722,7 @@ export function BattleScreen({
        * and works exactly that way; a multi-frame one wants to be about as long
        * as the walk, which is `MOVE_MS`.
        */
-      if (ANIMATION_CLIPS[id]?.move) {
+      if (clipsOf(id)?.move) {
         // `dx` is the lean into a lunge. A reposition has no lunge to lean
         // into -- the whole body is already going somewhere.
         setPulse({ id, dx: 0, clip: 'move', act: true, inPlace: true });
@@ -1527,16 +1740,16 @@ export function BattleScreen({
      * the staging follows, which is the only order that cannot drift.
      */
     const clipName =
-      prefer && ANIMATION_CLIPS[id]?.[prefer]
+      prefer && clipsOf(id)?.[prefer]
         ? prefer
         : abilityClipName(
-            ANIMATION_CLIPS[id],
+            clipsOf(id),
             ability?.name,
             // So a sheet filed by slot -- `benjamin_ability_2_4x1.png` --
             // finds its ability without anyone naming it twice.
             battle.units.find((u) => u.def.id === id)?.def.abilities,
           );
-    const clip = ANIMATION_CLIPS[id]?.[clipName];
+    const clip = clipsOf(id)?.[clipName];
     const steps = clip
       ? clipTimeline(clip.frames, tuningFor(id, clipName), orderFor(id, clipName))
       : [];
@@ -1665,9 +1878,19 @@ export function BattleScreen({
      * which is the same gesture that changes your mind about it.
      */
     if (u.side === 'player' && isPlanned(battle, u)) return;
-    // A list left open from the last Performer would be describing the wrong
-    // character's kit under the right character's name.
-    setMenu(null);
+    /*
+     * Open on ABILITIES, which is what picking somebody is for.
+     *
+     * It used to reset to `null`, so the menu appeared as three bare doors and
+     * the list you had just been reading -- hovering a Performer peeks their
+     * kit -- vanished the instant you committed to them. Clicking a character
+     * asked you to click again to get back what the hover had given for free.
+     *
+     * Still a reset rather than a carry-over: a door left open on the last
+     * Performer would describe the wrong character's kit under the right
+     * character's name. This resets it to the useful one instead of to none.
+     */
+    setMenu('abilities');
     setSel({ unit: u, ability: null, dice: [] });
     setError(null);
   }
@@ -1843,7 +2066,7 @@ export function BattleScreen({
     );
     setNarration(actionLine(step.unit, step.ability, step.target, battle.units));
     bump();
-    playerTimer.current = window.setTimeout(stepPlan, beat + AFTER_BEAT_MS);
+    playerTimer.current = window.setTimeout(stepPlan, beat + AFTER_BEAT_MS * slow);
   }
 
   function stepEnemy() {
@@ -1877,7 +2100,7 @@ export function BattleScreen({
     const beat = lunge(step.unit.def.id, step.unit.side, lastAffected.current, step.ability ?? undefined);
     setNarration(actionLine(step.unit, step.ability, step.target, battle.units));
     bump();
-    enemyTimer.current = window.setTimeout(stepEnemy, beat + AFTER_BEAT_MS);
+    enemyTimer.current = window.setTimeout(stepEnemy, beat + AFTER_BEAT_MS * slow);
   }
 
   // ------------------------------------------------------------------ derived
@@ -2166,6 +2389,7 @@ export function BattleScreen({
   const figureHeight = (u: Unit, slot: Slot): number =>
     SLOT_H *
     (u.side === 'enemy' ? ENEMY_SCALE : 1) *
+    (u.def.boss ? BOSS_SCALE : 1) *
     (u.def.sprite?.scale ?? 1) *
     depthScale(slot.yPct);
 
@@ -2173,6 +2397,7 @@ export function BattleScreen({
     focusUnit && focusSlot
       ? SLOT_H *
         (focusUnit.side === 'enemy' ? ENEMY_SCALE : 1) *
+        (focusUnit.def.boss ? BOSS_SCALE : 1) *
         (focusUnit.def.sprite?.scale ?? 1) *
         depthScale(focusSlot.yPct)
       : 0;
@@ -2187,9 +2412,17 @@ export function BattleScreen({
   // a constant size on screen -- so it is computed once.
   const focusZoom = focusZoomFor(focusHeight);
 
-  const shot = pulse
-    ? { zoom: PUSH_ZOOM, inline: false, subject: eyeOf(acts[pulseSide]) }
-    : focusSlot
+  /*
+   * The push-in, unless it is switched off.
+   *
+   * Only THIS branch is skipped. Everything below it -- the focus zoom on a
+   * hovered unit, and the resting shot with its ambient sway -- is reached
+   * exactly as it was, so the toggle removes one effect rather than the camera.
+   */
+  const shot =
+    pulse && !noPush
+      ? { zoom: PUSH_ZOOM, inline: false, subject: eyeOf(acts[pulseSide]) }
+      : focusSlot
       ? {
           zoom: focusZoom,
           inline: true,
@@ -2374,7 +2607,7 @@ export function BattleScreen({
       </style>
       <div
         ref={stageRef}
-        className={`stage ${pulse ? 'closing-in' : ''}`}
+        className={`stage ${pulse && !noPush ? 'closing-in' : ''}`}
         /*
           Clicking bare boards puts everything down.
 
@@ -2391,6 +2624,17 @@ export function BattleScreen({
           if (sel.ability) return setSel((prev) => ({ ...prev, ability: null }));
           setMenu(null);
           setSel(NO_SELECTION);
+        }}
+        /*
+          Right-click on bare boards closes the sheet, matching the left-click
+          rule directly above: a click on nothing puts down whatever is in hand.
+          Scoped to the stage rather than the document, so the panels, the log
+          and the roster keep the browser's own menu -- suppressing it globally
+          would take copy, paste and inspect with it.
+        */
+        onContextMenu={(e) => {
+          e.preventDefault();
+          setInspecting(null);
         }}
         style={
           {
@@ -2507,8 +2751,75 @@ export function BattleScreen({
           Anyone without a `death` pose still leaves the stage, which is exactly
           what everyone did before this existed.
         */}
+      {/*
+        WHO IS AIMING AT WHOM, drawn on the boards.
+
+        The roster row names the victim, and in a panel this narrow the name is
+        the half that gets eaten by the ellipsis -- which is the half that
+        matters. So the answer is drawn instead of written: one curve per
+        declared intent, from the creature to the body it named.
+
+        Inside `.stage` rather than over it, so the camera carries it: a line
+        that stayed put while the board zoomed would be pointing at nothing.
+        `viewBox` is 0-100 on both axes with `preserveAspectRatio: none`, which
+        makes the coordinates the same slot percentages every sprite is placed
+        with -- no conversion, and nothing to drift when a scene moves its
+        marks. The cost is that the curve is stretched by the stage's aspect;
+        `vector-effect` keeps the STROKE honest, and a connector is allowed to
+        be a little wider than it is tall.
+
+        One line per body hit, so a whole-side ability draws five and says what
+        it is without a word.
+      */}
+        {battle.phase === 'player' && !busy && !over && (
+          <svg className="intent-lines" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden>
+            {battle.units.map((u) => {
+              if (!alive(u) || u.side !== 'enemy' || !u.intent || u.pending) return null;
+              const from = slotFor(u, board, foeSlots);
+              const aim = threat.byEnemy.get(u.def.id);
+              if (!from || !aim) return null;
+              // Dimmed unless this is the creature being pointed at, so a board
+              // of six declared intents is a background the eye can ignore until
+              // it wants one of them.
+              const lit = hoveredEnemyId === null || hoveredEnemyId === u.def.id;
+              return [...aim.targets].map((key) => {
+                const victim = battle.units.find(
+                  (t) => alive(t) && t.side === 'player' && pk(t.pos) === key,
+                );
+                const to = victim && slotFor(victim, board, foeSlots);
+                if (!to) return null;
+                const x1 = from.xPct * 100;
+                const x2 = to.xPct * 100;
+                // Chest height rather than the floor line the slot names: a line
+                // between two pairs of feet reads as something drawn on the
+                // boards instead of something passing between two people.
+                const y1 = from.yPct * 100 - 7;
+                const y2 = to.yPct * 100 - 7;
+                // Bowed UP, and more so the further it travels, so lines between
+                // different pairs separate instead of stacking into one band.
+                const lift = 10 + Math.abs(x1 - x2) * 0.18;
+                return (
+                  <g key={`${u.def.id}-${key}`} className={lit ? 'lit' : ''}>
+                    <path
+                      d={`M ${x1} ${y1} Q ${(x1 + x2) / 2} ${(y1 + y2) / 2 - lift} ${x2} ${y2}`}
+                      vectorEffect="non-scaling-stroke"
+                    />
+                    {/* The business end. A dot rather than an arrowhead: a marker
+                        would be stretched by the same aspect the curve is, and a
+                        circle survives that where a triangle does not. */}
+                    <circle cx={x2} cy={y2} r={1.1} vectorEffect="non-scaling-stroke" />
+                  </g>
+                );
+              });
+            })}
+          </svg>
+        )}
+
         {battle.units
-          .filter((u) => !alive(u) && u.def.sprite?.death)
+          // A body still being held up, or still on its way down, is not yet a
+          // corpse -- the standing pass below is drawing it.
+          .filter((u) => !alive(u) && !holding.has(u.def.id) && !falling.has(u.def.id))
+          .filter((u) => u.def.sprite?.death)
           .map((u) => {
             const slot = slotFor(u, board, foeSlots);
             if (!slot) return null;
@@ -2566,7 +2877,9 @@ export function BattleScreen({
             );
           })}
 
-        {battle.units.filter(alive).map((u) => {
+        {battle.units
+          .filter((u) => alive(u) || holding.has(u.def.id) || falling.has(u.def.id))
+          .map((u) => {
           const slot = slotFor(u, board, foeSlots);
           if (!slot) return null;
           const key = pk(u.pos);
@@ -2623,8 +2936,16 @@ export function BattleScreen({
               key={u.def.id}
               className={classes}
               style={{
-                left: `${slot.xPct * 100}%`,
-                top: `${slot.yPct * 100}%`,
+                /*
+                  The slot mark, plus whatever the actor's own tuning nudges it
+                  by. In percent of the STAGE rather than of the figure, so a
+                  creature that has been scaled up does not drift as it grows --
+                  a nudge measured against its own box would mean something
+                  different at every scale, and the number would have to be
+                  re-found every time the height changed.
+                */
+                left: `${slot.xPct * 100 + (statureFor(u.def.id.split('~')[0]!).dx ?? 0)}%`,
+                top: `${slot.yPct * 100 + (statureFor(u.def.id.split('~')[0]!).dy ?? 0)}%`,
                 // Painter's order: whoever stands nearer the audience draws over
                 // whoever is behind them.
                 zIndex: 100 + Math.round(slot.yPct * 100),
@@ -2652,12 +2973,27 @@ export function BattleScreen({
                 if (isTarget) fireAt(u);
                 else selectUnit(u);
               }}
+              /*
+                Right-click opens the full sheet.
+
+                A shortcut, never the only way in: Firefox lets a user forbid
+                sites from suppressing the context menu, and a long press is not
+                a right-click on touch. The card's own button is the
+                discoverable twin, and this is the one that is fast.
+              */
+              onContextMenu={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setInspecting(u);
+              }}
             >
               <UnitChip
                 key={hits[u.def.id] ?? 0}
                 unit={u}
                 phase={battle.phase}
-                slotH={SLOT_H * (u.side === 'enemy' ? ENEMY_SCALE : 1)}
+                slotH={
+                  SLOT_H * (u.side === 'enemy' ? ENEMY_SCALE : 1) * (u.def.boss ? BOSS_SCALE : 1)
+                }
                 queued={u.side === 'player' && isPlanned(battle, u)}
                 depth={depthScale(slot.yPct)}
                 facing={u.side === 'player' ? 1 : -1}
@@ -2668,6 +3004,7 @@ export function BattleScreen({
                 actClip={pulse?.id === u.def.id && pulse.act ? (pulse.clip || null) : null}
                 stance={stances[u.def.id]}
                 slow={slow}
+                collapsing={falling.has(u.def.id)}
                 /* The one being decided about: selected, not yet committed.
                    Reads off the SELECTION rather than the hover, because a
                    character you are merely looking at is not deliberating. */
@@ -3131,6 +3468,13 @@ export function BattleScreen({
                 <b>{restZoom.toFixed(2)}×</b>
               </label>
               <button
+                className={noPush ? 'on' : ''}
+                title="Watch turns without the camera pushing in. Hover focus and sway stay."
+                onClick={() => setNoPush((v) => !v)}
+              >
+                {noPush ? '\u25a3 No push-in' : '\u25a2 No push-in'}
+              </button>
+              <button
                 className={cinema ? 'on' : ''}
                 title="Give the stage the whole window and float the panels over it"
                 onClick={() => setCinema((c) => !c)}
@@ -3156,7 +3500,7 @@ export function BattleScreen({
       <div className="hud hud-foes">
         <TeamPanel title={`Enemies (${livingOf(battle, 'enemy').length}/${enemies.length})`}
           units={enemies} selected={sel.unit} onSelect={selectUnit} onPeek={setRosterHover}
-          intents={battle.phase === 'player'} />
+          intents={battle.phase === 'player'} threat={threat.byEnemy} />
       </div>
 
       <div className="hud hud-right">
@@ -3189,9 +3533,21 @@ export function BattleScreen({
               <span className={`hp ${healthBand(shownUnit.hp, unitMaxHp(shownUnit))}`}>
                 HP {shownUnit.hp}/{unitMaxHp(shownUnit)}
               </span>
-              <span>ATK {stat(unitAttack(shownUnit))}</span>
-              <span>P.DEF {stat(effectiveDefense(shownUnit, 'physical'))}</span>
-              <span>M.DEF {stat(effectiveDefense(shownUnit, 'magical'))}</span>
+              <StatValue
+                label="ATK"
+                now={unitAttack(shownUnit)}
+                base={baseStat(shownUnit, 'attack')}
+              />
+              <StatValue
+                label="P.DEF"
+                now={effectiveDefense(shownUnit, 'physical')}
+                base={baseStat(shownUnit, 'physicalDefense')}
+              />
+              <StatValue
+                label="M.DEF"
+                now={effectiveDefense(shownUnit, 'magical')}
+                base={baseStat(shownUnit, 'magicalDefense')}
+              />
               {shownUnit.upgrades > 0 && (
                 <span className="boosted">+{Math.round((statScale(shownUnit) - 1) * 100)}%</span>
               )}
@@ -3215,13 +3571,16 @@ export function BattleScreen({
                   <span
                     key={g.ability}
                     className={`mod ${g.good ? 'good' : 'bad'}`}
-                    title={`${g.ability}: ${g.parts.join(', ')} — ${g.turns} turn${
-                      g.turns === 1 ? '' : 's'
-                    } left`}
+                    title={
+                      `${g.ability}: ${g.parts.join(', ')} — ` +
+                      (Number.isFinite(g.turns)
+                        ? `${g.turns} turn${g.turns === 1 ? '' : 's'} left`
+                        : 'permanent')
+                    }
                   >
                     <strong>{g.ability}</strong>
                     <span className="mod-parts">{g.parts.join(' · ')}</span>
-                    <em>{g.turns}t</em>
+                    <em>{Number.isFinite(g.turns) ? `${g.turns}t` : '∞'}</em>
                   </span>
                 ))}
               </div>
@@ -3321,13 +3680,29 @@ export function BattleScreen({
                   .map((a) => {
                     const [lo, hi] = a.roll!;
                     const now = shownUnit!.intent?.roll;
-                    const live = now !== undefined && now >= lo && now <= hi;
+                    /*
+                       A scheduled ability has no odds, it has a CLOCK.
+                       `priority` picks it the moment its cooldown is up,
+                       whatever the d20 says, so printing a band and a
+                       percentage beside it would describe a die roll that
+                       never happens -- and the whole point of scheduling the
+                       boss's big turn is that the player can count down to it.
+                    */
+                    const scheduled = (a.priority ?? 0) > 0;
+                    const cooling = shownUnit!.cooldowns[a.name] ?? 0;
+                    const live = scheduled
+                      ? cooling === 0
+                      : now !== undefined && now >= lo && now <= hi;
                     return (
                       <li key={a.name} className={live ? 'on' : ''}>
-                        <span className="band">{lo === hi ? lo : `${lo}–${hi}`}</span>
+                        <span className="band">{scheduled ? '⏱' : lo === hi ? lo : `${lo}–${hi}`}</span>
                         <span className="nm">{a.name}</span>
                         <span className="odds">
-                          {Math.round(((hi - lo + 1) / ENEMY_DIE) * 100)}%
+                          {scheduled
+                            ? cooling > 0
+                              ? `in ${cooling}`
+                              : 'now'
+                            : `${Math.round(((hi - lo + 1) / ENEMY_DIE) * 100)}%`}
                         </span>
                       </li>
                     );
@@ -3580,7 +3955,11 @@ export function BattleScreen({
                   <div key={a.name} className="kit-row">
                     <strong>{a.name}</strong>
                     {(shownUnit!.cooldowns[a.name] ?? 0) > 0 && <em className="cd">{shownUnit!.cooldowns[a.name]}t</em>}
-                    <p>{describeAbility(a)}</p>
+                    {/* Short form, like every other focus window. A kit list is
+                        read to compare four abilities against each other, and
+                        four paragraphs is the one shape that makes comparing
+                        them harder than reading them one at a time. */}
+                    <p>{describeShort(a)}</p>
                     {describeEnemyUsage(a) && <p className="sub">{describeEnemyUsage(a)}</p>}
                   </div>
                 ))}
@@ -3647,8 +4026,7 @@ export function BattleScreen({
                   </em>
                 )}
                 <strong>{shownAbility.name}</strong>
-                <p>{describeAbility(shownAbility)}</p>
-                {describeElement(shownAbility) && <p className="sub">{describeElement(shownAbility)}</p>}
+                <p>{describeShort(shownAbility)}</p>
                 {shownAbility.trigger && (
                   <p className={`sub chain ${chainFires(liveArmed, shownAbility) ? 'live' : ''}`}>
                     <strong>
@@ -3925,7 +4303,7 @@ export function BattleScreen({
                     </em>
                   )}
                   <strong>{shownAbility!.name}</strong>
-                  <p>{describeAbility(shownAbility!)}</p>
+                  <p>{describeShort(shownAbility!)}</p>
                   {shownAbility!.trigger && (
                     <p className={`sub chain ${chainFires(liveArmed, shownAbility!) ? 'live' : ''}`}>
                       <strong>
@@ -3963,6 +4341,17 @@ export function BattleScreen({
           <div className="panel card">
             <header>
               <strong>{shownUnit.def.name}</strong>
+              {/* Right-click on the body is the fast way in; this is the one
+                  you can find. Neither may be the only one -- a browser can
+                  refuse to suppress its context menu, and a long press is not
+                  a right-click. */}
+              <button
+                className="quiet card-inspect"
+                title="Open the full sheet (or right-click them on the stage)"
+                onClick={() => setInspecting(shownUnit)}
+              >
+                Details
+              </button>
               <span className="dim">
                 {ROLE_LABEL[shownUnit.def.role]} · {rankLabel(shownUnit, battle)}
               </span>
@@ -3972,15 +4361,24 @@ export function BattleScreen({
               <span className={`hp ${healthBand(shownUnit.hp, unitMaxHp(shownUnit))}`}>
                 HP <b>{shownUnit.hp}</b>/{unitMaxHp(shownUnit)}
               </span>
-              <span>
-                ATK <b>{stat(unitAttack(shownUnit))}</b>
-              </span>
-              <span>
-                P.DEF <b>{stat(effectiveDefense(shownUnit, 'physical'))}</b>
-              </span>
-              <span>
-                M.DEF <b>{stat(effectiveDefense(shownUnit, 'magical'))}</b>
-              </span>
+              <StatValue
+                bold
+                label="ATK"
+                now={unitAttack(shownUnit)}
+                base={baseStat(shownUnit, 'attack')}
+              />
+              <StatValue
+                bold
+                label="P.DEF"
+                now={effectiveDefense(shownUnit, 'physical')}
+                base={baseStat(shownUnit, 'physicalDefense')}
+              />
+              <StatValue
+                bold
+                label="M.DEF"
+                now={effectiveDefense(shownUnit, 'magical')}
+                base={baseStat(shownUnit, 'magicalDefense')}
+              />
             </div>
 
             {/* What they take more and less of -- the question you are asking
@@ -3993,7 +4391,7 @@ export function BattleScreen({
                   <span key={g.ability} className={`mod ${g.good ? 'good' : 'bad'}`}>
                     <strong>{g.ability}</strong>
                     <span className="mod-parts">{g.parts.join(' · ')}</span>
-                    <em>{g.turns}t</em>
+                    <em>{Number.isFinite(g.turns) ? `${g.turns}t` : '∞'}</em>
                   </span>
                 ))}
               </div>
@@ -4026,7 +4424,12 @@ export function BattleScreen({
                     {shownUnit.side === 'player' ? (
                       <span className="cost">{a.wildcard ? '✳' : a.cost}</span>
                     ) : (
-                      a.roll && (
+                      a.roll &&
+                      ((a.priority ?? 0) > 0 ? (
+                        <span className="band" title="Used the moment it is off cooldown, whatever the roll">
+                          ⏱
+                        </span>
+                      ) : (
                         <span
                           className="band"
                           title={`Fires on a d20 roll of ${a.roll[0]}–${a.roll[1]} — ${Math.round(
@@ -4035,7 +4438,7 @@ export function BattleScreen({
                         >
                           {a.roll[0] === a.roll[1] ? a.roll[0] : `${a.roll[0]}–${a.roll[1]}`}
                         </span>
-                      )
+                      ))
                     )}
                     <span className="skill-name">
                       {a.name}
@@ -4049,7 +4452,11 @@ export function BattleScreen({
                         </em>
                       )}
                     </span>
-                    <em>{describeAbility(a)}</em>
+                    {/* The SHORT form here and in the hover strip; the full
+                        numbers live in the sheet modal, which is one
+                        right-click away. A peek is for "which of these is the
+                        big one", not for arithmetic. */}
+                    <em>{describeShort(a)}</em>
                     {/* When it can be used at all -- the enemy's equivalent of
                         a cost, and the only thing you can plan against. */}
                     {shownUnit.side === 'enemy' && describeEnemyUsage(a) && (
@@ -4210,9 +4617,151 @@ export function BattleScreen({
             <div className={`outcome ${battle.outcome}`}>
               {battle.outcome === 'victory' ? 'Victory' : battle.outcome === 'defeat' ? 'Defeat' : 'Draw — turn limit'}
             </div>
+            {/* What it paid, and what that is measured in. The minutes line is
+                the useful half: it says a boss was worth a quarter of an hour
+                of idling without the player having to know the rates. */}
+            {earned && (
+              <div className="spoils">
+                <span>
+                  <b>{earned.reward.gold}</b> gold
+                </span>
+                <span>
+                  <b>{earned.reward.shards}</b> shards
+                </span>
+                <span>
+                  <b>{earned.reward.xp}</b> xp
+                </span>
+                {/* The bounties are the headline on a first clear and absent on
+                    a repeat, which is the whole of what makes a new rung worth
+                    reaching rather than re-farming. */}
+                {earned.dropped.map((id, i) => (
+                  <span key={`${id}-${i}`} className="drop">
+                    <b>{itemById(id)?.name ?? id}</b>
+                  </span>
+                ))}
+                <em>
+                  worth {earned.reward.minutes} minutes of idling at stage {stage}
+                </em>
+              </div>
+            )}
             <button className="primary" onClick={onExit}>
               Return home
             </button>
+          </div>
+        </div>
+      )}
+
+      {/*
+        The full sheet, as a modal.
+
+        A modal rather than a wider panel because the question it answers is not
+        about the board -- it is "what exactly is this doing", asked while the
+        turn is paused and nothing needs watching. A panel that large would have
+        to fight the cinema layout for room and would cover the thing it is
+        describing anyway.
+      */}
+      {inspecting && (
+        <div className="modal-backdrop" onClick={() => setInspecting(null)}>
+          <div className="modal sheet-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <strong>
+                {inspecting.def.name}
+                <span className="dim">
+                  {' '}
+                  · {ROLE_LABEL[inspecting.def.role]} · Lv {levelOf(inspecting.def)}
+                </span>
+              </strong>
+              <button onClick={() => setInspecting(null)}>Close</button>
+            </div>
+
+            <div className="sheet-grid">
+              <div className="stat-row">
+                <span className={`hp ${healthBand(inspecting.hp, unitMaxHp(inspecting))}`}>
+                  HP {inspecting.hp}/{unitMaxHp(inspecting)}
+                </span>
+                <StatValue
+                  label="ATK"
+                  now={unitAttack(inspecting)}
+                  base={baseStat(inspecting, 'attack')}
+                />
+                <StatValue
+                  label="P.DEF"
+                  now={effectiveDefense(inspecting, 'physical')}
+                  base={baseStat(inspecting, 'physicalDefense')}
+                />
+                <StatValue
+                  label="M.DEF"
+                  now={effectiveDefense(inspecting, 'magical')}
+                  base={baseStat(inspecting, 'magicalDefense')}
+                />
+              </div>
+
+              <Matchups def={inspecting.def} />
+
+              {/* Every modifier IN FULL -- which ability put it there, what it
+                  is worth on each track it moves, and how long is left. This is
+                  the thing the chips on the card can only gesture at. */}
+              {modifierGroups(inspecting).length > 0 && (
+                <div className="sheet-block">
+                  <h4>On them now</h4>
+                  {modifierGroups(inspecting).map((g) => (
+                    <div key={g.ability} className={`sheet-mod ${g.good ? 'good' : 'bad'}`}>
+                      <strong>{g.ability}</strong>
+                      <span>{g.parts.join(' · ')}</span>
+                      <em>
+                        {Number.isFinite(g.turns) ? `${g.turns} turns left` : 'permanent'}
+                      </em>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <StatusChips u={inspecting} />
+
+              {/* The kit, at full length. The peek strip carries the short
+                  form; somebody who opened this wants the numbers. */}
+              <div className="sheet-block">
+                <h4>Abilities</h4>
+                {inspecting.def.abilities
+                  .filter((a) => a.kind !== 'move')
+                  .map((a) => (
+                    <div key={a.name} className="sheet-ability">
+                      <strong>
+                        {a.name}
+                        {a.symbol && (
+                          <em className={`sym ${a.trigger ? 'has-trigger' : ''}`}>
+                            <SymbolIcon symbol={a.symbol} size={12} />
+                          </em>
+                        )}
+                      </strong>
+                      <p>{describeAbility(a)}</p>
+                      {a.trigger && (
+                        <p className="sub chain">
+                          <strong>Chained:</strong> {a.trigger.text}.
+                        </p>
+                      )}
+                      <p className="sub">
+                        {inspecting.side === 'enemy'
+                          ? (describeEnemyUsage(a) ?? 'Used on any roll it claims.')
+                          : describeCost(a)}
+                      </p>
+                      {describeElement(a) && <p className="sub">{describeElement(a)}</p>}
+                    </div>
+                  ))}
+              </div>
+
+              {(inspecting.def.passives ?? []).length > 0 && (
+                <div className="sheet-block">
+                  <h4>Always on</h4>
+                  {(inspecting.def.passives ?? []).map((pas) => (
+                    <div key={pas.kind} className="sheet-ability">
+                      <strong>{pas.name ?? pas.kind}</strong>
+                      <p>{describePassive(pas)}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -4251,6 +4800,53 @@ export function BattleScreen({
  * stating. A blank space reads as the panel failing to load rather than as the
  * answer.
  */
+/**
+ * One stat, and how much of it is on loan.
+ *
+ * `ATK 160 (+46)` -- the figure the engine will actually use, and the part of
+ * it that arrived with a buff and will leave with it. The modifier list
+ * underneath says WHICH buffs and how long they have left; what it could not
+ * say is what they come to, and a player reading "Rally · +20% ATK" beside
+ * "ATK 160" has to do arithmetic to learn the thing the row exists to tell
+ * them.
+ *
+ * The delta is measured against `baseStat`, which is the sheet grown by level
+ * and upgrade tiers -- so a permanent upgrade is part of the number rather than
+ * part of the bonus, which is right: it is not going to lapse. The separate
+ * `+N%` chip on the stat row is what speaks for those.
+ *
+ * Computed from the ROUNDED figures on both sides rather than from
+ * `modifierTotal`, so `base + delta` is true of the numbers actually on screen.
+ * `currentStat` floors at zero, so a shred deeper than the stat it is cutting
+ * would otherwise print a bonus larger than the difference it made.
+ */
+function StatValue({
+  label,
+  now,
+  base,
+  bold = false,
+}: {
+  label: string;
+  now: number;
+  base: number;
+  /** The card draws its figures heavy; the docked stat row does not. */
+  bold?: boolean;
+}) {
+  const round = (v: number) => Math.round(v * 10) / 10;
+  const delta = round(now) - round(base);
+  return (
+    <span>
+      {label} {bold ? <b>{stat(now)}</b> : stat(now)}
+      {delta !== 0 && (
+        <em className={`delta ${delta > 0 ? 'up' : 'down'}`}>
+          ({delta > 0 ? '+' : '-'}
+          {stat(Math.abs(delta))})
+        </em>
+      )}
+    </span>
+  );
+}
+
 function Matchups({ def }: { def: CharacterDef }) {
   const entries = Object.entries(def.resistances ?? {}) as [Element, number][];
   const weak = entries.filter(([, v]) => v < 0).sort((a, b) => a[1] - b[1]);
@@ -4325,11 +4921,11 @@ function useIdleStances(units: Unit[]): Record<string, string> {
   useEffect(() => {
     const timers: number[] = [];
     for (const id of cast ? cast.split(',') : []) {
-      const [base, ...alts] = idleStances(ANIMATION_CLIPS[id]);
+      const [base, ...alts] = idleStances(clipsOf(id));
       if (!base || !alts.length) continue;
 
       const runtime = (name: string): number => {
-        const clip = ANIMATION_CLIPS[id]?.[name];
+        const clip = clipsOf(id)?.[name];
         return clip
           ? clipDuration(
               clipTimeline(clip.frames, tuningFor(id, name), orderFor(id, name)),
@@ -4452,6 +5048,7 @@ function UnitChip({
   hit,
   striking,
   inPlace = false,
+  collapsing = false,
   actClip,
   stance,
   slow,
@@ -4475,6 +5072,8 @@ function UnitChip({
   striking: boolean;
   /** Performing without the walk downstage -- see `pulse.inPlace`. */
   inPlace?: boolean;
+  /** Going down: the last blow has landed and the body is falling. */
+  collapsing?: boolean;
   /** The clip to PLAY, once they have arrived and taken their pause. */
   actClip: string | null;
   /** Selected, and still deciding: holds the `thinking` stance if one exists. */
@@ -4504,7 +5103,18 @@ function UnitChip({
   if (sheet) {
     // Height in stage units; `slotH * sheet.scale` is exactly the old tile math,
     // so every relative stature carries over from the board unchanged.
-    const h = slotH * sheet.scale * depth;
+    /*
+     * Per-actor tuning, on top of the stature the packer measured.
+     *
+     * The packed `scale` is the figure's share of its own canvas, which is a
+     * fact about the FILE rather than a decision about the character: a
+     * creature generated with a lot of headroom packs small and there is
+     * nothing in the art pipeline that could know it was meant to loom. So the
+     * multiplier is authored, and it is authored per actor rather than per clip
+     * because a creature that owns one drawing has no clip to hang it on.
+     */
+    const mine = statureFor(unit.def.id.split('~')[0]!);
+    const h = slotH * sheet.scale * (mine.scale ?? 1) * depth;
     const idle = sheet.idle;
 
     // An animated character is a window onto a strip that slides one frame at a
@@ -4517,7 +5127,7 @@ function UnitChip({
     // The performing clip, and only once they are actually performing. The
     // catalogue carries every packed clip -- `sheet.idle` is just the one the
     // board loops at rest -- so nothing new had to be generated to reach it.
-    const attack = actClip ? ANIMATION_CLIPS[unit.def.id]?.[actClip] : undefined;
+    const attack = actClip ? clipsOf(unit.def.id)?.[actClip] : undefined;
     /*
      * An action is booked: stand ready rather than idle.
      *
@@ -4535,10 +5145,10 @@ function UnitChip({
      * Falls through to the idle for anyone without a `ready` sheet, so this
      * costs nothing for a character who has not been drawn one.
      */
-    const ready = !attack && (queued || striking) ? ANIMATION_CLIPS[unit.def.id]?.ready : undefined;
+    const ready = !attack && (queued || striking) ? clipsOf(unit.def.id)?.ready : undefined;
     // The resting stance, which is `idle` unless this character has alternates
     // and the scheduler has moved them onto one.
-    const resting = (stance && ANIMATION_CLIPS[unit.def.id]?.[stance]) || undefined;
+    const resting = (stance && clipsOf(unit.def.id)?.[stance]) || undefined;
     const clipName = attack ? actClip! : ready ? 'ready' : resting ? stance! : 'idle';
     const strip = attack ?? ready ?? resting ?? idle;
     const box = strip ? clipBox(strip, h, placementFor(unit.def.id, clipName)) : null;
@@ -4601,7 +5211,7 @@ function UnitChip({
      * the animated path lands its feet there by pushing the clip down by
      * `footPad`, so a still whose feet are its own bottom edge simply sits on it.
      */
-    const stillClip = stillName ? ANIMATION_CLIPS[unit.def.id]?.[stillName] : undefined;
+    const stillClip = stillName ? clipsOf(unit.def.id)?.[stillName] : undefined;
     const stillBox = stillClip
       ? clipBox(stillClip, h, placementFor(unit.def.id, stillName!))
       : null;
@@ -4623,6 +5233,8 @@ function UnitChip({
      * makes a still as static as it claims to be.
      */
     const shownBox = stillName ? stillBox : box;
+    /** ...and the clip it was measured from, which is what sets its width. */
+    const shown = stillName ? stillClip : strip;
     const crispHeight = crispCss(
       `${(shownBox ? shownBox.boxH : h) * 100}cqh`,
       // The SNAP STEP, not the file height: for art drawn on a larger canvas
@@ -4722,7 +5334,9 @@ function UnitChip({
           height: '100%',
           width: 'auto',
           // Mirror about the feet so a flipped character keeps its footing.
-          transform: `translateX(${(0.5 - sheet.anchorX) * 100}%) scaleX(${facing})`,
+          transform: `translateX(${(0.5 - sheet.anchorX) * 100}%) scaleX(${
+            facing * (mine.flip ? -1 : 1)
+          })`,
         }}
       />
     );
@@ -4731,7 +5345,9 @@ function UnitChip({
       <div
         className={`unit sprite-unit ${unit.side} ${spent} ${hit ? 'hurt' : ''} ${
           flinching === 'b' ? 'spin-b' : ''
-        } ${striking ? 'striking' : ''} ${inPlace ? 'in-place' : ''}`}
+        } ${striking ? 'striking' : ''} ${inPlace ? 'in-place' : ''} ${
+          collapsing ? 'collapsing' : ''
+        }`}
         title={title}
         style={{
           // Rounded to whole art pixels, in CSS rather than here: these are
@@ -4739,14 +5355,24 @@ function UnitChip({
           // known until layout. Width follows the ROUNDED height so the aspect
           // survives the rounding.
           height: crispHeight,
-          // Width follows whichever drawing is in the box, for the same reason
-          // its height does -- a still and a strip are different shapes.
-          ...(shownBox
-            ? {
-                width: `calc(${crispHeight} * ${
-                  stillName && stillClip ? stillClip.aspect : idle!.aspect
-                })`,
-              }
+          /*
+           * Width follows whichever drawing is in the box, for the same reason
+           * its height does -- a still and a strip are different shapes.
+           *
+           * And so are two clips of the same character. This used to read
+           * `idle!.aspect` for every animated frame, which was two bugs in one
+           * number. Benjamin's clips pack at 0.875, 0.99 and 2.25 -- a swing
+           * that reaches wide is a wider FRAME -- so an attack was measured
+           * against the width of his standing pose. And the assertion was a
+           * lie: Rebar has an ability clip and no idle sheet yet, so the frame
+           * his ability swapped in threw `undefined.aspect` straight out of
+           * render, and the whole screen went black on Frost Armor.
+           *
+           * The box was built by `clipBox` from `shown`, so `shown` is the only
+           * thing that can say how wide it is.
+           */
+          ...(shownBox && shown
+            ? { width: `calc(${crispHeight} * ${shown.aspect})` }
             : null),
         }}
       >
@@ -4913,6 +5539,7 @@ function TeamPanel({
   onSelect,
   onPeek,
   intents = false,
+  threat,
 }: {
   title: string;
   units: Unit[];
@@ -4922,6 +5549,8 @@ function TeamPanel({
   onPeek?: (u: Unit | null) => void;
   /** Show each unit's declared intent. Enemies only, and only while planning. */
   intents?: boolean;
+  /** Who each creature has declared against, by unit id. See the `threat` memo. */
+  threat?: Map<string, { victim: string | null; forced: boolean }>;
 }) {
   return (
     <div className="card">
@@ -4951,8 +5580,23 @@ function TeamPanel({
                     number the rules text refers to, and seeing both is how a
                     player learns which band does what. */}
                 {intents && alive(u) && u.intent && !u.pending && (
-                  <em className="intent-row" title={`rolled ${u.intent.roll}`}>
+                  <em
+                    className="intent-row"
+                    title={
+                      `rolled ${u.intent.roll}` +
+                      (threat?.get(u.def.id)?.forced ? ' — pulled onto your taunt' : '')
+                    }
+                  >
                     {u.intent.ability.name}
+                    {/* The victim, in the same breath. An ability name on its
+                        own says what is coming and not who it is coming for,
+                        which is the half the player is planning against. */}
+                    {threat?.get(u.def.id)?.victim && (
+                      <span className={`at ${threat.get(u.def.id)!.forced ? 'forced' : ''}`}>
+                        {threat.get(u.def.id)!.forced ? '\u21b3 ' : '\u2192 '}
+                        {threat.get(u.def.id)!.victim}
+                      </span>
+                    )}
                     <b>{u.intent.roll}</b>
                   </em>
                 )}
@@ -5088,6 +5732,32 @@ function LogPanel({ battle, full = false }: { battle: BattleState; full?: boolea
         return `      ✖ ${e.unit} down`;
       case 'telegraph':
         return `  ${e.unit} winds up ${e.ability}`;
+      /*
+       * The four newest events, which were rendering as BLANK LINES.
+       *
+       * The switch has no default, so an unhandled event returns undefined and
+       * `join` turns it into an empty string -- no crash, no warning, just a
+       * gap. The worst of them was the counter: damage appeared in the log with
+       * nothing above it saying where it came from, which reads as a bug in the
+       * numbers rather than as a creature doing its job.
+       */
+      case 'counter':
+        return `      ${e.unit} strikes back at ${e.target}`;
+      // Both were blank lines, and `fizzle` is the one that mattered: a
+      // Performer spent their dice, walked out and did nothing, with the log
+      // saying nothing about why.
+      case 'retarget':
+        return `  ${e.actor}: ${e.ability} re-aims at ${e.to}`;
+      case 'fizzle':
+        return `  ${e.actor}: ${e.ability} fizzles — ${e.reason}`;
+      case 'adapt':
+        return `      ${e.unit} adapts — ${e.element} resistance ${e.resist}%`;
+      case 'summon':
+        return e.spawned
+          ? `      ${e.unit} calls in ${e.spawned}`
+          : `      ${e.unit} calls for help — no room`;
+      case 'encore':
+        return `      ${e.unit} cues the company — ${e.count} answer${e.count === 1 ? 's' : ''}`;
       case 'upgrade':
         return `  ${e.unit} buys ${e.name}`;
       case 'end':

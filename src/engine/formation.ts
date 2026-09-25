@@ -1,4 +1,4 @@
-import type { Ability, Pos, Side, Unit } from './types.ts';
+import type { Ability, CharacterDef, Pos, Side, Unit } from './types.ts';
 import { alive } from './types.ts';
 
 /**
@@ -120,6 +120,19 @@ export interface EncounterDef {
    * Enemies with genuinely different BEHAVIOUR still earn their own defs.
    */
   enemyLevel?: number;
+  /**
+   * Creatures this encounter's own members may call in, by `id`.
+   *
+   * On the ENCOUNTER rather than in a global bestiary, and that placement is
+   * the design rather than a convenience. `content.ts` imports the engine, so
+   * the engine cannot import a roster back without a cycle -- and the rule that
+   * falls out of dodging it is a good one: a fight carries what can arrive in
+   * it, so reading an encounter tells you every creature you might meet there.
+   *
+   * Levelled on arrival to the encounter's own `enemyLevel`, since a
+   * reinforcement was never in the list `createBattle` levelled.
+   */
+  reinforcements?: CharacterDef[];
   /** Backdrop image, drawn behind both formations. */
   background: string;
   /**
@@ -160,7 +173,14 @@ export const slotPos = (s: Slot): Pos => ({ x: s.col, y: s.row });
  * faces the other.
  */
 export function occupiedColumns(units: Unit[], side: Side): number[] {
-  const cols = [...new Set(units.filter((u) => alive(u) && u.side === side).map((u) => u.pos.x))];
+  // A flyer holds no rank. It shields nothing standing behind it, and clearing
+  // the ground in front of one does not bring it into reach -- see
+  // `CharacterDef.flying`, where both halves of that are one idea.
+  const cols = [
+    ...new Set(
+      units.filter((u) => alive(u) && u.side === side && !u.def.flying).map((u) => u.pos.x),
+    ),
+  ];
   return cols.sort((a, b) => (side === 'enemy' ? a - b : b - a));
 }
 
@@ -189,9 +209,23 @@ export function columnRank(col: number, units: Unit[], side: Side): number {
  * Support is exempt. The party is two columns deep and gating heals on depth
  * would add fiddle without adding a decision.
  */
+/** The least reach an attack needs to touch something off the ground. */
+export const FLYING_REACH = 2;
+
 export function withinReach(ability: Ability, from: Unit, target: Pos, units: Unit[]): boolean {
   if (ability.kind !== 'attack') return true;
   const foes: Side = from.side === 'player' ? 'enemy' : 'player';
+  /*
+   * A flyer is asked a different question entirely.
+   *
+   * It holds no rank, so `columnRank` would report its column as empty and
+   * refuse every reach -- the check has to come first and answer on its own
+   * terms: far enough off the ground, or not.
+   */
+  const over = units.find(
+    (u) => alive(u) && u.side === foes && u.pos.x === target.x && u.pos.y === target.y,
+  );
+  if (over?.def.flying) return ability.range >= FLYING_REACH;
   return columnRank(target.x, units, foes) <= ability.range;
 }
 
@@ -351,16 +385,47 @@ export const STANDARD_PARTY_SLOTS: Slot[] = [
  * it keeps every point of its HP and every degree of its rotation, and what it
  * loses is a crowd that was never the interesting part.
  */
+/**
+ * A boss and the room to field a retinue.
+ *
+ * FIVE slots for the company and one for the boss, in that order, because
+ * order is placement: the adds fill the front and middle ranks and the boss
+ * lands in the back on its own. A reach of 1 or 2 cannot touch it until the
+ * ranks in front are cleared, which is the fight -- you go through the company
+ * or you bring something that reaches.
+ *
+ * It used to be three slots for four bodies. The fourth reused the last one
+ * (`slotPos(slots[i] ?? slots[slots.length - 1])`), so the False Lead stood
+ * inside one of its own guards -- visible on the board as a single overlapping
+ * sprite, and invisible to the rules, which cheerfully let two units share a
+ * square. Any encounter that fields more bodies than its layout has slots does
+ * this; the layout is the thing that has to be right.
+ *
+ * Only six, not seven. The boss is drawn at `BOSS_SCALE` and occupies the width
+ * of the back rank on its own -- the seventh slot is the space it is standing
+ * in.
+ */
 export const BOSS_ENEMY_SLOTS: Slot[] = [
-  slot(3, 0, 0.60, 0.66),
-  slot(4, 2, 0.70, 0.9),
-  // The back rank holds TWO slots (y 0.66 and 0.78), not three, so there is no
-  // middle row for a boss to stand in. It goes between them instead: x centred
-  // on the pair, y on the lower one's floor line, so it is planted on the same
-  // ground its retinue stands on and towers up from there. Placing it at the
-  // midpoint y left it floating -- a sprite hangs UPWARD from its feet, and at
-  // 2.4x a Performer that half-slot of air is very visible.
-  slot(5, 1, 0.90, 0.8),
+  /*
+   * THE BOSS FIRST, and that ordering is doing real work.
+   *
+   * Slots are filled by index, so a boss listed last only reaches the back rank
+   * when the company is at full strength -- field three adds instead of five
+   * and it walks forward into the middle of its own formation. Putting its slot
+   * at index 0 and the boss at the head of the encounter pins it to the back
+   * whatever the retinue is doing, including as summons arrive and die.
+   *
+   * Centred on the back rank and planted on the same floor line the company
+   * stands on, so it towers up from the boards rather than floating above them.
+   */
+  slot(5, 1, 0.815, 0.795),
+  // The company: two in front, three across the middle. Summons take the first
+  // of these that nobody is standing in, which is front-first.
+  slot(3, 0, 0.595, 0.745),
+  slot(3, 1, 0.575, 0.825),
+  slot(4, 0, 0.685, 0.705),
+  slot(4, 1, 0.665, 0.785),
+  slot(4, 2, 0.645, 0.845),
 ];
 
 export const STANDARD_ENEMY_SLOTS: Slot[] = [

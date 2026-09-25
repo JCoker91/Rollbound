@@ -1,5 +1,19 @@
 {
-  "clips": {},
+  "clips": {
+    "ability_3": {
+      "anchorX": 0.5029,
+      "aspect": 1.191964,
+      "footPad": 0.0,
+      "frames": 5,
+      "loops": false,
+      "normalised": 1.0,
+      "pxH": 224,
+      "restFill": 0.424107,
+      "size": 235933,
+      "src": "/sprites/rebar/rebar_ability_3.png",
+      "trimmed": 0
+    }
+  },
   "stamp": {
     "sha256": "6b893b2e0e7d596ec2893de756889028f1ff08edcd057a5459a1fa7dc97be09c",
     "size": 186890

@@ -80,7 +80,9 @@ function statList(stats: ModStat[]): string {
  * of one enemy in the first two ranks's base", which is accurate and unusable.
  */
 function effectTargetPhrase(a: Ability, fx: Effect): { full: string; it: string } {
-  switch (fx.on ?? 'target') {
+  // A summon aims at nobody -- it puts a body on the board. `self` is the
+  // honest reading of that and keeps the pronoun machinery below working.
+  switch (fx.do === 'summon' || fx.do === 'encore' ? 'self' : (fx.on ?? 'target')) {
     case 'self':
       return { full: 'the caster', it: 'their' };
     case 'allies':
@@ -143,6 +145,18 @@ function describeEffect(a: Ability, fx: Effect, sameTargetAsPrevious: boolean): 
       return `applies ${fx.stacks} frost to ${name}`;
     case 'regen':
       return `grants ${name} regen for ${fx.turns} turn${fx.turns === 1 ? '' : 's'}`;
+    // No "if there is room". The fizzle is a fact about the board at the
+    // moment it fires, not about the ability, and a rules line that hedges
+    // every sentence with its own failure case stops being readable.
+    case 'summon':
+      return fx.of
+        ? `calls a ${fx.of.replace(/_/g, ' ')} into the formation`
+        : 'calls another of itself into the formation';
+    // Says what it DOES rather than what it costs the player, because the cost
+    // is the board: how hard this lands is how many of them are still standing,
+    // and that number is on screen.
+    case 'encore':
+      return 'every ally still standing takes its best attack at once, at random targets';
     case 'sleep':
       // No explanation of what sleep DOES. A status is learned once, and
       // restating the rule under every ability that applies it is the same
@@ -217,7 +231,9 @@ export function describeAbility(a: Ability): string {
   if (a.effects) {
     const parts = a.effects.map((fx, i) => {
       const prev = a.effects![i - 1];
-      const same = prev !== undefined && (prev.on ?? 'target') === (fx.on ?? 'target');
+      const at = (e: Effect) =>
+        e.do === 'summon' || e.do === 'encore' ? 'self' : (e.on ?? 'target');
+      const same = prev !== undefined && at(prev) === at(fx);
       return describeEffect(a, fx, same);
     });
     const joined = parts.length === 1 ? parts[0]! : `${parts.slice(0, -1).join(', ')}, then ${parts[parts.length - 1]}`;
@@ -294,9 +310,190 @@ export function describeCost(a: Ability): string {
   return `Spend any dice totalling exactly ${a.cost}.${cool}`;
 }
 
+/*
+ * =====================================================================
+ * SHORT FORM
+ * =====================================================================
+ *
+ * The full rules text is correct and it is too long to scan. Perfect Form reads
+ * "Raises the caster's ATK, P.DEF and M.DEF by 20% of their own base stats for
+ * 3 turns, then deals 200% of ATK as physical damage to one enemy in the first
+ * two ranks, over 6 hits" -- which is what you want when you are deciding, and
+ * not what you want when you are looking along a list of four abilities trying
+ * to remember which one is the big hit.
+ *
+ * So: a **magnitude word and a shape**, and no numbers at all. "Raises its own
+ * stats and deals high physical damage to one enemy." The exact figures live in
+ * the detail modal, which is where somebody who wants them will go.
+ *
+ * Bands rather than numbers is the whole idea. A player cannot tell whether
+ * 110% is a lot without knowing the roster; "moderate" is a claim they can
+ * check against the other three abilities on the same sheet, which is the only
+ * comparison they are actually making.
+ */
+
+/**
+ * Damage bands, as a multiple of ATK.
+ *
+ * Cut against the real spread. Every damaging ability in the game sits between
+ * 0.5 and 2.2, and the clusters are genuine: chip attacks and area spells at
+ * 0.6-0.8, ordinary strikes at 0.9-1.15, the expensive single-target ones at
+ * 1.3-1.6, and ultimates at 2.0+.
+ *
+ * Area abilities are NOT discounted for hitting more. Blizzard at 60% to five
+ * creatures is more total damage than Sunder at 110% to one, but the word is
+ * describing what a single body takes -- which is the thing a player is reading
+ * it to find out, and the scope is stated in the same sentence anyway.
+ */
+const DAMAGE_BANDS: [number, string][] = [
+  [2.25, 'extreme'],
+  [1.5, 'high'],
+  [0.8, 'moderate'],
+  [0, 'minor'],
+];
+
+/** Percentage bands, for buffs, shreds, wards and resistances. */
+const PERCENT_BANDS: [number, string][] = [
+  [50, 'extreme'],
+  [30, 'high'],
+  [15, 'moderate'],
+  [0, 'minor'],
+];
+
+const band = (bands: [number, string][], value: number): string =>
+  bands.find(([at]) => Math.abs(value) >= at)?.[1] ?? 'minor';
+
+/** "one enemy", "all enemies", "the party" -- shape only, no ranks. */
+function shortTarget(a: Ability, fx: Effect): string {
+  const at = fx.do === 'summon' || fx.do === 'encore' ? 'self' : (fx.on ?? 'target');
+  if (at === 'self') return 'itself';
+  if (at === 'allies') return 'the party';
+  const scope = a.scope ?? 'one';
+  const many = scope === 'all' || scope === 'column' || scope === 'row';
+  if (a.kind === 'attack' && many) return 'all enemies';
+  if (many) return 'the party';
+  return a.kind === 'attack' ? 'one enemy' : 'one ally';
+}
+
+/** "a moderate" / "an extreme" -- the one place this text needs an article. */
+const an = (word: string): string => (/^[aeiou]/.test(word) ? `an ${word}` : `a ${word}`);
+
+/** One effect, in as few words as it takes to know what kind of thing it is. */
+function shortEffect(a: Ability, fx: Effect, same: boolean): string | null {
+  /*
+   * Naming the same body twice reads as two things happening to two creatures.
+   * The full text solves this with `sameTargetAsPrevious`; so does this.
+   *
+   * The pronoun has to agree in NUMBER, which the first pass did not: Blizzard
+   * came out "deals damage to all enemies and applies 1 frost to it".
+   */
+  const full = shortTarget(a, fx);
+  const plural = full === 'all enemies' || full === 'the party';
+  const who = !same ? full : full === 'itself' ? 'itself' : plural ? 'them' : 'it';
+  const whose =
+    who === 'itself' ? 'its own' : who === 'them' ? 'their' : who === 'it' ? 'its' : `${who}'s`;
+  switch (fx.do) {
+    case 'damage': {
+      const kind = fx.damageType ?? a.damageType ?? 'physical';
+      const el = fx.element ?? a.element;
+      return `deals ${band(DAMAGE_BANDS, fx.power)} ${el ? `${el} ` : ''}${kind} damage to ${who}`;
+    }
+    case 'modify': {
+      const up = fx.percent >= 0;
+      const what = fx.stats.length > 1 ? 'stats' : statWord(fx.stats[0]!);
+      return `${up ? 'raises' : 'lowers'} ${whose} ${what} by ${an(band(PERCENT_BANDS, fx.percent))} amount`;
+    }
+    // Banded like DAMAGE, not like a percentage: a heal's power is a multiple
+    // of ATK exactly as an attack's is, and running it through the percentage
+    // bands called Poultice's 0.7 "extreme".
+    case 'heal':
+      return `heals ${who} for ${an(band(DAMAGE_BANDS, fx.power))} amount`;
+    case 'frost':
+      return `applies ${fx.stacks} frost to ${who}`;
+    case 'regen':
+      return `grants ${who} regeneration`;
+    case 'ward':
+      return `reduces ${whose} incoming damage`;
+    case 'resist':
+      return `raises ${whose} ${fx.element} resistance`;
+    case 'sleep':
+      return `puts ${who} to sleep`;
+    case 'taunt':
+      return `taunts ${who}`;
+    case 'spendRegen':
+      return `cashes in ${whose} regeneration at once`;
+    case 'summon':
+      return 'calls in reinforcements';
+    case 'encore':
+      return 'makes every ally act at once';
+    // Movement says nothing worth compressing -- the full line is already
+    // three words -- and returning null drops it from the summary entirely.
+    case 'move':
+    case 'reposition':
+      return null;
+  }
+}
+
+const statWord = (s: ModStat): string =>
+  s === 'attack' ? 'ATK' : s === 'physicalDefense' ? 'P.DEF' : 'M.DEF';
+
+/**
+ * The whole ability in one line, with words where the numbers were.
+ *
+ * Falls back to the full text for an ability with no `effects` list, which is
+ * the legacy authoring shape -- those carry a bare `power` and nothing to
+ * summarise from.
+ */
+export function describeShort(a: Ability): string {
+  /*
+   * A bare `power` is synthesised into the damage effect it is equivalent to,
+   * the same way `applyAbility` does it.
+   *
+   * Falling back to the full text here looked harmless and was not: enemies are
+   * authored the legacy way, so every creature in the game -- the things a
+   * player most wants a one-line read on -- got the long form instead.
+   */
+  const own: Effect[] | null =
+    a.effects ??
+    (a.kind === 'attack'
+      ? [{ do: 'damage', power: a.power, damageType: a.damageType, element: a.element }]
+      : null);
+  if (!own) return describeAbility(a);
+  const at = (e: Effect) => (e.do === 'summon' || e.do === 'encore' ? 'self' : (e.on ?? 'target'));
+  const parts = own
+    .map((fx, i) => shortEffect(a, fx, i > 0 && at(own[i - 1]!) === at(fx)))
+    .filter((x): x is string => !!x);
+  if (parts.length === 0) return describeAbility(a);
+  const joined =
+    parts.length === 1 ? parts[0]! : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+  return `${cap(joined)}.`;
+}
+
+/**
+ * What the chain adds, in the same register.
+ *
+ * Reuses the authored `trigger.text` rather than trying to summarise it: those
+ * were rewritten to be concrete and short already ("Reduces its P.DEF by 40%
+ * instead of 25%"), and a summary of a sentence that is already one clause is
+ * just a worse copy of it.
+ */
+export function describeShortChain(a: Ability): string | null {
+  return a.trigger ? `${a.trigger.text}.` : null;
+}
+
 /** Rules text for an always-on effect. */
 export function describePassive(p: Passive): string {
   switch (p.kind) {
+    case 'counter':
+      return (
+        `Strikes back for ${p.percent}% of its ATK at anyone who attacks one of its allies. ` +
+        `Single-target attacks only, once per action, and never for an attack that lands on it too.`
+      );
+    case 'adapt':
+      return (
+        `Each attack that deals it elemental damage raises its resistance to that element by ` +
+        `${p.percent}%, up to ${p.max}%. Physical damage carries no element and teaches it nothing.`
+      );
     case 'lastingTaunt':
       return (
         `Its taunts keep working for ${p.turns} more turn${p.turns === 1 ? '' : 's'}: ` +
@@ -367,6 +564,16 @@ export function describePassive(p: Passive): string {
 /** How an enemy decides to use this ability. */
 export function describeEnemyUsage(a: Ability): string | null {
   const bits: string[] = [];
+  /*
+   * Priority first, because it OVERRIDES the band printed beside it.
+   *
+   * A scheduled ability is chosen the moment its cooldown is up, whatever the
+   * d20 says -- so a card showing "18-20" and nothing else is not merely
+   * incomplete, it is wrong about the one thing the fight is built around. The
+   * False Lead's Encore is a deadline, and a deadline the player reads as a
+   * 15% chance is not a deadline.
+   */
+  if ((a.priority ?? 0) > 0) bits.push('used the moment it is available, whatever the roll');
   if (a.telegraph) bits.push(`announced ${a.telegraph} turn ahead, then lands`);
   const cd = cooldownOf(a);
   if (cd) bits.push(`${cd}-turn cooldown`);

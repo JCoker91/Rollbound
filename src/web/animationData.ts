@@ -136,6 +136,16 @@ export interface ClipSettings {
    * visible without needing to be tuned first.
    */
   idleWeight?: number;
+  /**
+   * Mirror this actor. Only read on the `stature` entry.
+   *
+   * Every enemy is drawn facing left by the renderer (`facing = -1`), which
+   * assumes the source art faces right like the party's does. A creature drawn
+   * the other way round then fights with its back to the stage, and the choice
+   * is between re-exporting the art and saying so in one flag. This is the
+   * flag.
+   */
+  flip?: boolean;
 }
 
 /**
@@ -262,10 +272,43 @@ const files = import.meta.glob<ActorAnimData>('../../art/actors/*/*.anim.json', 
   import: 'default',
 });
 
+/*
+ * Creatures keep their tuning beside their sprite rather than in an actor
+ * folder they do not have.
+ *
+ * `art/enemies/creatures/` is a flat directory of PNGs -- there is no
+ * `<name>/animations/` for a thing with one drawing and no clips -- so the
+ * owner is the FILENAME here where it is the folder name above. Two globs and
+ * two owner rules rather than one clever pattern, because a glob that matched
+ * both would have to guess which segment was the id.
+ */
+const creatureFiles = import.meta.glob<ActorAnimData>(
+  '../../art/enemies/creatures/*.anim.json',
+  { eager: true, import: 'default' },
+);
+
 const key = (who: string, clip: string): string => `${who}/${clip}`;
 
 /** `who` is the folder name, which is also the character id. */
 const ownerOf = (path: string): string => path.split('/').slice(-2)[0];
+
+/** ...but for a creature it is the filename, which is also the sprite id. */
+const creatureOf = (path: string): string =>
+  path.split('/').pop()!.replace(/\.anim\.json$/, '');
+
+/**
+ * The key an actor's own tuning hides under, rather than a clip's.
+ *
+ * Reserved rather than given a file or a field of its own, and that is worth a
+ * line: the save endpoint is built around `(actor, clip, settings)`, the lab is
+ * built around picking a clip, and both already validate and round-trip
+ * `placement` correctly. Borrowing one key costs a reserved word and reuses
+ * every piece of that; a second shape would have meant a second validator, a
+ * second writer and a second thing to forget.
+ *
+ * No clip is called this, and the lab never offers it in the picker.
+ */
+export const STATURE = 'stature';
 
 /**
  * Pace for a clip with nothing authored.
@@ -284,8 +327,14 @@ const stepMs: Record<string, number> = {};
 const idleWeight: Record<string, number> = {};
 const impacts: Record<string, Impact[]> = {};
 
-for (const [path, data] of Object.entries(files)) {
-  const who = ownerOf(path);
+const everything: [string, ActorAnimData][] = [
+  ...Object.entries(files).map(([p, d]) => [ownerOf(p), d] as [string, ActorAnimData]),
+  ...Object.entries(creatureFiles).map(
+    ([p, d]) => [creatureOf(p), d] as [string, ActorAnimData],
+  ),
+];
+
+for (const [who, data] of everything) {
   for (const [clip, settings] of Object.entries(data ?? {})) {
     if (settings?.frames?.length) tuning[key(who, clip)] = settings.frames;
     if (settings?.placement && Object.keys(settings.placement).length) {
@@ -297,6 +346,35 @@ for (const [path, data] of Object.entries(files)) {
     if (settings?.impacts?.length) impacts[key(who, clip)] = settings.impacts;
   }
 }
+
+/**
+ * Per-actor tuning: how big the figure stands, where it stands, which way it
+ * faces. Read off the reserved `stature` entry.
+ *
+ * This is the only tuning a creature with no clips can carry, and creatures are
+ * most of what needs it -- they arrive as one drawing on whatever canvas the
+ * generator produced, so their packed stature is whatever the ratio of body to
+ * canvas happened to be rather than a decision anyone made.
+ */
+export interface Stature {
+  /** Multiplies the packed figure height. 1 leaves it alone. */
+  scale?: number;
+  /** Nudge from the slot mark, in percent of the figure's box. */
+  dx?: number;
+  dy?: number;
+  /** Mirror it, for art drawn facing the other way. */
+  flip?: boolean;
+}
+
+const stature: Record<string, Stature> = {};
+for (const [who, data] of everything) {
+  const s = (data ?? {})[STATURE];
+  if (!s) continue;
+  stature[who] = { ...s.placement, ...(s.flip ? { flip: true } : null) };
+}
+
+export const STATURES: Record<string, Stature> = stature;
+export const statureFor = (who: string): Stature => STATURES[who] ?? {};
 
 export const ANIMATION_TUNING: Record<string, ClipTuning> = tuning;
 export const CLIP_PLACEMENT: Record<string, ClipPlacement> = placement;

@@ -10,6 +10,8 @@ import type {
   StarNode,
   StarTier,
 } from './types.ts';
+// A value, not a type, so it needs its own import alongside the block above.
+import { PERMANENT } from './types.ts';
 import {
   BOSS_ENEMY_SLOTS,
   STANDARD_ENEMY_SLOTS,
@@ -57,7 +59,11 @@ const LEGACY_SCALE: Partial<Record<SpriteId, number>> = {};
  * Measured facts from the generated module, plus a height derived from the art.
  * Nothing here is hand-authored per character.
  */
-const sprite = (id: SpriteId): SpriteSheet => {
+/**
+ * Exported so the animation lab can build a sheet for a creature, which has no
+ * roster entry to read one off.
+ */
+export const sprite = (id: SpriteId): SpriteSheet => {
   const { nativePx, nativeCanvas, pixelArt, ...metrics } = SPRITE_METRICS[id];
   // Stature is the figure's share of its OWN canvas, so art authored on the
   // 64px grid and on the 128px one that replaced it stand the same height
@@ -1623,8 +1629,17 @@ export const BESTIARY: CharacterDef[] = [
  * NOT a balance pass. The numbers are placeholders chosen to make the systems
  * legible; the real bestiary is authored once the mechanics are in.
  */
+/**
+ * The colours, as a union rather than a string.
+ *
+ * The stage ladder below is written as cast lists -- `cast('red', 3)` -- and a
+ * typo in one of those should be a compile error rather than an encounter that
+ * quietly fields nobody.
+ */
+type Colour = 'red' | 'yellow' | 'blue' | 'orange' | 'green';
+
 interface UnderstudyVariant {
-  colour: string;
+  colour: Colour;
   element: Element;
 }
 
@@ -1676,16 +1691,55 @@ const understudy = ({ colour, element }: UnderstudyVariant): CharacterDef => {
     magicalDefense: 20,
     ...art(`understudy_${colour}`),
     abilities: [
-      // d20 bands, inclusive. 1-15 is 75% and 16-20 is 25%, which is the split
-      // these two were authored at when they were weights.
-      { name: 'Fluffed Line', cost: 0, kind: 'attack', damageType: 'physical', power: 0.8, element, range: 1, roll: [1, 15] },
-      { name: 'Scene Stealer', cost: 0, kind: 'attack', damageType: 'physical', power: 1.6, element, range: 2, roll: [16, 20] },
+      /*
+       * Two attacks, and the pair is the whole creature.
+       *
+       * d20 bands, inclusive: 1-15 is 75% and 16-20 is 25%, which is the split
+       * these were authored at when they were weights.
+       *
+       * They differ on THREE axes at once, on purpose, because an Understudy
+       * has nothing else to be interesting with:
+       *
+       *   reach   1 is the frontmost occupied column; 3 is anybody. The party
+       *           stands in three columns, so the weak attack can only ever
+       *           touch the two front slots and the strong one can pick a staff
+       *           out of the back rank.
+       *   track   physical against magical. The creature is P.DEF 40 / M.DEF 20
+       *           -- armoured against steel, soft to magic -- and having its own
+       *           output split the same way is what stops one defensive answer
+       *           covering everything it does.
+       *   element only the strong one carries it into the damage, so the wheel
+       *           is a thing that happens 25% of the time rather than the
+       *           background of every hit.
+       *
+       * Targeting is uniformly random among legal targets and declared as an
+       * intent before the player plans (see `chooseIntents`), so a back-rank
+       * strike is a problem you are shown and can answer -- cover it, heal
+       * through it, or taunt it onto somebody who can take it -- rather than a
+       * coin flip on a committed turn.
+       */
+      { name: 'Fluffed Line', cost: 0, kind: 'attack', damageType: 'physical', power: 0.8, range: 1, roll: [1, 15] },
+      { name: 'Scene Stealer', cost: 0, kind: 'attack', damageType: 'magical', power: 1.6, element, range: 3, roll: [16, 20] },
     ],
   };
 };
 
 /** The lineup a Performance deploys: one Understudy of each element. */
 export const ENEMIES: CharacterDef[] = UNDERSTUDIES.map(understudy);
+
+/**
+ * The Understudies by colour, so a stage can be written as a cast list.
+ *
+ * `red(3)` rather than five array indices is the point: a composition is read
+ * far more often than it is written, and "three Reds" is the thing the stage
+ * actually is.
+ */
+const CAST = Object.fromEntries(
+  UNDERSTUDIES.map((v) => [v.colour, understudy(v)]),
+) as Record<Colour, CharacterDef>;
+
+const cast = (colour: Colour, n = 1): CharacterDef[] =>
+  Array.from({ length: n }, () => CAST[colour]!);
 
 /**
  * The first boss: a False Lead.
@@ -1714,10 +1768,22 @@ export const FALSE_LEAD: CharacterDef = {
   attack: 104,
   physicalDefense: 50,
   magicalDefense: 50,
-  // Nothing innate: every resistance it has is the rotation's doing, so the
-  // reveal is the complete truth about it on any given round.
+  /*
+   * No elemental character at all, and no rotation either.
+   *
+   * It USED to rotate -- immune to one element and freshly vulnerable to
+   * another every round, revealed before planning. That is a good mechanic and
+   * it was the wrong one for the first boss in the game: it is a coverage check
+   * that punishes the roster you happen to own at stage 10, and it was the
+   * third plate spinning beside the company and the Encore clock. Read the
+   * rotation, manage the adds, count the deadline -- one of those had to go,
+   * and the adds are the only one that is a DECISION every turn rather than a
+   * fact to be looked up.
+   *
+   * Kept unaligned rather than given a resistance profile, so nothing about
+   * which damage you bring matters and the whole fight is about the board.
+   */
   resistances: {},
-  rotatesResistance: { immuneFor: 100, weakFor: -60 },
   /*
    * It overacts. Every turn past the tenth the False Lead commits harder to the
    * bit, and by turn thirty it hits twice as hard as it opened.
@@ -1733,12 +1799,272 @@ export const FALSE_LEAD: CharacterDef = {
    * Only bosses ramp. A corridor fight is over in about six turns and would
    * never reach `after`, so putting it on trash would be a rule nobody meets.
    */
-  ramp: { percent: 5, after: 10 },
+  ramp: { percent: 8, after: 6 },
   ...art('false_lead'),
   abilities: [
-    { name: 'Cue the Chaos', cost: 0, kind: 'attack', damageType: 'physical', power: 0.9, range: 3, element: 'dark', roll: [1, 11] },
-    { name: 'Botched Entrance', cost: 0, kind: 'attack', damageType: 'magical', power: 1.3, range: 3, element: 'dark', scope: 'all', roll: [12, 17] },
-    { name: 'Understudy!', cost: 0, kind: 'attack', damageType: 'true', power: 0.5, range: 3, element: 'dark', roll: [18, 20] },
+    /*
+     * A company, a cue, and something to do in between.
+     *
+     * ENCORE IS SCHEDULED, everything else is rolled. `priority` puts it above
+     * the d20 the moment its cooldown is up, so it is a DEADLINE rather than a
+     * surprise -- and the deadline is the fight. Every add still standing when
+     * it lands is damage the player agreed to take; the size of the hit is a
+     * number they chose, several turns earlier, by deciding to do something
+     * else with their dice.
+     *
+     * Three turns is the gap, which is roughly what it takes to clear two adds
+     * while also hurting a 240 HP boss -- i.e. not quite enough, so something
+     * is always left over.
+     */
+    {
+      name: 'Encore', cost: 0, kind: 'buff', power: 0, range: 3,
+      priority: 1, cooldown: 2, roll: [18, 20],
+      effects: [{ do: 'encore' }],
+    },
+    /*
+     * The company refills between cues.
+     *
+     * TWO at a time, because one is a rounding error against a party that can
+     * kill two a turn and three outruns them entirely. Named reinforcements
+     * rather than copies of the boss -- `of` reads the encounter's own
+     * `reinforcements` list, which is what makes a summon that calls something
+     * ELSE possible at all.
+     *
+     * It fizzles when the board is full, which is its own brake: the formation
+     * holds five besides the boss, so the biggest Encore this fight can produce
+     * is five attacks and that number is fixed rather than tuned.
+     */
+    {
+      name: 'Curtain Up', cost: 0, kind: 'buff', power: 0, range: 3, roll: [12, 20],
+      effects: [
+        { do: 'summon', of: 'understudy_red' },
+        { do: 'summon', of: 'understudy_blue' },
+        { do: 'summon', of: 'understudy_green' },
+      ],
+    },
+    // The filler, and the only thing it does that is about the player rather
+    // than about its own board. Reach 3, so standing at the back is no shelter.
+    { name: 'Cue the Chaos', cost: 0, kind: 'attack', damageType: 'physical', power: 1.1, range: 3, element: 'dark', roll: [1, 11] },
+  ],
+};
+
+
+/*
+ * =====================================================================
+ * THE ACT 1 BESTIARY
+ * =====================================================================
+ *
+ * Four creatures beside the Understudies, and each one asks the party a
+ * DIFFERENT question. That is the whole brief: none of them fights alone, so
+ * what makes a stage is which questions are being asked at once.
+ *
+ *   Understudy       which element?              the wheel
+ *   Backdrop Bat     what can you even reach?    flying
+ *   Box Office Bruiser  who do you hit first?    counter
+ *   Playbill Mimic   can you stop repeating?     adapt
+ *   Footlight Skitter  can you hit several?      summon
+ *
+ * EVERY NUMBER HERE IS A PLACEHOLDER. They are first guesses chosen to be
+ * legible rather than balanced -- round figures, read against the Understudy's
+ * 28 HP / 76 ATK baseline -- and they are meant to be tuned against a played
+ * ladder rather than argued about on paper.
+ */
+
+/**
+ * Backdrop Bat -- the one you cannot swat.
+ *
+ * `flying` is the entire creature: it needs a reach of 2 to be attacked at all,
+ * and it holds no rank so it neither shields what is behind it nor stops being
+ * airborne when the ground in front of it is cleared.
+ *
+ * What that taxes is CHEAP attacks. Every Performer's wildcard basic is reach 1
+ * -- Maul, Cleave, Quick Cut -- and every one of them keeps a reach-2 ability
+ * that works. So a Bat cannot be answered by spending single dice on basics,
+ * which is exactly the habit the first two stages teach.
+ *
+ * Paid for in paper. 20 HP and 15 P.DEF is the least durable thing in the game:
+ * once something CAN hit it, it dies immediately. The difficulty is the
+ * reaching, and a creature that is both hard to reach and hard to kill would be
+ * asking two questions with one body.
+ */
+const BACKDROP_BAT: CharacterDef = {
+  id: 'backdrop_bat', icon: 'wisp', name: 'Backdrop Bat', rarity: 3, role: 'bow',
+  resistances: aligned('wind'),
+  maxHp: 20, attack: 70, physicalDefense: 15, magicalDefense: 25,
+  flying: true,
+  ...art('backdrop_bat'),
+  abilities: [
+    // Reach 3 on both, because a flyer picking its way over the front rank is
+    // the same idea as it being unreachable from the ground.
+    { name: 'Wing Buffet', cost: 0, kind: 'attack', damageType: 'physical', power: 0.7, range: 3, roll: [1, 15] },
+    { name: 'Dive', cost: 0, kind: 'attack', damageType: 'physical', power: 1.3, element: 'wind', range: 3, roll: [16, 20] },
+  ],
+};
+
+/**
+ * Box Office Bruiser -- the one you cannot walk past.
+ *
+ * `counter` is the honest version of "deal with me first". A ramp only says the
+ * fight gets worse with time; this punishes the specific choice of hitting
+ * somebody else, every time it is made.
+ *
+ * Its escalation lives in its KIT rather than in `def.ramp`, which is the
+ * better place for it: a 16-20 band means the power-up is declared in the
+ * intent before the player commits, so "he is about to get stronger" is a thing
+ * you can decide to interrupt rather than a number that quietly climbs. It is
+ * PERMANENT, so ignoring it compounds -- and freezing him is how you skip one.
+ *
+ * Three exits, all of them in the starting party: kill him first (the point),
+ * shred him with Sunder or Disarm, or freeze him -- a creature that cannot act
+ * cannot counter, which is the third job frost has been waiting for.
+ */
+const BOX_OFFICE_BRUISER: CharacterDef = {
+  id: 'box_office_bruiser', icon: 'golem', name: 'Box Office Bruiser', rarity: 4, role: 'shield',
+  resistances: aligned('earth'),
+  maxHp: 70, attack: 84, physicalDefense: 80, magicalDefense: 45,
+  ...art('box_office_bruiser'),
+  passives: [{ kind: 'counter', percent: 45 }],
+  abilities: [
+    { name: 'Shove', cost: 0, kind: 'attack', damageType: 'physical', power: 1.0, range: 1, roll: [1, 15] },
+    {
+      // No damage on it at all. A turn he spends growing is a turn nobody takes
+      // a hit, which is the trade the player is being offered: let him build,
+      // or spend actions on him now and eat the counters doing it.
+      name: 'Top Billing', cost: 0, kind: 'buff', power: 0, range: 1, roll: [16, 20],
+      effects: [
+        {
+          do: 'modify', on: 'self', stats: ['attack'],
+          percent: 20, of: 'targetBase', turns: PERMANENT,
+        },
+      ],
+    },
+  ],
+};
+
+/**
+ * Playbill Mimic -- the one that learns you.
+ *
+ * `adapt` writes into `resistMods`, which already existed for the False Lead's
+ * rotation and is already drawn on the creature's card. The difference is who
+ * causes it: the boss's rotation happens TO the player, and this is a
+ * consequence of what the player just chose to do.
+ *
+ * Flat magic immunity was the first idea and it was worse. Maxine is one of
+ * five starting Performers, and "your character does nothing this stage" is not
+ * a decision, it is a smaller game. Adapting keeps every option open and makes
+ * REPEATING the mistake -- which is the thing worth teaching.
+ *
+ * Physical carries no element and teaches it nothing, so Kael and Benjamin are
+ * the constant. Capped at 60 so a caster who rotates is never locked out.
+ */
+const PLAYBILL_MIMIC: CharacterDef = {
+  id: 'playbill_mimic', icon: 'husk', name: 'Playbill Mimic', rarity: 4, role: 'dagger',
+  resistances: {},
+  maxHp: 42, attack: 80, physicalDefense: 35, magicalDefense: 35,
+  ...art('playbill_mimic'),
+  passives: [{ kind: 'adapt', percent: 20, max: 60 }],
+  abilities: [
+    { name: 'Understudy Act', cost: 0, kind: 'attack', damageType: 'physical', power: 0.9, range: 2, roll: [1, 15] },
+    { name: 'Second Billing', cost: 0, kind: 'attack', damageType: 'magical', power: 1.4, element: 'dark', range: 3, roll: [16, 20] },
+  ],
+};
+
+/**
+ * Footlight Skitter -- the one that multiplies.
+ *
+ * The only creature here whose threat is TEMPO. One is nearly harmless; four
+ * are a problem you created by not dealing with one. Summons can summon, so
+ * growth is exponential right up to the seven slots and flat after -- the slot
+ * count is the only cap there is, and it is enough because it is small.
+ *
+ * Paper-thin on purpose (16 HP). The answer is meant to be an area attack, and
+ * Blizzard, Avalanche and Deep Cold have had nothing to be right about: every
+ * fight before this one rewards killing things one at a time.
+ *
+ * 18-20 is 15%, which is quieter than it sounds -- one Skitter calls for help
+ * about every seven turns, five about every 1.3. That is why they arrive in
+ * FIVES: a lone Skitter is nearly inert, and the mechanic only shows itself
+ * when there are enough of them to compound.
+ *
+ * 26 HP, and the number was measured rather than felt. At the 16 it was
+ * authored with, five of them died in 2.5 turns -- the shortest fight in the
+ * act -- and called for help 0.56 times a battle, so the swarm never actually
+ * swarmed. At 26 the fight runs 3.8 turns and they reproduce about once, which
+ * is the mechanic showing itself. Widening the band did nothing at either
+ * value: they were not failing to ROLL it, they were failing to live to their
+ * own turn, and that is a lifespan problem wearing a probability costume.
+ *
+ * Still under the Understudy's 28, so they remain the flimsiest thing on any
+ * board they appear on and an area attack still clears them in one.
+ */
+const FOOTLIGHT_SKITTER: CharacterDef = {
+  id: 'footlight_skitter', icon: 'shade', name: 'Footlight Skitter', rarity: 3, role: 'dagger',
+  resistances: aligned('lightning'),
+  maxHp: 52, attack: 62, physicalDefense: 20, magicalDefense: 20,
+  ...art('footlight_skitter'),
+  abilities: [
+    { name: 'Nip', cost: 0, kind: 'attack', damageType: 'physical', power: 0.75, range: 2, roll: [1, 17] },
+    {
+      name: 'Call the Chorus', cost: 0, kind: 'buff', power: 0, range: 1, roll: [18, 20],
+      effects: [{ do: 'summon' }],
+    },
+  ],
+};
+
+/**
+ * Limelight Diva -- the one that makes where you STAND a decision.
+ *
+ * Everything else in Act 1 threatens the front. The Understudy's 75% band is
+ * reach 1, the Bruiser only swings at what is in front of him, and even the
+ * creatures that CAN reach the back rank do it a quarter of the time. So a
+ * party learns to stack its staves behind a wall and stop thinking about it.
+ * This is the creature that charges rent on that.
+ *
+ * Its common attack is the inverse of everyone else's: reach 3, single target,
+ * so the back line is the usual place it lands rather than the exception. And
+ * its 16-20 is an AREA attack down one whole RANK -- `scope: 'column'` cuts
+ * front-to-back on x, so aimed at the back column it catches both staves at
+ * once, which is exactly the formation the rest of the act rewards.
+ *
+ * THE BIG ONE IS TELEGRAPHED, and that is the point rather than a softener.
+ * `telegraph: 1` announces the rank this turn and lands at the start of the
+ * next phase, so the player gets a whole turn to answer -- and the answer the
+ * game has been waiting to need is **Reposition**, which until now cost an
+ * action to solve a problem nothing was posing. It is the one mechanic already
+ * built, already drawn (`danger` in the battle screen) and with no live user.
+ *
+ * Paid for in paper: 24 HP and nothing to hide behind. It is meant to be the
+ * thing you drop what you are doing to kill, and being fire-aligned means the
+ * party's frost is the tool for that -- the stage-1 lesson, cashed in late.
+ */
+const LIMELIGHT_DIVA: CharacterDef = {
+  id: 'limelight_diva', icon: 'seraph', name: 'Limelight Diva', rarity: 4, role: 'staff',
+  resistances: aligned('fire'),
+  maxHp: 55, attack: 88, physicalDefense: 20, magicalDefense: 40,
+  ...art('limelight_diva'),
+  abilities: [
+    // Reach 3 on the COMMON band, which no other creature does. This is the
+    // one that makes the back rank an ordinary place to be hit rather than an
+    // occasional surprise.
+    { name: 'Cue Light', cost: 0, kind: 'attack', damageType: 'magical', power: 0.85, element: 'fire', range: 3, roll: [1, 11] },
+    {
+      /*
+       * Her NORMAL action, not her rare one -- the only creature in the act
+       * whose bands are not the usual 75/25, and the reason is measured.
+       *
+       * A wind-up costs TWO turns of survival for one payoff, so a telegraph
+       * fires far less often than its band suggests. At the standard 16-20 she
+       * lands it 0.35 times a battle even fully screened: one fight in three
+       * never sees the thing she is built around. At 12-20 it is 0.59, which is
+       * roughly every other fight, and her sniping still fills 55% of her turns.
+       *
+       * No cooldown for the same reason. The question is meant to be "can you
+       * reach her before the next one lands", and a timer that answers it for
+       * the player is not a question.
+       */
+      name: 'Curtain Call', cost: 0, kind: 'attack', damageType: 'magical', power: 1.1,
+      element: 'fire', range: 3, scope: 'column', telegraph: 1, roll: [12, 20],
+    },
   ],
 };
 
@@ -1746,7 +2072,7 @@ export const FALSE_LEAD: CharacterDef = {
 export const BOSS_EVERY = 10;
 
 /** How many Understudies stand with the boss. */
-const BOSS_GUARD = 2;
+const BOSS_GUARD = 3;
 
 /**
  * The two Understudies fielded alongside the boss on a given stage.
@@ -1762,14 +2088,150 @@ function bossGuard(stage: number): CharacterDef[] {
   );
 }
 
+/*
+ * =====================================================================
+ * THE ACT 1 LADDER
+ * =====================================================================
+ *
+ * Stages 1-9 are authored compositions; 10 is the boss.
+ *
+ * What the ladder is actually teaching is the WHEEL, and it can only teach it
+ * through the party the game starts you with -- Rebar, Kael, Benjamin, Maxine,
+ * Aethis. Their damage is `water` (Rebar, Maxine) and unaligned physical (Kael,
+ * Benjamin); Aethis is earth but every earth thing she does is a heal or a
+ * ward, so it never meets a resistance. That gives the starting five exactly
+ * one exploitable matchup and exactly one bad one:
+ *
+ *     water -> fire        RED takes +50% from frost
+ *     lightning -> water   YELLOW takes -25% from frost
+ *     blue / orange / green                    neutral to frost
+ *
+ * So Red is the lesson's upside and Yellow is its downside, and the ladder is
+ * built to show them in that order: Red alone, then Red with one Yellow in it,
+ * then a fight that is mostly Yellow and has to be won with Kael and Benjamin.
+ * A player who never reads a tooltip still learns it, because the damage
+ * numbers say it out loud.
+ *
+ * Difficulty rises on THREE dials, not one:
+ *
+ *   count      3 -> 4 -> 5 -> 6 -> 7. The block holds seven.
+ *   matchup    how much of the field your best damage is good against.
+ *   depth      `STANDARD_ENEMY_SLOTS` fills front-first, so the sixth body is
+ *              the first one in the back column -- and `range` counts OCCUPIED
+ *              columns, so that is the stage where a melee reach of 1 or 2 can
+ *              no longer touch everything. Nothing had to be built for it; it
+ *              falls out of the formation rules.
+ *
+ * Levels rise with the stage on top of all that (see `sceneFor`).
+ *
+ * DRAFT past stage 1. Stage 1 is authored to spec; 2-9 are a first pass at the
+ * shape and are meant to be argued with -- the table is the argument, which is
+ * why it is one screen of data rather than nine functions.
+ */
+const LADDER: Record<number, CharacterDef[]> = {
+  /*
+   * ONE NEW CREATURE PER TEACHING STAGE, and the rest of the board made of
+   * things already taught.
+   *
+   * That rule is what makes a stage readable. A player who loses stage 5 should
+   * be able to say which creature beat them, and they cannot if two of them
+   * were new. The Understudies earn their keep as FILLER for exactly this
+   * reason -- they are the one creature whose behaviour is fully known by stage
+   * 3, so putting three of them on a board costs no explanation.
+   *
+   * ORDER IS PLACEMENT. `STANDARD_ENEMY_SLOTS` fills front-first -- two, then
+   * three, then two -- so the sixth and seventh entries land in the back
+   * column, the rank a reach of 1 or 2 cannot touch. Anything dangerous that
+   * should be hard to get to goes last, and anything the party needs to be able
+   * to hit goes first.
+   *
+   * Flyers are the exception and it is worth remembering: they hold no rank, so
+   * they neither screen what is behind them nor count toward the depth of
+   * anything. A board that is mostly Bats is shallower than its body count.
+   */
+
+  // ---------------------------------------------------------------- the wheel
+  // Three Reds, all taking half again from frost. One sentence: your ice is
+  // good here. Three bodies against five means the lesson has room to land.
+  1: cast('red', 3),
+
+  // The whole wheel at once. The same spell is now excellent against one body,
+  // resisted by another and flat against three -- which is the reading the
+  // first stage set up and the last one it will get for free.
+  2: [...ENEMIES],
+
+  // ---------------------------------------------------------------- reach
+  // Bats arrive with ground to stand next to. The Understudies keep every
+  // reach-1 basic busy while the party works out that nothing they can spam
+  // touches the things in the air.
+  3: [...cast('red'), ...cast('blue'), ...cast('green'), BACKDROP_BAT, BACKDROP_BAT],
+
+  // Inverted: the flyers are now most of the fight and two Understudies are all
+  // a basic can answer. Reach has to be planned for rather than noticed.
+  4: [...cast('yellow'), ...cast('orange'), BACKDROP_BAT, BACKDROP_BAT, BACKDROP_BAT],
+
+  // ------------------------------------------------------- target priority
+  // Three bodies, and the smallest board in the act on purpose -- the question
+  // is not "can you survive this" but "who do you hit". The Bruiser punishes
+  // every swing at a Bat; the Bats cannot be chipped by the cheap attacks that
+  // would otherwise let you ignore him. Note the depth: Bats hold no rank, so
+  // the Bruiser is the ONLY thing a reach-1 basic can reach at all.
+  5: [BOX_OFFICE_BRUISER, BACKDROP_BAT, BACKDROP_BAT],
+
+  // ------------------------------------------------------------ adaptation
+  // Three Mimics, because the lesson is a HABIT and a habit needs repetition to
+  // show itself: by the third cast of the same spell the numbers are visibly
+  // falling, and three of them means rotating off one is not enough. The Bats
+  // keep the reach constraint live so the answer cannot be "walk up and hit
+  // them with the thing that has no element".
+  6: [PLAYBILL_MIMIC, PLAYBILL_MIMIC, PLAYBILL_MIMIC, BACKDROP_BAT, BACKDROP_BAT],
+
+  // ------------------------------------------------------- the back line
+  // Five known Understudies and one Diva, placed last so she stands in the back
+  // column. Reach 1 and reach 2 cannot touch her AT ALL; the only things in the
+  // starting party that can are Avalanche and everything Maxine owns.
+  //
+  // Deliberately dull filler. The whole stage is one question -- can your team
+  // composition reach the back -- and a board with a second idea on it would
+  // let a player solve this one by accident.
+  7: [...ENEMIES, LIMELIGHT_DIVA],
+
+  // ---------------------------------------------------------------- swarm
+  // Three, and the count came DOWN as the durability went up -- those two dials
+  // trade against each other and pulling both is how a teaching stage turns
+  // into a slog. At 52 HP three of them run 6.8 turns and reproduce 1.7 times;
+  // five ran 7.1 and reproduced no more often, because the extra bodies died to
+  // the same area attacks without ever taking a turn.
+  //
+  // Alone on the board so the filling up is unmistakably their doing.
+  //
+  // Placed at 8 rather than 6 because it is the longest fight in the corridor
+  // -- 7.2 turns against the 3.1-5.0 either side of it -- and a peak belongs
+  // next to the exam rather than in the middle of the teaching run. It also
+  // reads better there: the Skitters reappear in stage 9 two rows later.
+  8: Array.from({ length: 3 }, () => FOOTLIGHT_SKITTER),
+
+  // ---------------------------------------------------------------- the exam
+  // The full block of seven, every question at once, and they INTERFERE. The
+  // Bruiser wants you to focus him; the Skitters want you to spread; the Mimic
+  // punishes solving either the same way twice; and the Diva is behind all of
+  // it where most of the party cannot go. Whatever you are best at, something
+  // here is the reason it is not enough on its own.
+  9: [
+    BOX_OFFICE_BRUISER, PLAYBILL_MIMIC,
+    ...cast('blue'), FOOTLIGHT_SKITTER, FOOTLIGHT_SKITTER,
+    BACKDROP_BAT, LIMELIGHT_DIVA,
+  ],
+};
+
+
+
 /**
  * What stage `n` fields, and at what level.
  *
- * One encounter re-used at a rising level, with a boss on every tenth. That is
- * a deliberate testing ladder rather than a content plan: it exercises
- * levelling, idle accrual and the whole battle loop against a PREDICTABLE
- * rotation, so a change in outcome is a change in the systems and not in the
- * encounter. Real stages replace it once the mechanics are settled.
+ * Authored compositions from `LADDER`, a boss on every tenth, and anything past
+ * the authored range falls back to the reference five so the ladder never runs
+ * out of stages while Act 2 is unwritten.
  */
 export function sceneFor(stage: number): { encounter: EncounterDef; enemies: CharacterDef[] } {
   const boss = stage > 0 && stage % BOSS_EVERY === 0;
@@ -1788,6 +2250,9 @@ export function sceneFor(stage: number): { encounter: EncounterDef; enemies: Cha
       // grind over the corridor, which is a wall you climb rather than one you
       // camp in front of.
       enemyLevel: boss ? stage + 3 : stage,
+      // What The False Lead can call in. On the encounter rather than in a
+      // global bestiary -- see `EncounterDef.reinforcements`.
+      ...(boss ? { reinforcements: ENEMIES } : null),
     },
     // A guard of TWO, with the boss last so it lands in the back rank -- behind
     // two live ranks, and so out of melee reach until they are dealt with.
@@ -1796,7 +2261,23 @@ export function sceneFor(stage: number): { encounter: EncounterDef; enemies: Cha
     // replay: the pair is the coverage the boss's rotation is tested against,
     // and drawing it forward through the five-element cycle means each Act asks
     // the party to answer a different corner of the wheel alongside the boss.
-    enemies: boss ? [...bossGuard(stage), FALSE_LEAD] : ENEMIES,
+    /*
+     * The boss FIRST, matching `BOSS_ENEMY_SLOTS`, which puts its own slot at
+     * index 0 so it is pinned to the back rank whatever size the company is.
+     *
+     * Past stage 10 the ladder REPEATS -- stage 11 fields stage 1's board, 19
+     * fields 9's, 20 is the boss again -- at whatever level the stage has
+     * climbed to. That is not a placeholder for Act 2 so much as the shape the
+     * game is built on: `combat.ts` cancels matched levels structurally
+     * (`ATK / (ATK + DEF)`), so a level is worth nothing in itself and
+     * everything as a GAP. A repeated board at a rising enemy level is
+     * therefore a genuinely rising wall, and it is the only thing that makes
+     * the idle loop testable over a long run without thirty hand-authored
+     * fights.
+     */
+    enemies: boss
+      ? [FALSE_LEAD, ...bossGuard(stage)]
+      : (LADDER[((stage - 1) % BOSS_EVERY) + 1] ?? ENEMIES),
   };
 }
 

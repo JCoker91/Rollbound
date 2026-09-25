@@ -1327,6 +1327,23 @@ The chips also make the stacking rule visible: recasting Rally rewrites its chip
 resets its `t` rather than adding a second one, while Perfect Form lands beside it as its own chip
 with its own clock.
 
+**The stat row carries the total** — `ATK 125 (+21)` — so the two halves meet on the same line. The
+chips say *which* buffs and how long they have left; what they could not say is what those buffs
+come to, and a player reading "Perfect Form · +20% ATK" beside "ATK 125" had to do the arithmetic
+themselves to learn the thing the row exists to tell them.
+
+`StatValue` measures the bonus against **`baseStat`**, which is the sheet grown by level and upgrade
+tiers — so a permanent upgrade is part of the number rather than part of the bonus, which is right:
+it is not going to lapse. The separate `+N%` chip on the stat row is what speaks for those. Green
+up, red down, because a shred and a buff are read for opposite reasons: *can I afford to attack into
+this* against *is it worth going now*.
+
+It is computed from the **rounded figures on both sides**, not from `modifierTotal`, so
+`base + delta` is true of the numbers actually on screen. `currentStat` floors at zero, so a shred
+deeper than the stat it is cutting would otherwise print a bonus bigger than the difference it made
+— `ATK 0 (-150)` where only 104 of it landed. Measured on a fresh Benjamin: `ATK 104` before
+Perfect Form, `ATK 125 (+21)` after, against a stored modifier of exactly 21.
+
 **Stacking: refresh within an ability, stack across abilities.** The same ability recast refreshes
 its own modifier rather than stacking with itself — Rally cast twice on one ally is one modifier
 with its clock reset. Different abilities stack as separate entries with separate clocks, so two
@@ -1668,6 +1685,15 @@ This is the single most important content distinction.
 - **Telegraphed attacks**: an ability with `telegraph: 1` announces its target area this turn and
   lands at the start of its next phase. Distinct from an intent — a telegraph is a wind-up you have
   a whole turn to answer, an intent is what happens at the end of this one.
+- **A declared intent names its victim**, not just its ability. The roster row reads
+  `Scene Stealer → Maxine  18`. Targeting is uniformly random among legal targets, and this line is
+  the only thing that makes that fair: it is on screen before a die is spent, so a back-rank strike
+  is a problem you are shown and can answer rather than a coin flip on a committed turn. The reveal
+  had been half built — the ability name arrived and the victim never did, so a player knew Scene
+  Stealer was coming and not which of their five it was pointed at. A whole-side ability names
+  nobody because there is nobody to name; anything in between reads as a count. An intent **pulled
+  by a taunt** shows `↳` in green rather than amber: a redirected attack is the player's own plan
+  working, and worth confirming took.
 - Enemies resolve **sequentially inside one uninterruptible phase**, not strictly simultaneously.
   The player cannot act between them, which is the property that matters for burst, but a kill by
   the first does change what the third finds. Logged as open in `BATTLE_DESIGN.md`.
@@ -2449,7 +2475,7 @@ once it started cutting on real gaps:
 > element's bottom edge *is* the ground line — the animated path lands its feet there by pushing the
 > clip down by `footPad`, so a still whose feet are its own bottom edge simply sits on it.
 
-> **Packed strips carry a 2px transparent gutter between frames**, and the reason is worth knowing
+> **Packed strips carry a transparent gutter between frames**, and the reason is worth knowing
 > because the symptom points at the wrong thing. Frames were butted together, and a frame that
 > reaches its own cell edge is normal — the shared crop box is exactly as wide as the widest frame's
 > content, so whichever frame set that width touches both sides of it. With no gap, the neighbour's
@@ -2459,8 +2485,23 @@ once it started cutting on real gaps:
 > of the next drawing appears at the edge of this one. **Every "the frames are clean but I can still
 > see the next one" report is this, not the cut** — the source PNGs are innocent. `anchorX` and
 > `aspect` are restated against the padded cell, so the gutter buys clearance without moving anybody:
-> the foot sits 2px further into a box that is 4px wider, and the renderer's anchor transform cancels
-> it exactly.
+> the foot sits one gutter further into a box that is two gutters wider, and the renderer's anchor
+> transform cancels it exactly — for `anchorX` of 0.5 the arithmetic is `(g + 0.5w) / (w + 2g) = 0.5`
+> at any `g`.
+>
+> **How much gutter is `gutter_for(cell)`: 2.5% of the cell, floored at 2px** — and the unit is the
+> whole fix. A fixed two pixels was the first answer and it is the wrong one, because what has to
+> survive is the browser's *resampling*, whose reach is set by the ratio between the packed cell and
+> the slot it is drawn into. The wider the cell, the harder it is downscaled, and the further a
+> filter reaches across the boundary in source pixels.
+>
+> Measured across the roster when Kael arrived: every clip had exactly 2px, but as a share of its
+> cell that ran from 2.2% on Veyra's 92px cell down to **0.8% on Kael's 255px one**. His axe fills
+> its cell to the edge and his frames are the widest anything packs to, so at roughly 2.5× down his
+> two pixels came to less than one output pixel and the filter straddled the boundary — the previous
+> frame's axe head appearing at the left edge of the next. Veyra, packing to a third of the width,
+> never showed it. After the change the worst share on the roster is 1.9%, and that is Caspian's
+> 104px cell still sitting on the 2px floor, where there is no downscale to survive.
 
 > **Adding a clip re-normalises every other clip that character owns.** The packed box is the union
 > of all of them, so Benjamin's `upgrade` — a raised sword and a starburst above his head — made the
@@ -2598,8 +2639,10 @@ percentage translate resolving against a 2701px element and a 1550px one (§11).
 
 ### Art, as of this session
 
-**Benjamin is the first complete Performer: 15/15 clips.** Run `npm run art` for the live picture —
-it reads the roster and the pack manifest, so it cannot go stale. Everyone else is at 0–1.
+**Benjamin is the first complete Performer: 16/16 clips.** Run `npm run art` for the live picture —
+it reads the roster and the pack manifest, so it cannot go stale. **Kael is at 4/16** and everyone
+else at 0–1. Every Act 1 creature has a board sprite except the **Limelight Diva**, which falls back
+to its role badge — which is the supported state for undrawn art, not a bug.
 
 His clips are the reference for what "finished" means: four abilities (filed **by slot**, so the
 kit can be renamed without touching art), four idle stances the game rotates between, `ready`,
@@ -2922,26 +2965,418 @@ the documented recovery.
 
 **Enemies:** five elemental **Understudies** — Red (fire), Yellow (lightning), Blue (water),
 Orange (earth), Green (wind) — one per element in the cycle, identical in every other respect so
-any difference in outcome is the matchup and nothing else. **All five have art.** The older
-five-enemy lineup is kept as `BESTIARY` for reference, not deployed.
+any difference in outcome is the matchup and nothing else. They are the **baseline** the other five
+creatures are read against, and keeping them uniform is what makes them usable as filler: by stage 3
+they are the one creature whose behaviour is fully known, so three of them on a board cost no
+explanation.
 
-**Stages are generated, not authored.** `sceneFor(n)` fields the Understudies for nine stages then
-**The False Lead** on every tenth, with `enemyLevel` tracking the stage (bosses run 3 hot, because a
-gate cleared at the corridor's level is not a gate). A deliberate testing ladder rather than a
-content plan: it exercises levelling, idle accrual and the whole battle loop against a *predictable*
-rotation, so a change in outcome is a change in the systems and not in the encounter.
+The older pre-rebuild lineup is still kept as `BESTIARY` for reference, **not deployed** — it is
+written against `priority` with no `roll` bands, and its four archetypes (Ash Husk, Bog Wisp, Crag
+Golem, Pale Shade) were the shapes Act 1's creatures were designed *instead of*.
 
-**The False Lead** is the first boss. Each round it is **immune** to one element and freshly
-**vulnerable** to another, both revealed before planning, so a party leaning on one damage type runs
-out of answers on the turns that element is locked out. A coverage check, not a stat check. It
-fields no elemental attacks itself — giving it an element to be countered in turn would muddy what
-the fight is asking. It stands in the **back rank** behind its retinue, which `range` makes
-mechanical rather than decorative: melee cannot reach it until the Understudies are cleared.
+**An Understudy's two attacks differ on three axes at once**, because it has nothing else to be
+interesting with. `Fluffed Line` (1–15, 75%) is **physical, reach 1** — the frontmost occupied
+column, which is the party's two front slots. `Scene Stealer` (16–20, 25%) is **magical, elemental,
+reach 3** — anybody, including a staff in the back rank. The creature is P.DEF 40 / M.DEF 20, so
+splitting its own output the same way is what stops one defensive answer covering everything it
+does; and the element rides only the strong attack, so the wheel is a thing that happens a quarter
+of the time rather than the background of every hit.
 
-**Encounters:** Curtain Call, fielding five `Understudy` — one creature repeated, with two abilities
-weighted 75 / 25. Deliberately one creature: the thing being exercised is the selector and the
-reveal, and five different kits would make a bug in the machinery indistinguishable from a quirk of
-one enemy's abilities. Numbers are placeholders, not a balance pass.
+The back-rank reach is the point. Before it, `Scene Stealer` was reach 2 and the back two party
+slots were untouchable, so formation had no cost. Reach 3 does not only add danger, it
+*redistributes* it — per enemy phase with five Understudies, the front two go from 0.42 expected
+strong hits each to 0.25, and the back two from **zero** to 0.25:
+
+| | front two | middle | back two |
+| --- | --- | --- | --- |
+| weak (75%, reach 1) | ~1.9 each | — | — |
+| strong at reach 2 *(before)* | 0.42 each | 0.42 | **0** |
+| strong at reach 3 *(now)* | 0.25 each | 0.25 | **0.25 each** |
+
+It is answerable rather than unavoidable: the target is uniformly random but **declared before you
+plan**, so cover it, heal through it, or pull it onto Kael with Challenge — a taunt redirects it
+because it is `scope: 'one'`.
+
+**Stages 1–9 are authored compositions** in `LADDER`, with **The False Lead** and three guards on
+every tenth. **Past stage 10 the ladder repeats** — 11 fields 1's board, 19 fields 9's, 20 is the
+boss again — at whatever level the stage has climbed to.
+
+That is not a placeholder so much as the shape the game is built on. `combat.ts` cancels matched
+levels *structurally* (`ATK / (ATK + DEF)`, so both sides' growth divides out), which means **a level
+is worth nothing in itself and everything as a GAP**: a level-30 fight against level-30 enemies
+plays exactly like a level-1 fight. A repeated board at a rising enemy level is therefore a
+genuinely rising wall, and it is what makes a long idle run testable without thirty hand-authored
+fights. The boss's guard still rotates by Act, so a second lap is not a replay.
+
+### Clearing a stage pays
+
+Winning used to grant **nothing** — `onExit` was `() => setInBattle(false)`, `profile.stage` never
+moved, and the Home screen promised a loop ("Battle — Stage N", "clearing a stage raises your idle
+rate") that was not wired to anything. The battle also always started at stage 1 regardless of the
+save.
+
+Rewards are quoted in **minutes of idling at the stage they were won on** — `CLEAR_MINUTES = 6`,
+`BOSS_MINUTES = 15`, doubled on a first clear, with **xp paid at `XP_WEIGHT` (7.5×) those minutes**
+because levelling and the purse are paced for different things. Tying the two economies to one number is the point: a
+reward in flat gold goes stale the moment the idle rate changes, and nobody can tell whether 400
+gold is generous without knowing what an hour is worth. *"A clear is two minutes of idling, a boss
+is a quarter of an hour, and the first time is worth double"* is a sentence that can be tuned by
+argument.
+
+**The pay-out is the milestone; the raise is the prize.** Clearing a new highest stage moves
+`profile.stage`, which raises `ratesFor` — the rate every future reward is measured against.
+
+`bankClear` lives in `idle.ts` and takes `boss` as a *parameter* rather than deriving it, because
+`BOSS_EVERY` lives in `content.ts`, which imports the engine — the engine cannot import it back
+without a cycle, and the caller already knows which stage it fought. `BattleScreen` reports the rung
+it won and takes the figures back for the victory card; it does not know what a clear is worth and
+should not, because that is an economy decision.
+
+### The idle rate is measured against one full collect
+
+That is the only question an idle rate has to answer, and at `45 + stage * 30` the answer was
+absurd: an eight-hour collect at **stage 3** took five characters from level 1 to **14** — the whole
+of Act 1's requirement, overnight, from a profile two stages old. Every gate in the game is then
+answered by going to bed, which is not a loop, it is a timer with a battle screen attached.
+
+At **`12 + stage * 4`** the chain reads:
+
+```
+clear 1-9, arrive at the boss   10/9/9/9/9     ~35% win
++ one full 8h collect           13/12/12/12/12  87% — now comfortably winnable
+beat it                         11/11/11/11/10
++ its 1h xp token               11/11/11/11/11  Act 2 opens at enemy level 11
+```
+
+One night moves you from losing to nearly winning; the last step is a second collect or a better
+composition. `CLEAR_MINUTES` is tuned against the **arrival level**, which is the number the whole
+act is shaped around — not against anything the reward itself says.
+
+> **Gold and shards do not follow the xp cut, and finding that out cost a round trip.** Cutting the
+> idle xp rate by 7.5× meant raising the clear to compensate — which raised gold and shards by 7.5×
+> too, and Act 1 started paying **1,270 shards: forty-two summons for clearing the tutorial**.
+> `XP_WEIGHT` splits them: a clear is six minutes of idling for the purse and 7.5× that for
+> levelling. Act 1 is back to 13,340 gold and 287 shards, and gold has no sink yet anyway.
+
+The boss's own pay-out is deliberately much larger than a rung's, and it lands **after** the fight,
+so it cannot help you win the one it is paying for.
+
+### Bounty tokens
+
+**Battling paid almost nothing.** Clearing every stage from 1 to 10 for the first time granted
+17,370 xp — fifty minutes of idling at that stage's rate, against the 1.5 hours it takes to bring
+five characters to level 10. The whole first playthrough was worth a third of one levelling pass, so
+the only thing that ever advanced a roster was wall-clock time and the game politely asked you not
+to play it.
+
+A **bounty token** is not a quantity of gold, it is a quantity of **time**: six of them, two
+currencies × three durations (1h / 3h / 6h), each paying the idle rate for its span. Valued **on
+use, at the rate in force when it is spent** — so a token banked early and cashed late is worth
+more, which makes holding one a decision, and a reward earned at stage 3 does not become worthless
+by stage 20 (the failure mode of a flat quantity in a game whose rates climb).
+
+**Gold flows and xp is rationed**, and the asymmetry is measured rather than felt. At stage 10 a
+single 1-hour xp token is **68%** of what it costs to bring five characters to level 10; at stage 20
+a 6-hour one is **127%** of it. One xp token per stage would not make battling rewarding, it would
+make idling pointless — and an idle game whose idle half is pointless is worse than one whose
+battles are stingy. So every stage pays a gold token (flow with nowhere to go yet — there is no
+shop) and xp arrives on **the fifths and the bosses**, which is the rhythm the level cap already
+uses.
+
+> **Read it in levels, not in ratios.** "12× a level-10 roster" sounds broken and is not: level 10
+> is simply cheap. The Act 1 haul — one 3-hour at stage 5, one 6-hour at the boss — cashed at stage
+> 10 puts five characters at about **level 20**, against **level 9** for an hour of plain idling.
+> Strong, which was the point, and not absurd.
+
+**First clears only.** A stage-1 clear takes about thirty seconds, so a token on every repeat would
+make farming the shortest fight in the game strictly better than playing it — roughly 20,700 xp a
+minute at stage-10 rates. The high-water mark closes that at the source rather than with a cooldown.
+
+`dropsFor` is passed *into* `bankClear` rather than called by it: `items.ts` reads `ratesFor` from
+`idle.ts`, so the dependency cannot run both ways — and what a stage pays is content, which belongs
+with the caller anyway.
+
+### Two registers: a peek and a sheet
+
+The full rules text is correct and too long to scan. Perfect Form reads *"Raises the caster's ATK,
+P.DEF and M.DEF by 20% of their own base stats for 3 turns, then deals 200% of ATK as physical
+damage to one enemy in the first two ranks, over 6 hits"* — which is what you want when you are
+deciding, and not what you want when you are running an eye down four abilities trying to remember
+which one is the big hit.
+
+**`describeShort` gives a magnitude word and a shape, and no numbers at all.** *"Raises its own stats
+by a moderate amount and deals high physical damage to one enemy."* Bands rather than figures is the
+whole idea: a player cannot tell whether 110% is a lot without knowing the roster, where "moderate"
+is a claim they can check against the other three abilities on the same sheet — which is the only
+comparison they are actually making.
+
+| band | damage (× ATK) | percentages |
+| --- | --- | --- |
+| minor | < 0.8 | < 15% |
+| moderate | 0.8–1.5 | 15–30% |
+| high | 1.5–2.25 | 30–50% |
+| extreme | 2.25+ | 50%+ |
+
+Cut against the real spread — every damaging ability in the game sits between 0.5 and 2.2, and the
+clusters are genuine: chip attacks and area spells at 0.6–0.8, ordinary strikes at 0.9–1.15, the
+expensive single-target ones at 1.3–1.6, ultimates at 2.0+. **Area abilities are not discounted for
+hitting more**: the word describes what one body takes, which is what the reader is asking, and the
+scope is in the same sentence anyway.
+
+Three things it got wrong on the first pass, all of them the kind only reading the output catches:
+heals ran through the *percentage* bands and called Poultice's 0.7 "extreme" (they are ATK multiples
+like everything else); the repeated-target pronoun ignored number, so Blizzard "deals damage to all
+enemies and applies 1 frost to **it**"; and abilities authored the legacy way — which is every
+**enemy** in the game — fell through to the full text, so the creatures a player most wants a
+one-line read on were the only ones not getting one.
+
+**The sheet modal is the other register.** Right-click a body on the stage, or the **Details** button
+on the card. It holds the stats with their buff deltas, the matchups, **every modifier in full** —
+which ability applied it, what it is worth on each track, how long is left — the statuses, and the
+kit at full length with costs, cooldowns and chains.
+
+A modal rather than a wider panel, because the question it answers is not about the board: it is
+"what exactly is this doing", asked while the turn is paused and nothing needs watching. It holds
+the unit **by reference** so it re-reads the live values every render — modifiers tick and HP moves
+while it is open, and a snapshot would quietly become a lie about the board behind it.
+
+> `onContextMenu` is scoped to the **stage**, never the document: suppressing it globally takes
+> copy, paste and inspect with it. And right-click can never be the only way in — Firefox lets a
+> user forbid sites from suppressing the menu, and a long press is not a right-click on touch — so
+> the Details button is the discoverable twin. Right-clicking bare boards closes the sheet, matching
+> the left-click rule that a click on nothing puts down whatever is in hand.
+
+### Declared intents are drawn on the boards
+
+The roster row names the victim, and in a panel that narrow the *name* is the half the ellipsis
+eats. So the answer is drawn as well as written: one dashed curve per declared intent, from the
+creature to each body it named — a whole-side ability draws five and says what it is without a word.
+
+Inside `.stage` rather than over it, so the camera carries it; a line that stayed put while the
+board zoomed would point at nothing. The `viewBox` is 0–100 on both axes with
+`preserveAspectRatio: none`, which makes its coordinates the same slot percentages every sprite is
+placed with — no conversion, and nothing to drift when a scene moves its marks. The stage's aspect
+stretches the curve; `vector-effect` keeps the stroke honest, and a connector is allowed to be wider
+than it is tall. At `z-index: 50` the lines pass **behind** the cast, which is what stops them
+cutting across faces. They dim to 30% unless the creature is hovered, so six declared intents are a
+background the eye can ignore until it wants one of them.
+
+**Four creatures beside the Understudies, and each asks a different question.** None of them fights
+alone — what makes a stage is which questions are being asked at once. **Every number in the
+bestiary is a placeholder**, chosen to be legible against the Understudy's 28 HP / 76 ATK baseline
+and meant to be tuned against a played ladder rather than argued about on paper.
+
+| creature | question | mechanic |
+| --- | --- | --- |
+| Understudy | which element? | the wheel |
+| Backdrop Bat | what can you even reach? | `flying` |
+| Box Office Bruiser | who do you hit first? | `counter` |
+| Playbill Mimic | can you stop repeating yourself? | `adapt` |
+| Footlight Skitter | can you hit several at once? | `summon` |
+| Limelight Diva | where are you standing? | `telegraph` + `scope: 'column'` |
+
+**`flying` is two rules and one idea.** A flyer needs a reach of **2** to be attacked at all — a
+`range: 1` ability cannot touch it even in the front rank — and it **holds no rank**, so it shields
+nothing behind it and clearing the ground in front does not bring it down. It had to be a property
+of the *creature*: parking something in the back column produces the same effect for anything at
+all, which made the first attempt a placement rather than a thing. And it had to be deterministic: a
+miss chance is a coin flip resolved *after* the dice are committed, against the standing rule that a
+fight is plannable. What it actually taxes is **cheap** attacks — every wildcard basic is reach 1
+(Maul, Cleave, Quick Cut) and every Performer keeps a reach-2 ability that works, so nobody is
+locked out and spamming basics stops being an answer.
+
+**`counter` is the honest version of "deal with me first."** A ramp only says the fight gets worse
+with time; this punishes the specific choice of hitting somebody else. Three limits, each
+load-bearing: **per action, never per hit** (hit count is a presentation choice in this game, not a
+battle statistic); **single-target only**, because an area attack that catches its allies is not
+sneaking past it and taxing Blizzard would tax the answer to the swarm beside it; and **never for an
+attack that lands on it too**, because hitting it is the behaviour this exists to buy. Reactive
+rather than declared, so a taunt cannot pull it — but **frost can stop it**, since a creature that
+cannot act cannot answer. That is the third job frost has been waiting for.
+
+The Bruiser's escalation lives in its **kit** rather than `def.ramp`, and that is the better place:
+a 16–20 band means the power-up is declared in the intent before the player commits, so "he is
+about to get stronger" is something you can choose to interrupt rather than a number that quietly
+climbs. It is `PERMANENT` — `Infinity`, so the expiry tick needs no branch and only the sheet does.
+
+**`adapt` writes into `resistMods`**, which already existed for the boss's rotation, is already read
+by `elementResistance` and already drawn on the card. The difference is *who causes it*: the
+rotation happens **to** the player, and this is a consequence of what the player just chose. Flat
+magic immunity was the first idea and it was worse — Maxine is one of five starting Performers, and
+"your character does nothing this stage" is not a decision, it is a smaller game. Physical carries no
+element and teaches it nothing, so the unaligned attackers are the constant.
+
+**`summon` puts another of the CASTER on the board**, not a named creature. A summon that names its
+spawn needs a registry the engine cannot have — `content.ts` imports the engine, so the engine
+cannot import the bestiary back — and "it makes more of itself" is the whole of what a swarm needs.
+Spawns can spawn, so growth is exponential up to the seven slots and flat after; **the slot count is
+the only cap**, and it is enough because it is small. A full formation fizzles silently, spending the
+creature's action and doing nothing.
+
+> **Two bugs surfaced building this, and both were older than it.**
+>
+> `targetStillLegal` resolved an intent's occupant with `found.side !== unit.side` — it assumed every
+> declared intent pointed *across* the board. True for exactly as long as no creature had a non-attack
+> ability. The day one did, every such intent was declared, rejected as illegal and silently dropped:
+> **292 declarations, 0 casts**. It now computes the side the ability is actually aimed at.
+>
+> **Four new log events rendered as blank lines.** `LogPanel`'s switch has no `default`, so an
+> unhandled event returns `undefined` and `join` turns it into an empty string — no crash, no
+> warning, just a gap. The worst was the counter: damage appeared in the log with nothing above it
+> saying where it came from, which reads as a bug in the numbers rather than as a creature doing its
+> job. **A `PERMANENT` modifier wore a chip reading `Infinityt`**, and the boss's scheduled ability
+> showed its d20 band on the card — actively wrong, since `priority` means the band never gets
+> consulted. All three were found by asking what a tester would see, not by the type checker.
+>
+> `scoreAction` returned 0 for a buff with no stat gain, and `chooseEnemyAction` drops anything
+> scoring zero — so the fallback path left a Skitter standing there doing nothing whenever the ally
+> it declared against had since died. A summon is now priced at a body.
+>
+> **A telegraphed cast landed without an `act` log entry.** The wind-up wrote `telegraph` and the
+> landing wrote only its damage, so the log read as a warning followed a turn later by unexplained
+> injuries — and the narration, which speaks from `act`, had nothing to say about the biggest hit in
+> the fight. Same shape as the other two: built, wired, and inert because nothing had used it.
+
+**The Limelight Diva is the one creature that threatens the BACK.** Everything else in Act 1 leans
+on the front — the Understudy's 75% band is reach 1, the Bruiser only swings at what is in front of
+him, and even the creatures that *can* reach the back rank do it a quarter of the time. So a party
+learns to stack its staves behind a wall and stop thinking about it. Her common attack is the
+inverse (reach 3, single target, so the back line is the usual landing place) and her big one is an
+area attack down a whole **rank** — `scope: 'column'` cuts front-to-back on `x`, so aimed at the back
+column it catches both staves at once.
+
+It is **telegraphed**, and that is the point rather than a softener: `telegraph: 1` announces the
+rank this turn and lands next phase, so the answer the game has been waiting to need is
+**Reposition** — which until now cost an action to solve a problem nothing was posing.
+
+> **A telegraph on a squishy mob is structurally fragile, and that is a design fact rather than a
+> tuning knob.** A wind-up costs *two* turns of survival for one payoff, and a focused party kills a
+> caster in one. At the authored 24 HP she landed **0.01** Curtain Calls per battle; at 70 HP, 0.20.
+> Widening the band to 12–20 and dropping the cooldown so the wind-up is her *normal* action got it
+> to 0.14 (stage 6) and 0.28 (stage 9) — better, still thin.
+>
+> **The answer was compositional, not numeric**, and that is the part worth keeping.
+> `STANDARD_ENEMY_SLOTS` fills front-first — two, then three, then two — so **order in a `LADDER`
+> row is placement**. Putting her last in a six-body encounter lands her in the back column, the
+> third occupied rank, where reach 1 and reach 2 cannot touch her at all and the only things in the
+> starting party that can are Avalanche and everything Maxine owns.
+>
+> That alone took Curtain Call from 0.14 casts a battle to **0.59** — four times the effect of any
+> HP number tried. A caster standing in the front rank is just a squishy body; screened, she is the
+> question *can your comp reach the back*, which is what the ability was for.
+>
+> Her bands are the one exception to the act's 75/25, and that is measured too: a wind-up costs two
+> turns of survival for one payoff, so at the standard 16–20 she lands it 0.35 times a battle even
+> screened — one fight in three never sees the thing she is built around. At 12–20 it is 0.59,
+> roughly every other fight, and her back-line sniping still fills 55% of her turns.
+
+**One new creature per teaching stage, and the rest of the board made of things already taught.**
+That rule is what makes a stage readable: a player who loses stage 5 should be able to say which
+creature beat them, and they cannot if two of them were new. The Understudies earn their keep as
+**filler** for exactly this reason — by stage 3 they are the one creature whose behaviour is fully
+known, so three of them on a board cost no explanation.
+
+| stage | field | the new thing |
+| --- | --- | --- |
+| 1 | 3× Red | **the wheel**, upside only — frost is strong against all three |
+| 2 | one of each Understudy | **the wheel**, whole — the same spell excellent, resisted, and flat |
+| 3 | 3× Understudy + 2× Bat | **reach** — nothing you can spam touches the things in the air |
+| 4 | 2× Understudy + 3× Bat | reach under pressure; two bodies are all a basic can answer |
+| 5 | Bruiser + 2× Bat | **target priority** — the smallest board in the act, on purpose |
+| 6 | 3× Mimic + 2× Bat | **adaptation** — a habit needs repetition to show itself |
+| 7 | 5× Understudy + Diva | **the back line** — the dangerous one is where most of you cannot go |
+| 8 | 3× Skitter | **the swarm** — outpace it, or drown |
+| 9 | the full seven | the exam — every question at once, and they interfere |
+| 10 | 3 guards + The False Lead | the Act gate |
+
+**Order in a row is placement**, since `STANDARD_ENEMY_SLOTS` fills front-first (two, three, two):
+the sixth and seventh entries land in the back column, which is why the Diva is always last.
+**Flyers are the exception and it matters** — they hold no rank, so they neither screen what is
+behind them nor add to anyone's depth. A board that is mostly Bats is shallower than its body
+count, which is why stage 5's three bodies run longer than stage 4's five.
+
+Measured at 200 auto-battles a stage with the party at the stage's own level. Win rate is 100%
+through the corridor and means nothing (§2); what the table is for is the *shape*, and the
+right-hand column is the check that each mechanic fires in the fight built for it:
+
+```
+ st  foes  turns  survivors   mechanic
+  1     3    2.6       5.00
+  2     5    3.4       5.00
+  3     5    3.1       5.00
+  4     5    3.2       5.00
+  5     3    4.6       5.00   counters 1.82
+  6     5    5.0       5.00   adapts 8.04
+  7     6    3.8       5.00   curtain calls 0.49
+  8     3    7.3       5.00   spawns 2.05
+  9     7    7.8       5.00   ctr 7.34  adapt 2.94  curtain 0.67  spawn 1.39
+ 10     4   20.0       3.93   87% win, encores 4.55, summons 18.0
+```
+
+> The swarm sits at **8** rather than 6 because it is the longest fight in the corridor, and a peak
+> belongs next to the exam rather than in the middle of the teaching run — it also reads better
+> there, since the Skitters reappear two rows later in stage 9.
+
+> **The Skitter's original 16 HP was a lifespan problem wearing a probability costume.** Five of them
+> died in 2.5 turns — the shortest fight in the act — and called for help 0.56 times a battle, so
+> the swarm never swarmed. Widening the summon band did *nothing*: they were not failing to roll it,
+> they were failing to live to their own turn.
+>
+> **Durability and count trade against each other, and pulling both is how a teaching stage becomes
+> a slog.** At 52 HP, three of them run 6.8 turns and reproduce 1.7 times; *five* ran 7.1 and
+> reproduced no more often, because the extra bodies died to the same area attacks without ever
+> taking a turn. Three is the count that buys the mechanic without buying a second fight.
+>
+> The consequence is a pacing wobble worth knowing about: **stage 6 is now the longest fight in the
+> corridor**, a shade over the exam at stage 9, and stage 7 drops back to 3.8 behind it. Swapping
+> stages 6 and 8 puts the attritional fight next to the exam and reads 2.6 / 3.4 / 3.1 / 3.2 / 4.6 /
+> 5.0 / 3.8 / 6.8 / 6.7 — still not monotonic, but the peak lands where a peak belongs.
+
+> **Two of the same creature are two creatures.** Until stages were cast lists, no encounter ever
+> fielded the same def twice, so `def.id` and `def.name` — properties of a *definition* — were doing
+> duty as the identity of a deployed unit. The rules were never at risk, because the engine holds
+> unit references and mutates them directly (the one `def.id ===` comparison in `battle.ts` is for a
+> taunter, always a player). Everything that maps an *event* back to a body was: the log records
+> `def.name` as its target, and the battle screen keys hit flashes, flinches, idle stances and
+> impact placement off `def.id`. Three Reds sharing both meant one taking a hit and all three
+> flinching.
+>
+> `createBattle` now numbers the copies — `Red Understudy 1/2/3`, id suffixed `~n` — once, at the
+> only point that knows how many of each are being deployed. Numbering starts at 1 and applies to
+> every copy rather than the second onward, because "Red Understudy" beside "Red Understudy 2" reads
+> as a bug in a log. `clipsOf(id)` strips the suffix when resolving animations, since art belongs to
+> the definition and all three Reds are drawn the same — and **every** clip lookup goes through it,
+> because the failure is silent: a missing catalogue entry looks exactly like a character nobody has
+> drawn yet.
+
+**The False Lead** is the first boss, and its fight is a **board** rather than a stat check. It
+stands in the back rank behind a company of three, which `range` makes mechanical rather than
+decorative — melee cannot reach it until the ranks in front are cleared. `Curtain Up` refills that
+company three at a time, and **`Encore`** makes every ally still standing take its own best attack
+at once, at random targets.
+
+What makes Encore work is not the burst: it is that **the player sets the size of it**. Every add
+left alive is damage agreed to, at a moment you can see coming. And you can see it coming because
+Encore is **scheduled** — `priority` puts it above the d20 the moment its cooldown is up, so it is a
+deadline you count down to rather than a 15% surprise. That distinction is why the answer to *"dice
+or a rotation for a boss?"* was neither: **the threat is scheduled, the filler is rolled**, in one
+vocabulary the player already reads.
+
+> **It used to rotate its resistances** — immune to one element and freshly vulnerable to another
+> every round. That is a good mechanic and it was the wrong one for the first boss in the game: a
+> coverage check punishes the roster you happen to own at stage 10, and it was a third plate
+> spinning beside the company and the clock. Read the rotation, manage the adds, count the deadline
+> — one had to go, and the adds are the only one that is a *decision* every turn.
+>
+> It cost more threat than expected: removing it took the fight to 100% win / 5.00 survivors before
+> retuning. Getting back to a real gate (87% / 3.93) took three summons a cast, a 2-turn Encore
+> cooldown, and the ramp moved from 5%/turn-10 to 8%/turn-6.
+
+**Boss formation:** `BOSS_ENEMY_SLOTS` is six — the **boss slot at index 0** and five for the
+company — and the boss is listed first in the encounter to match. Slots fill by index, so a boss
+listed *last* only reaches the back rank at full retinue and walks forward into its own formation
+otherwise. It is drawn at `BOSS_SCALE` 1.55×, with the seventh slot of the standard block left as
+the space it occupies.
 
 **Presentation is now a system rather than a set of one-offs**, and most of this session went into
 it:
@@ -3313,58 +3748,50 @@ sheet from the base roster, so any stage can be tried at any level without grind
 
 ## 10. Roadmap
 
-**The bottleneck has moved.** For a long time the battle *mechanics* were the missing piece. They
-mostly are not any more — turn phases, modifiers, chains, statuses, positioning and cooldowns are
-all in. **What is missing is content that uses them**, and specifically enemies. Every defensive
-mechanic built recently is currently unevaluable because mobs have one weak attack each: a tank
-cannot be judged, a formation cannot be punished, and nothing is worth freezing.
+**The bottleneck has moved twice.** First it was battle *mechanics*; they went in. Then it was
+**enemies**, because every defensive mechanic was unevaluable against mobs with one weak attack
+each. Act 1 answered that: six creatures, each asking a different question, and a boss whose fight
+is a board rather than a stat check.
+
+What is missing now is **ways for a player to get stronger**. The ladder repeats past stage 10 at
+rising levels and the only lever a player has is levelling, which is one dimension of power against
+a wall that has several.
 
 **Next up, in order:**
 
-1. **Enemy kits.** The blocker on everything else. Enemies need 1–4 abilities with d20 activation
-   bands, and the shapes to aim for are now specified by what the player side can answer:
-   - **Front-row single-target attacks**, common, so standing in front means something and a tank
-     earns its slot (§5.2).
-   - **AoE**, so leaning on one tank is punished and defence buffs and heals have a job.
-   - **A physical/magical mix**, so a single defensive answer is never sufficient — this is the
-     FFBE texture the design is chasing: bring the right tank, or two, plus a buffer.
-   - **Something worth freezing** — a wind-up, a ramp, a telegraphed ultimate that losing costs the
-     enemy dearly. Freeze is built and has nothing to deny.
-   The boss ramp (§5.3) and the False Lead's rotating resistance stay boss-shaped; ordinary mobs
-   should get neither.
-2. **Party / lineup management.** In-battle repositioning covers the positional half now (§5.2), so
-   what is left is the *pre-battle* screen: which five perform, and their starting arrangement.
-   Roster order is still the formation, and there is still no screen to change it.
-3. **The remaining three kits** — Aethis, Brax, Veyra — against `BATTLE_DESIGN.md`. Author them one
-   at a time and let each specify the next mechanic, which is how the last three went. Benjamin,
-   Rebar and **Maxine** are done. Shapes now available that were not when the remaining kits were
-   written: a passive can change the **pool** rather than a stat (Benjamin), can be a **reactive
-   rider** (Rebar's riposte), can **read the target's state** (`exploitCold`) or **the act of
-   applying a status** (`frostFervor`), and an upgrade tier can grant a **charge that changes what
-   an ability costs** (`freeCastOnFreeze`), **rewrite an enemy's declared intent and hold it for
-   a second round** (Kael's taunt and `lastingTaunt`), or **scale off hits taken this turn**
-   (`Unit.grudge`, which every unit counts and any passive may read). An ability's power can be conditional on a target state or scale off a status counter
-   (§5.2d). Note the tiers' +10% stat bonus is genuine filler for all
-   three, since only Benjamin converts personal stats into team stats — so their passives have to
-   carry their tiers.
-   > **Frost now has two readers and wants no more for a while.** Rebar builds it, Maxine converts
-   > it. A third character reading the same counter would make the frost team the answer to
-   > everything; Kael, Aethis and Brax should each claim a mechanic of their own.
+1. **Star levels.** Drawing a duplicate unlocks a rung; a rung spends into a tree. The plumbing
+   exists — `Profile.owned` counts copies ever pulled and `Profile.stars` holds per-character
+   progress — and **every tree is placeholder content**. Redo them as a batch, and give rarity a say
+   in the tree's shape and in `starCost` at the same time (§5.5).
+2. **Equipment.** One weapon and one accessory per character. Open question the design should settle
+   first: whether a character is restricted to a weapon *type*, which turns equipment into a second
+   composition puzzle rather than a flat stat stick. Nothing in the engine represents equipment yet.
+3. **Ten more characters** — five 4★ and five 5★ — to complement the five 3★ starters. Author them
+   one at a time against `BATTLE_DESIGN.md` and let each specify the next mechanic, which is how
+   every finished kit went.
+4. **The remaining three starter kits** — Aethis, Brax, Veyra. Shapes now available that were not
+   when they were written: a passive can change the **pool** rather than a stat (Benjamin), be a
+   **reactive rider** (Rebar's riposte), **read the target's state** (`exploitCold`) or **the act of
+   applying a status** (`frostFervor`); an upgrade tier can grant a **charge that changes what an
+   ability costs** (`freeCastOnFreeze`), **rewrite an enemy's declared intent** (Kael's taunt), or
+   **scale off hits taken this turn** (`Unit.grudge`). Enemy-side additions are fair game for
+   players too: `counter`, `adapt`, `flying` and `summon` are all general mechanics that happen to
+   have been specified by creatures.
+   > **Frost has two readers and wants no more for a while.** Rebar builds it, Maxine converts it. A
+   > third would make the frost team the answer to everything.
+5. **Party / lineup management.** In-battle repositioning covers the positional half (§5.2); what is
+   missing is the *pre-battle* screen. Roster order is still the formation and there is no screen to
+   change it — which matters more now that `flying` and rank-wide AoE make the starting arrangement
+   a real decision.
+6. **Act 2.** The ladder repeats past 10 deliberately, and that is a testing device rather than
+   content. A second act wants its own bestiary, its own boss, and a reason to be somewhere else.
+7. **Art.** Kael is at 4/16 and everyone but Benjamin is at 0–1; the **Limelight Diva** has no sprite
+   at all and falls back to a role badge. Scenes are dressed for stages 1–10 and nothing past them.
+   Deliberately not urgent — 128 and 256 sprites render at correct relative scale side by side, so
+   the roster migrates one actor at a time.
 
-3b. **Redo every star tree** (§5.5), once the kits above are settled, and give rarity a say in the
-   tree's shape and in `starCost` at the same time.
-4. **Rebuild the art at 256px** (style guide v3.0) — Kael, Aethis, Maxine and Rebar. Benjamin is
-   done and Brax was already there. Deliberately **not urgent**: 128 and 256 sprites render at
-   correct relative scale side by side, so the roster migrates one actor at a time. Settle
-   Benjamin's height first — he is the reference every later sprite is matched to, and he currently
-   sits at the top of the Standard band rather than the middle (see §8).
-5. **Enemy art** — they are role badges on a painted stage; the most visible gap.
-5b. **Scenes for the rest of the ladder.** Stages 1–10 are dressed; everything past them falls back
-   to the flat backdrop. The authoring loop is built and cheap now, so this is content work rather
-   than engineering — and the boss stages are the ones worth a set of their own, since
-   `sceneIdForStage` resolves a narrow range over a broad one specifically to allow it.
-6. **Stage progression** — winning advances `profile.stage`, grants rewards, raises the idle rate.
-   The missing link between the two halves of the game, and independent of the battle work.
+**Done since this list was last written:** enemy kits (§5.3), the Act 1 ladder, stage progression
+and clear rewards (§8), and the summon/counter/adapt/flying/encore mechanics.
 
 **Design directions agreed but not built:**
 
@@ -3413,6 +3840,155 @@ cannot be judged, a formation cannot be punished, and nothing is worth freezing.
 ---
 
 ## 11. Gotchas for the next session
+
+**A mechanic that nothing has ever used is not built, it is written down.**
+
+Act 1 turned up **six** dormant faults, and every one of them was in code that type-checked, had
+been reviewed, and had never been exercised. The pattern is worth internalising more than the
+individual bugs:
+
+- **`targetStillLegal` assumed every intent pointed across the board** (`found.side !== unit.side`).
+  True for exactly as long as no creature had a non-attack ability. The Skitter's summon was
+  declared **292 times and cast 0** before anyone noticed, because the fallback path scores a summon
+  at nothing and so chose to do nothing instead.
+- **`at: 'caster'` had never once been saved.** The lab offered the placement; `/__anim/save`
+  validated `at` against `'each' | 'centre'` only, so every attempt came back 400. A validator that
+  does not know a value its own editor emits is not a guard, it is a silent veto.
+- **A telegraphed cast landed without an `act` log entry**, so the log read as a warning followed a
+  turn later by unexplained injuries — and the narration, which speaks from `act`, had nothing to
+  say about the biggest hit in the fight.
+- **`LogPanel`'s switch has no `default`.** Four new event kinds rendered as *blank lines*: an
+  unhandled case returns `undefined` and `join` turns it into an empty string. The worst was
+  `counter`, where damage appeared with nothing above it saying where it came from.
+- **`Ability.priority` had gone vestigial**, surviving only in the fallback selector. Restoring it
+  above the roll is what lets a boss have a *deadline* rather than a probability.
+- **The boss stood inside one of its own guards.** `BOSS_ENEMY_SLOTS` had three slots for four
+  bodies and `slotPos(slots[i] ?? slots.at(-1))` silently stacked the fourth. **Any encounter that
+  fields more bodies than its layout has slots does this.**
+
+The common thread: none of it was caught by the type checker, and all of it was caught by asking
+*what would a player actually see*. When you add a mechanic, walk one battle by hand and watch the
+log.
+
+**A black screen is a React throw, and there are exactly two ways to earn one.** Both turned up in
+the same session, both looked identical from the outside, and neither printed anything the player
+could see.
+
+- **A hook after a conditional return.** `AnimationLab` grew a "this actor has no clips" early
+  return, and one `useEffect` — the impact scheduler — was already below it. Picking a creature out
+  of the character list rendered one fewer hook than the render before, which React treats as
+  fatal. It is a *structural* fault, not a logical one: the branch it broke had nothing wrong with
+  it. If a component has an early return, every hook must be above it, and anything those hooks
+  read must be computed unconditionally too.
+- **A non-null assertion on a clip that is only usually there.** `UnitChip` sized its container from
+  `idle!.aspect`. Rebar is the first actor with an *ability* clip and no `idle` sheet, so his
+  standing frame took the still path and never touched it — and the instant Frost Armor swapped the
+  strip in, `undefined.aspect` threw out of render and the whole page went black. The assertion had
+  been true for as long as art arrived idle-first, which is a fact about the order somebody drew
+  things in, not about the type.
+
+  The value was also simply wrong. The box is built by `clipBox` from the clip being shown, so the
+  clip being shown is the only thing that can say how wide it is. It went unnoticed because the
+  packer normalises an actor's animated clips to one cell, so every actor's clips currently share an
+  aspect and `idle`'s happened to be right. The first actor whose art breaks that assumption would
+  have had every attack drawn at the wrong width, with nothing thrown.
+
+Neither is visible to `tsc` and neither is visible to `npm run sim`, because both live in the layer
+the engine deliberately does not have. **Click it.**
+
+**Two of the same creature are two creatures.** `def.id` and `def.name` are properties of a
+DEFINITION, and until encounters were cast lists no fight ever fielded the same def twice — so both
+were quietly doing duty as the identity of a deployed unit. The rules were never at risk (the engine
+holds unit references), but the log resolves targets by `def.name` and the battle screen keys hit
+flashes, flinches, stances and impact placement off `def.id`. `createBattle` numbers copies at
+deploy (`Red Understudy 1/2/3`, id suffixed `~n`) and **`clipsOf(id)` strips the suffix** — every
+clip lookup must go through it, because the failure is silent: a missing catalogue entry looks
+exactly like a character nobody has drawn yet.
+
+**A queued attack whose victim died first RE-AIMS.** The queue resolves top to bottom, so an attack
+aimed three actions ago at something the first action killed is the common case — and it used to
+fizzle: the Performer walked out, spent their dice and did nothing, with a `fizzle` in a log that
+has no case for it (another blank line). Re-aiming is also the better *rule*: the dice were already
+spent, and punishing a good plan for working too well teaches players to aim their second attack at
+something they do not want dead. It takes the next legal target front-first and **still fizzles when
+nothing is reachable** — a reach-1 attack whose whole front rank has fallen has genuinely lost its
+target.
+
+> Note where that code lives: `commitNext`, the **queue** path. `simulateBattle` goes through
+> `commitAction`, so 2,000 simulated battles reported **zero** retargets and proved nothing. It was
+> verified by building the state by hand. The same trap as everything in the list above.
+
+**The pause between turns was 180ms**, which is not a pause so much as the absence of one — five
+actions ran together as a single motion with nowhere for the eye to rest. Now 620ms, and it scales
+with the speed setting: a deliberate exception to *"the performance scales, the transit does not"*,
+because this gap is not travel, it is comprehension time, which is what the speed control is for.
+
+**`▢ No push-in`** (dev bar) watches a turn without the camera closing in, and it is deliberately
+*narrow*: the focus zoom on hover, the ambient sway and the resting shot all stay. Those answer
+"what am I looking at"; the push answers "look at THIS, now", and only the second is in question. A
+first pass replaced the whole shot with a static one and took hover focus with it, which made the
+comparison useless — you cannot judge one effect by switching off three.
+
+> It needs **two** switches, because the push is two things: the inline `shot` aims the camera and
+> the `closing-in` class supplies the 2.6× zoom. Disabling either alone leaves half a push-in — a
+> 2.6× zoom still centred on the resting shot, which is worse than either whole state.
+
+**A body is held standing until the blows that killed it have landed.** The engine resolves a whole
+action the instant it commits and the animation plays over the `beat` afterwards, so `alive(u)`
+flipped at the *start* of the swing: a creature stopped existing the moment its killer stepped onto
+the mark, and a six-hit ability landed five of its blows on bare boards.
+
+`holding` keeps them on the stage — **for the picture only, never for the rules** — until the beat's
+*last* blow lands, at which point they move to `falling` and play the collapse. Not the first blow:
+a multi-hit is one action and its victim should take the whole volley standing, which is the entire
+point. The flinch still fires per blow, so they spin under the hits and only then go down.
+
+Everything that decides anything still reads `alive`; these two sets decide only which pass draws
+the body. `holding` is recorded from the same HP diff the floaters and flinches are built from, so a
+body can never be flinching in one pass and buried in another.
+
+> **A held body must never get stuck standing.** The release rides the impact schedule, and a
+> schedule can be cut short — the fight ends, the player restarts, an ability turns out to have no
+> clip and no targets. `withHitReactions` therefore clears `holding` at the top of every action: it
+> costs nothing in the normal case, where the previous beat released it a moment ago, and it means
+> the worst failure is a body that falls one action late rather than one that stands at 0 hp for the
+> rest of the fight.
+
+**The collapse is `paper-fall`:** a 12% stretch over 90ms, then a fast fold to 8% height with the
+width bulging out. The stretch is doing the whole job — an anticipation beat is what makes a squash
+read as something *giving way* rather than as a sprite being scaled; without it the figure just gets
+shorter. `transform-origin: bottom` so it folds onto its own feet rather than sinking through the
+boards, which is the one thing that would give away that the character is a flat cutout standing on
+a painted floor.
+
+**A blow cannot land on the dead, and the guard belongs in `strike`.** `unitsHit` filters the
+living, but it does so **once**, before the effect runs — and several things strike that same list
+repeatedly afterwards. The worst is a multi-hit: Perfect Form splits into six blows over one target
+list, so a creature killed by the second went on being hit by the third, fourth, fifth and sixth.
+Measured on a level-40 Benjamin: four extra damage events against a body at 0 hp, **each re-logging
+the `ko`**, and four sets of floating numbers landing on a corpse.
+
+> The guard is *not* a re-aim. A queued **action** whose target died takes the next one along, because
+> its dice are already spent and the ordering is the mechanic. The later blows of one **swing** are a
+> different thing, and having them cleave into the next creature would change what a multi-hit
+> ability is worth rather than fix a bug.
+
+**`commitNext` retargeted internally and then handed back the entry it was planned with**, so the
+engine hit the right creature and told the battle screen it had hit the dead one — the narration
+named a corpse, and with a body still lying on that slot the whole turn read as a character walking
+out and swinging at nothing. *A function that corrects something internally has not finished until
+everything it hands back agrees with the correction.*
+
+**Summoned units reused the ids of the dead.** `summon` numbered a copy by counting the units
+currently on the board, which goes **down** when a corpse is cleared to make room for its
+replacement — so the boss fight produced two living creatures both called `understudy_blue~3`.
+`def.id` is what hit flashes, flinches, idle stances and impact placement are all keyed on, so a
+blow on one made the other flinch. `BattleState.copies` is now a monotonic high-water mark per def,
+seeded from the deploy tally. Verified across 360 boss-and-swarm battles: **0 collisions**.
+
+**Levels cancel; gaps do not.** `ATK / (ATK + DEF)` divides out matched growth, so a level-30 fight
+plays identically to a level-1 fight. Never reason about difficulty from an absolute level — only
+from the gap between the two sides.
 
 **Environment**
 

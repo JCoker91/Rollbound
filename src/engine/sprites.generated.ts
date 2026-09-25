@@ -2,7 +2,7 @@
 // Measured from the PNGs in public/sprites/; re-run the script after changing art.
 import type { SpriteSheet } from './types.ts';
 
-export type SpriteId = 'aethis' | 'backdrop_bat' | 'benjamin' | 'brax' | 'caspian' | 'false_lead' | 'footlight_skitter' | 'kael' | 'maxine' | 'playbill_mimic' | 'rebar' | 'understudy_blue' | 'understudy_green' | 'understudy_orange' | 'understudy_red' | 'understudy_yellow' | 'veyra';
+export type SpriteId = 'aethis' | 'backdrop_bat' | 'benjamin' | 'box_office_bruiser' | 'brax' | 'caspian' | 'false_lead' | 'footlight_skitter' | 'kael' | 'limelight_diva' | 'maxine' | 'playbill_mimic' | 'rebar' | 'understudy_blue' | 'understudy_green' | 'understudy_orange' | 'understudy_red' | 'understudy_yellow' | 'veyra';
 
 export interface SpriteMetrics extends Omit<SpriteSheet, 'scale' | 'nativePx'> {
   /**
@@ -39,15 +39,17 @@ export interface SpriteMetrics extends Omit<SpriteSheet, 'scale' | 'nativePx'> {
 
 export const SPRITE_METRICS: Record<SpriteId, SpriteMetrics> = {
   aethis: { src: '/sprites/aethis/aethis.png', icon: '/sprites/aethis/aethis_icon.png', aspect: 239 / 320, pxH: 320, anchorX: 0.444, nativePx: 84, nativeCanvas: 128, pixelArt: false },
-  backdrop_bat: { src: '/sprites/backdrop_bat/backdrop_bat.png', icon: '/sprites/backdrop_bat/backdrop_bat_icon.png', aspect: 114 / 92, pxH: 92, anchorX: 0.346, nativePx: 92, nativeCanvas: 128, pixelArt: true },
-  benjamin: { src: '/sprites/benjamin/benjamin.png', icon: '/sprites/benjamin/benjamin_icon.png', pain: '/sprites/benjamin/benjamin_pain.png', death: '/sprites/benjamin/benjamin_death.png', thinking: '/sprites/benjamin/benjamin_thinking.png', aspect: 333 / 320, pxH: 320, anchorX: 0.584, nativePx: 84, nativeCanvas: 128, pixelArt: false, idle: { src: '/sprites/benjamin/benjamin_idle.png', frames: 6, aspect: 0.848214, pxH: 224, anchorX: 0.5186, restFill: 0.691964, footPad: 0.0 } },
-  brax: { src: '/sprites/brax/brax.png', icon: '/sprites/brax/brax_icon.png', aspect: 224 / 211, pxH: 211, anchorX: 0.493, nativePx: 211, nativeCanvas: 256, pixelArt: true, idle: { src: '/sprites/brax/brax_idle.png', frames: 8, aspect: 1.090047, pxH: 211, anchorX: 0.4961, restFill: 0.976303, footPad: 0.0 } },
+  backdrop_bat: { src: '/sprites/backdrop_bat/backdrop_bat.png', icon: '/sprites/backdrop_bat/backdrop_bat_icon.png', aspect: 473 / 320, pxH: 320, anchorX: 0.348, nativePx: 84, nativeCanvas: 128, pixelArt: false },
+  benjamin: { src: '/sprites/benjamin/benjamin.png', icon: '/sprites/benjamin/benjamin_icon.png', pain: '/sprites/benjamin/benjamin_pain.png', death: '/sprites/benjamin/benjamin_death.png', thinking: '/sprites/benjamin/benjamin_thinking.png', aspect: 333 / 320, pxH: 320, anchorX: 0.584, nativePx: 84, nativeCanvas: 128, pixelArt: false, idle: { src: '/sprites/benjamin/benjamin_idle.png', frames: 6, aspect: 0.875, pxH: 224, anchorX: 0.518, restFill: 0.691964, footPad: 0.0 } },
+  box_office_bruiser: { src: '/sprites/box_office_bruiser/box_office_bruiser.png', icon: '/sprites/box_office_bruiser/box_office_bruiser_icon.png', aspect: 369 / 320, pxH: 320, anchorX: 0.538, nativePx: 84, nativeCanvas: 128, pixelArt: false },
+  brax: { src: '/sprites/brax/brax.png', icon: '/sprites/brax/brax_icon.png', aspect: 224 / 211, pxH: 211, anchorX: 0.493, nativePx: 211, nativeCanvas: 256, pixelArt: true, idle: { src: '/sprites/brax/brax_idle.png', frames: 8, aspect: 1.127962, pxH: 211, anchorX: 0.4962, restFill: 0.976303, footPad: 0.0 } },
   caspian: { src: '/sprites/caspian/caspian.png', icon: '/sprites/caspian/caspian_icon.png', aspect: 356 / 320, pxH: 320, anchorX: 0.406, nativePx: 84, nativeCanvas: 128, pixelArt: false, idle: { src: '/sprites/caspian/caspian_idle.png', frames: 6, aspect: 1.130435, pxH: 92, anchorX: 0.4135, restFill: 0.972826, footPad: 0.0 } },
-  false_lead: { src: '/sprites/false_lead/false_lead.png', icon: '/sprites/false_lead/false_lead_icon.png', aspect: 228 / 205, pxH: 205, anchorX: 0.533, nativePx: 205, nativeCanvas: 256, pixelArt: true },
-  footlight_skitter: { src: '/sprites/footlight_skitter/footlight_skitter.png', icon: '/sprites/footlight_skitter/footlight_skitter_icon.png', aspect: 114 / 85, pxH: 85, anchorX: 0.509, nativePx: 85, nativeCanvas: 128, pixelArt: true },
-  kael: { src: '/sprites/kael/kael.png', icon: '/sprites/kael/kael_icon.png', aspect: 345 / 320, pxH: 320, anchorX: 0.406, nativePx: 84, nativeCanvas: 128, pixelArt: false },
+  false_lead: { src: '/sprites/false_lead/false_lead.png', icon: '/sprites/false_lead/false_lead_icon.png', aspect: 378 / 320, pxH: 320, anchorX: 0.526, nativePx: 84, nativeCanvas: 128, pixelArt: false },
+  footlight_skitter: { src: '/sprites/footlight_skitter/footlight_skitter.png', icon: '/sprites/footlight_skitter/footlight_skitter_icon.png', aspect: 458 / 320, pxH: 320, anchorX: 0.510, nativePx: 84, nativeCanvas: 128, pixelArt: false },
+  kael: { src: '/sprites/kael/kael.png', icon: '/sprites/kael/kael_icon.png', pain: '/sprites/kael/kael_pain.png', thinking: '/sprites/kael/kael_thinking.png', aspect: 345 / 320, pxH: 320, anchorX: 0.406, nativePx: 84, nativeCanvas: 128, pixelArt: false, idle: { src: '/sprites/kael/kael_idle.png', frames: 2, aspect: 1.419643, pxH: 224, anchorX: 0.5114, restFill: 0.977679, footPad: 0.0 } },
+  limelight_diva: { src: '/sprites/limelight_diva/limelight_diva.png', icon: '/sprites/limelight_diva/limelight_diva_icon.png', aspect: 293 / 320, pxH: 320, anchorX: 0.548, nativePx: 84, nativeCanvas: 128, pixelArt: false },
   maxine: { src: '/sprites/maxine/maxine.png', icon: '/sprites/maxine/maxine_icon.png', aspect: 274 / 320, pxH: 320, anchorX: 0.589, nativePx: 84, nativeCanvas: 128, pixelArt: false },
-  playbill_mimic: { src: '/sprites/playbill_mimic/playbill_mimic.png', icon: '/sprites/playbill_mimic/playbill_mimic_icon.png', aspect: 90 / 87, pxH: 87, anchorX: 0.517, nativePx: 87, nativeCanvas: 128, pixelArt: true },
+  playbill_mimic: { src: '/sprites/playbill_mimic/playbill_mimic.png', icon: '/sprites/playbill_mimic/playbill_mimic_icon.png', aspect: 350 / 320, pxH: 320, anchorX: 0.517, nativePx: 84, nativeCanvas: 128, pixelArt: false },
   rebar: { src: '/sprites/rebar/rebar.png', icon: '/sprites/rebar/rebar_icon.png', aspect: 369 / 320, pxH: 320, anchorX: 0.500, nativePx: 84, nativeCanvas: 128, pixelArt: false },
   understudy_blue: { src: '/sprites/understudy_blue/understudy_blue.png', icon: '/sprites/understudy_blue/understudy_blue_icon.png', aspect: 303 / 320, pxH: 320, anchorX: 0.421, nativePx: 84, nativeCanvas: 128, pixelArt: false },
   understudy_green: { src: '/sprites/understudy_green/understudy_green.png', icon: '/sprites/understudy_green/understudy_green_icon.png', aspect: 303 / 320, pxH: 320, anchorX: 0.421, nativePx: 84, nativeCanvas: 128, pixelArt: false },
@@ -61,8 +63,8 @@ export const SPRITE_METRICS: Record<SpriteId, SpriteMetrics> = {
 export const ANIMATION_CLIPS: Record<string, Record<string, AnimationClip>> = {
   "benjamin": {
     "ability_1": {
-      "anchorX": 0.5186,
-      "aspect": 0.848214,
+      "anchorX": 0.518,
+      "aspect": 0.875,
       "footPad": 0.0,
       "frames": 4,
       "loops": false,
@@ -73,8 +75,8 @@ export const ANIMATION_CLIPS: Record<string, Record<string, AnimationClip>> = {
       "src": "/sprites/benjamin/benjamin_ability_1.png"
     },
     "ability_2": {
-      "anchorX": 0.5186,
-      "aspect": 0.848214,
+      "anchorX": 0.518,
+      "aspect": 0.875,
       "footPad": 0.0,
       "frames": 4,
       "loops": false,
@@ -85,8 +87,8 @@ export const ANIMATION_CLIPS: Record<string, Record<string, AnimationClip>> = {
       "src": "/sprites/benjamin/benjamin_ability_2.png"
     },
     "ability_3": {
-      "anchorX": 0.5186,
-      "aspect": 0.848214,
+      "anchorX": 0.518,
+      "aspect": 0.875,
       "footPad": 0.0,
       "frames": 4,
       "loops": false,
@@ -97,8 +99,8 @@ export const ANIMATION_CLIPS: Record<string, Record<string, AnimationClip>> = {
       "src": "/sprites/benjamin/benjamin_ability_3.png"
     },
     "ability_4": {
-      "anchorX": 0.5186,
-      "aspect": 0.848214,
+      "anchorX": 0.518,
+      "aspect": 0.875,
       "footPad": 0.0,
       "frames": 4,
       "loops": false,
@@ -109,8 +111,8 @@ export const ANIMATION_CLIPS: Record<string, Record<string, AnimationClip>> = {
       "src": "/sprites/benjamin/benjamin_ability_4.png"
     },
     "celebration": {
-      "anchorX": 0.5186,
-      "aspect": 0.848214,
+      "anchorX": 0.518,
+      "aspect": 0.875,
       "footPad": 0.0,
       "frames": 8,
       "loops": false,
@@ -121,8 +123,8 @@ export const ANIMATION_CLIPS: Record<string, Record<string, AnimationClip>> = {
       "src": "/sprites/benjamin/benjamin_celebration.png"
     },
     "celebration_ending": {
-      "anchorX": 0.5186,
-      "aspect": 0.848214,
+      "anchorX": 0.518,
+      "aspect": 0.875,
       "footPad": 0.0,
       "frames": 4,
       "loops": true,
@@ -143,8 +145,8 @@ export const ANIMATION_CLIPS: Record<string, Record<string, AnimationClip>> = {
       "src": "/sprites/benjamin/benjamin_death.png"
     },
     "idle": {
-      "anchorX": 0.5186,
-      "aspect": 0.848214,
+      "anchorX": 0.518,
+      "aspect": 0.875,
       "footPad": 0.0,
       "frames": 6,
       "loops": true,
@@ -154,8 +156,8 @@ export const ANIMATION_CLIPS: Record<string, Record<string, AnimationClip>> = {
       "src": "/sprites/benjamin/benjamin_idle.png"
     },
     "idle_2": {
-      "anchorX": 0.5186,
-      "aspect": 0.848214,
+      "anchorX": 0.518,
+      "aspect": 0.875,
       "footPad": 0.0,
       "frames": 3,
       "loops": true,
@@ -165,8 +167,8 @@ export const ANIMATION_CLIPS: Record<string, Record<string, AnimationClip>> = {
       "src": "/sprites/benjamin/benjamin_idle_2.png"
     },
     "idle_3": {
-      "anchorX": 0.5186,
-      "aspect": 0.848214,
+      "anchorX": 0.518,
+      "aspect": 0.875,
       "footPad": 0.0,
       "frames": 2,
       "loops": true,
@@ -176,8 +178,8 @@ export const ANIMATION_CLIPS: Record<string, Record<string, AnimationClip>> = {
       "src": "/sprites/benjamin/benjamin_idle_3.png"
     },
     "idle_4": {
-      "anchorX": 0.5186,
-      "aspect": 0.848214,
+      "anchorX": 0.518,
+      "aspect": 0.875,
       "footPad": 0.0,
       "frames": 4,
       "loops": true,
@@ -187,8 +189,8 @@ export const ANIMATION_CLIPS: Record<string, Record<string, AnimationClip>> = {
       "src": "/sprites/benjamin/benjamin_idle_4.png"
     },
     "move": {
-      "anchorX": 0.5186,
-      "aspect": 0.848214,
+      "anchorX": 0.518,
+      "aspect": 0.875,
       "footPad": 0.0,
       "frames": 1,
       "loops": false,
@@ -210,8 +212,8 @@ export const ANIMATION_CLIPS: Record<string, Record<string, AnimationClip>> = {
       "src": "/sprites/benjamin/benjamin_pain.png"
     },
     "ready": {
-      "anchorX": 0.5186,
-      "aspect": 0.848214,
+      "anchorX": 0.518,
+      "aspect": 0.875,
       "footPad": 0.0,
       "frames": 2,
       "loops": false,
@@ -233,8 +235,8 @@ export const ANIMATION_CLIPS: Record<string, Record<string, AnimationClip>> = {
       "src": "/sprites/benjamin/benjamin_thinking.png"
     },
     "upgrade": {
-      "anchorX": 0.5186,
-      "aspect": 0.848214,
+      "anchorX": 0.518,
+      "aspect": 0.875,
       "footPad": 0.0,
       "frames": 4,
       "loops": false,
@@ -247,8 +249,8 @@ export const ANIMATION_CLIPS: Record<string, Record<string, AnimationClip>> = {
   },
   "brax": {
     "idle": {
-      "anchorX": 0.4961,
-      "aspect": 1.090047,
+      "anchorX": 0.4962,
+      "aspect": 1.127962,
       "footPad": 0.0,
       "frames": 8,
       "loops": true,
@@ -269,6 +271,66 @@ export const ANIMATION_CLIPS: Record<string, Record<string, AnimationClip>> = {
       "pxH": 92,
       "restFill": 0.972826,
       "src": "/sprites/caspian/caspian_idle.png"
+    }
+  },
+  "kael": {
+    "idle": {
+      "anchorX": 0.5114,
+      "aspect": 1.419643,
+      "footPad": 0.0,
+      "frames": 2,
+      "loops": true,
+      "normalised": 1.0,
+      "pxH": 224,
+      "restFill": 0.977679,
+      "src": "/sprites/kael/kael_idle.png"
+    },
+    "move": {
+      "anchorX": 0.5114,
+      "aspect": 1.419643,
+      "footPad": 0.0,
+      "frames": 1,
+      "loops": false,
+      "normalised": 0.6852,
+      "pxH": 224,
+      "restFill": 0.977679,
+      "settlesInto": "idle",
+      "src": "/sprites/kael/kael_move.png"
+    },
+    "pain": {
+      "anchorX": 0.427,
+      "aspect": 0.9,
+      "footPad": 0.0,
+      "frames": 1,
+      "loops": false,
+      "normalised": 1.0,
+      "pxH": 320,
+      "restFill": 1.0,
+      "src": "/sprites/kael/kael_pain.png"
+    },
+    "thinking": {
+      "anchorX": 0.422,
+      "aspect": 0.959375,
+      "footPad": 0.0,
+      "frames": 1,
+      "loops": false,
+      "normalised": 1.0,
+      "pxH": 320,
+      "restFill": 1.0,
+      "src": "/sprites/kael/kael_thinking.png"
+    }
+  },
+  "rebar": {
+    "ability_3": {
+      "anchorX": 0.5029,
+      "aspect": 1.191964,
+      "footPad": 0.0,
+      "frames": 5,
+      "loops": false,
+      "normalised": 1.0,
+      "pxH": 224,
+      "restFill": 0.424107,
+      "src": "/sprites/rebar/rebar_ability_3.png"
     }
   },
   "veyra": {

@@ -6,7 +6,7 @@ import {
   mkdirSync,
   readdirSync,
 } from 'node:fs';
-import { resolve } from 'node:path';
+import { relative, resolve } from 'node:path';
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 
@@ -405,7 +405,7 @@ function animationSaver(): Plugin {
         });
         req.on('end', () => {
           try {
-            const { who, clip, placement, frames, order, stepMs, impacts, idleWeight } =
+            const { who, clip, placement, frames, order, stepMs, impacts, idleWeight, flip } =
               JSON.parse(body) as {
               who?: string;
               clip?: string;
@@ -415,16 +415,30 @@ function animationSaver(): Plugin {
                 stepMs?: number;
                 impacts?: unknown[];
                 idleWeight?: number;
+                flip?: boolean;
               };
             if (!who || !NAME.test(who)) return fail(400, 'bad actor name');
             if (!clip || !NAME.test(clip)) return fail(400, 'bad clip name');
 
-            const folder = resolve(root, 'art', 'actors', who);
+            /*
+             * Actors keep their tuning in their own folder; creatures keep it
+             * beside their sprite, because `art/enemies/creatures/` is a flat
+             * directory and a thing with one drawing has no `animations/`.
+             *
+             * The actor folder wins where it exists, so nothing about the
+             * existing roster changes, and a creature falls through to the
+             * second location. A name matching neither is refused below rather
+             * than having a folder invented for it.
+             */
+            const actorFolder = resolve(root, 'art', 'actors', who);
+            const folder = existsSync(actorFolder)
+              ? actorFolder
+              : resolve(root, 'art', 'enemies', 'creatures');
             const file = resolve(folder, `${who}.anim.json`);
             if (!file.startsWith(folder + '\\') && !file.startsWith(folder + '/')) {
               return fail(400, 'path escaped the actor folder');
             }
-            if (!existsSync(folder)) return fail(404, `no art/actors/${who}/`);
+            if (!existsSync(folder)) return fail(404, `no folder for ${who}`);
 
             // Merge rather than replace: the file holds every clip for this
             // actor, and the lab only ever edits one at a time.
@@ -493,6 +507,14 @@ function animationSaver(): Plugin {
             if (idleWeight != null && /^idle_\d+$/.test(clip)) {
               settings.idleWeight = Math.round(idleWeight);
             }
+            /*
+             * Only on the reserved stature entry, for the same reason
+             * `idleWeight` is only kept on an alternate idle: a field written
+             * everywhere is a field that looks authored, is never read, and
+             * outlives anyone's memory of why it is there.
+             */
+            delete settings.flip;
+            if (flip && clip === 'stature') settings.flip = true;
             if (impacts !== undefined) {
               if (!Array.isArray(impacts)) return fail(400, 'impacts must be an array');
               for (const i of impacts) {
@@ -534,7 +556,7 @@ function animationSaver(): Plugin {
             writeFileSync(file, JSON.stringify(sorted, null, 2) + '\n', 'utf-8');
 
             res.setHeader('content-type', 'application/json');
-            res.end(JSON.stringify({ ok: true, file: `art/actors/${who}/${who}.anim.json` }));
+            res.end(JSON.stringify({ ok: true, file: relative(root, file).replace(/\\/g, '/') }));
           } catch (e) {
             fail(400, e instanceof Error ? e.message : 'bad request');
           }

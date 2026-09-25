@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { ROSTER } from '../engine/content.ts';
-import { short, type Profile } from '../engine/idle.ts';
+import { BOSS_EVERY, ROSTER } from '../engine/content.ts';
+import { bankClear, short, type Profile } from '../engine/idle.ts';
+import { dropsFor } from '../engine/items.ts';
 import { load, save, wipe } from '../engine/save.ts';
 import { applyStars, progressFor } from '../engine/stars.ts';
 import { applyLevel } from '../engine/levels.ts';
@@ -102,7 +103,31 @@ export function App() {
     // out here: neither is reachable without leaving the fight first.
     return (
       <>
-        <BattleScreen party={party} onExit={() => setInBattle(false)} />
+        <BattleScreen
+          party={party}
+          stage={profile.stage}
+          /*
+            A clear is banked HERE rather than in the battle screen, because
+            what a stage is worth is an economy decision and the screen has no
+            business holding one. It reports the rung it won; this prices it.
+
+            `bankClear` also moves `profile.stage`, which raises the idle rate
+            every future reward is measured against -- the pay-out is the
+            milestone and the raise is the actual prize.
+          */
+          onWin={(cleared) => {
+            const boss = cleared % BOSS_EVERY === 0;
+            // The drop table is content, so it is read here rather than inside
+            // the economy: `items.ts` imports `idle.ts` and cannot be imported
+            // back by it.
+            const { profile: next, reward, dropped } = bankClear(
+              profile, cleared, boss, dropsFor(cleared, boss, Math.ceil(cleared / BOSS_EVERY)),
+            );
+            setProfile(next);
+            return { reward, dropped };
+          }}
+          onExit={() => setInBattle(false)}
+        />
         <DevBadge />
       </>
     );

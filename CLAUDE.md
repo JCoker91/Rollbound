@@ -91,9 +91,10 @@ Read these before designing anything; they carry the reasoning, not just the rul
 
 ## Where things stand
 
-**Art:** Benjamin is complete (15/15 clips — `npm run art` for the live picture); everyone else is at
-0–1. His folder is the reference for what finished looks like. The art pipeline got a lot of work
-this session — read `DEV_TOOLBOX.md` before touching art or adding a sheet.
+**Art:** Benjamin is complete (16/16 clips). Kael is at 4/16 and everyone else at 0–1 — `npm run art`
+for the live picture. Benjamin's folder is the reference for what finished looks like. Every Act 1
+creature has a board sprite except the **Limelight Diva**, which falls back to its role badge.
+Read `DEV_TOOLBOX.md` before touching art or adding a sheet.
 
 Kits finished: **Benjamin, Rebar, Maxine, Kael.** Unbuilt: Aethis, Brax, Veyra (placeholders — do
 not tune against them). **Every star tree is placeholder content**, being redone as a batch after
@@ -103,5 +104,24 @@ Each finished kit paid for a mechanic on its way in — modifiers and turn phase
 statuses and positioning (Rebar), conditional power (Maxine), taunt (Kael). Keep that going: let the
 next character specify the next mechanic rather than authoring it against what already exists.
 
-The bottleneck is **enemy kits**: most defensive mechanics are currently unevaluable because mobs
-have one weak attack each. See README §10.
+**Act 1 is built and is the thing being played.** Stages 1–9 are authored compositions in `LADDER`
+with The False Lead on 10, repeating past 10 at rising levels. Six creatures, each asking a
+different question — the wheel, reach (`flying`), target priority (`counter`), adaptation (`adapt`),
+swarm (`summon`) and the back line (`telegraph` + a rank-wide AoE). **Every number in the bestiary is
+a placeholder**: the shapes are what to defend, the magnitudes want a played ladder.
+
+The bottleneck has moved on again. Enemies are no longer it; **the next things are character power
+systems** — star levels (duplicates into a tree), equipment (one weapon, one accessory), and ten more
+characters (five 4★, five 5★). See README §10.
+
+## Reading the numbers
+
+**Matched levels cancel exactly.** Mitigation is `ATK / (ATK + DEF)` and both sides grow by the same
+`applyLevel`, so a level-30 fight plays identically to a level-1 fight. A level is worth nothing in
+itself and everything as a **gap** — which is why `enemyLevel` per stage is the real difficulty
+curve and why the ladder can repeat.
+
+**The simulator is a crash test, not a balance authority**, and it is specifically blind to the
+mechanics built around player error. It always clears adds, so the boss's Encore cues 2 of a possible
+5; it never ignores the Bruiser, so its counter fires at best case. Those numbers are what *good
+play* looks like, not what the mechanic is worth.

@@ -37,6 +37,9 @@ export function load(nowMs: number, starters: string[]): Profile {
       owned: { ...base.owned, ...(parsed.owned ?? {}) },
       stars: parsed.stars ?? {},
       levels: parsed.levels ?? {},
+      // Added after launch; an older save simply has none rather than being
+      // rejected. Same reasoning as every other line here.
+      items: parsed.items ?? {},
       lastTickAt: typeof parsed.lastTickAt === 'number' ? parsed.lastTickAt : nowMs,
     };
   } catch {

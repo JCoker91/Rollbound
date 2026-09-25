@@ -1,0 +1,29 @@
+{
+  "idle": {
+    "placement": {
+      "dx": -10
+    },
+    "frames": [
+      {
+        "hold": 2.75
+      },
+      {
+        "dx": 1.5
+      }
+    ],
+    "stepMs": 230
+  },
+  "pain": {
+    "placement": {
+      "scale": 1.045
+    },
+    "stepMs": 105
+  },
+  "thinking": {
+    "placement": {
+      "dx": -11,
+      "dy": 2.5
+    },
+    "stepMs": 105
+  }
+}

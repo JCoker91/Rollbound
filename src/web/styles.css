@@ -1659,6 +1659,246 @@ body {
   opacity: 0.8;
 }
 
+/*
+ * Declared intents, drawn between the bodies they connect.
+ *
+ * A layer over the boards and under the cast: the curves pass BEHIND everyone,
+ * which is what stops them cutting across faces and what makes them read as
+ * something happening in the space rather than as chrome laid on top. Scenery
+ * sits at 0, fallen bodies at 65-95 and the living at 100+, so 50 puts these
+ * above the set and below every figure.
+ */
+.battle .intent-lines {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 50;
+  /* Pure information. Everything under it stays clickable. */
+  pointer-events: none;
+  overflow: visible;
+}
+
+.battle .intent-lines path {
+  fill: none;
+  stroke: #ffd9a0;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  /*
+   * Dashed and drifting, because a threat is a thing in motion.
+   *
+   * A static line reads as a diagram of the formation; a travelling dash reads
+   * as something being aimed. Slow enough not to compete with the sprites for
+   * attention over a whole planning phase.
+   */
+  stroke-dasharray: 2 3;
+  animation: intent-drift 1.4s linear infinite;
+  opacity: 0.3;
+  transition: opacity 140ms ease;
+}
+
+.battle .intent-lines circle {
+  fill: #ffd9a0;
+  opacity: 0.3;
+  transition: opacity 140ms ease;
+}
+
+/* Lit when nothing is being pointed at, or when this is the one that is. The
+   dim state is what lets six declared intents sit on the board at once without
+   becoming a cat's cradle. */
+.battle .intent-lines .lit path,
+.battle .intent-lines .lit circle {
+  opacity: 0.85;
+}
+
+@keyframes intent-drift {
+  to {
+    stroke-dashoffset: -10;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The dash stays, the travel goes: the pattern is what distinguishes a
+     threat line from a piece of scenery, and it does that standing still. */
+  .battle .intent-lines path {
+    animation: none;
+  }
+}
+
+/* What a clear paid, on the victory card. */
+.spoils {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: baseline;
+  gap: 4px 14px;
+  margin: 10px 0 4px;
+  font-size: 13px;
+  color: var(--dim);
+}
+
+.spoils b {
+  color: #f0d878;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A bounty reads as the prize rather than as a fourth number, so it gets the
+   gold the figures do not. */
+.spoils .drop b {
+  color: #9ad7a4;
+}
+
+.spoils em {
+  /* Its own line: it explains the three numbers above rather than joining
+     them, and sitting in the row made it read as a fourth reward. */
+  flex: 1 1 100%;
+  font-style: normal;
+  font-size: 11.5px;
+  opacity: 0.75;
+}
+
+/*
+ * Going down.
+ *
+ * A body used to stop existing on the frame its killer's action committed --
+ * which is the frame the killer STEPS OUT on, a beat before the first blow
+ * lands. A six-hit ability duly landed five of them on bare boards. The unit is
+ * now held standing until the volley is finished, and this is what plays when
+ * it is.
+ *
+ * Stretch, then collapse. The stretch is only 90ms and only 12%, and it is
+ * doing the whole job: an anticipation beat is what makes a squash read as
+ * something giving way rather than as a sprite being scaled. Without it the
+ * figure just gets shorter.
+ *
+ * `transform-origin: bottom` so it folds onto its own feet rather than sinking
+ * through the boards, which is the one thing that would give away that the
+ * character is a flat cutout standing on a painted floor.
+ */
+.battle .sprite-unit.collapsing {
+  animation: paper-fall calc(520ms * var(--slow, 1)) cubic-bezier(0.4, 0, 0.6, 1) forwards;
+  transform-origin: bottom center;
+}
+
+@keyframes paper-fall {
+  0% {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+  /* The gasp. Up before down. */
+  18% {
+    transform: scaleY(1.12) scaleX(0.95);
+    opacity: 1;
+  }
+  /* Through the middle fast -- a fall accelerates, and the easing above is
+     shaped to spend its time at the two ends rather than in transit. */
+  70% {
+    transform: scaleY(0.18) scaleX(1.14);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scaleY(0.08) scaleX(1.18);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The squash is the part that moves; the fade is what says "gone". Keeping
+     only the second still reads as a death and triggers nobody. */
+  .battle .sprite-unit.collapsing {
+    animation: paper-fade calc(520ms * var(--slow, 1)) ease-out forwards;
+  }
+
+  @keyframes paper-fade {
+    to {
+      opacity: 0;
+    }
+  }
+}
+
+/*
+ * The full sheet, as a modal.
+ *
+ * Scrolls rather than shrinks: a Performer with four abilities, three
+ * modifiers and a passive is genuinely a page of text, and the alternative to
+ * scrolling is choosing which of those to hide from somebody who opened this
+ * screen specifically to read them.
+ */
+/* Pushed to the far end of the card's header, away from the name. */
+.card-inspect {
+  margin-left: auto;
+  font-size: 11px;
+}
+
+.sheet-modal {
+  width: min(560px, 94vw);
+  max-height: 84vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.sheet-grid {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 2px 2px 4px;
+}
+
+.sheet-block h4 {
+  margin: 0 0 6px;
+  font-size: 11px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+/* One modifier per row: what put it there, what it is worth, how long is left.
+   Three columns rather than a sentence, because the eye is scanning down the
+   clocks rather than reading each one. */
+.sheet-mod {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto;
+  gap: 10px;
+  align-items: baseline;
+  padding: 5px 0;
+  border-top: 1px solid var(--line);
+  font-size: 12.5px;
+}
+
+.sheet-mod.good strong {
+  color: #9ad7a4;
+}
+
+.sheet-mod.bad strong {
+  color: #ff9a8c;
+}
+
+.sheet-mod em {
+  font-style: normal;
+  font-size: 11.5px;
+  color: var(--dim);
+  white-space: nowrap;
+}
+
+.sheet-ability {
+  padding: 7px 0;
+  border-top: 1px solid var(--line);
+}
+
+.sheet-ability strong {
+  display: flex;
+  align-items: center;
+  font-size: 13px;
+}
+
+.sheet-ability p {
+  margin: 3px 0 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
 /* Frosted so the board stays readable underneath. */
 .panel {
   background: rgba(20, 24, 33, 0.82);
@@ -3257,6 +3497,42 @@ select {
   font-weight: 700;
 }
 
+/*
+ * How much of a stat is on loan, beside the figure it is part of.
+ *
+ * Green up and red down rather than one neutral colour, because the sign is
+ * doing most of the work and a shred and a buff are read for opposite reasons
+ * -- "can I afford to attack into this" against "is it worth going now".
+ *
+ * Smaller and set away from the number by a hair. It qualifies the figure
+ * rather than competing with it: what the player wants first is 160, and only
+ * then how much of the 160 is about to leave.
+ */
+.delta {
+  margin-left: 3px;
+  font-style: normal;
+  font-size: 0.9em;
+  font-weight: 600;
+}
+
+.delta.up {
+  color: #7fd18b;
+}
+
+.delta.down {
+  color: #ff6a5c;
+}
+
+/* On cream the dock's greens and reds go chalky; both are darkened to the same
+   weight the paper ink is set at. */
+.battle.cinema .hud-skills .delta.up {
+  color: #2f7a3c;
+}
+
+.battle.cinema .hud-skills .delta.down {
+  color: #a8331f;
+}
+
 .passive-list {
   margin-top: 10px;
   padding-top: 8px;
@@ -4545,6 +4821,33 @@ select {
 }
 
 /* The rolled number, kept to one compact chip so the name gets the width. */
+/*
+ * The victim, after the ability name.
+ *
+ * Allowed to be the thing that truncates: the row is narrow, and of the two
+ * halves the ability name is the one you can guess the rest of ("Scene Ste...")
+ * while a half-eaten character name is a different character. So the name gets
+ * `flex: 0 0 auto` on the die and this takes the squeeze, with the ellipsis
+ * landing where it costs least.
+ *
+ * Dimmer than the ability. Two equally bright strings on one short line read as
+ * two facts to check; this one qualifies the other.
+ */
+.battle .roster .intent-row .at {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #e0b48a;
+  opacity: 0.92;
+}
+
+/* Pulled by a taunt: the player's own doing, and worth confirming took. Green
+   rather than the warning amber -- a redirected attack is a plan working. */
+.battle .roster .intent-row .at.forced {
+  color: #9ad7a4;
+  opacity: 1;
+}
+
 .battle .roster .intent-row b {
   flex: 0 0 auto;
   min-width: 15px;

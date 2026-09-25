@@ -1,5 +1,61 @@
 {
-  "clips": {},
+  "clips": {
+    "idle": {
+      "anchorX": 0.5114,
+      "aspect": 1.419643,
+      "footPad": 0.0,
+      "frames": 2,
+      "loops": true,
+      "normalised": 1.0,
+      "pxH": 224,
+      "restFill": 0.977679,
+      "size": 181039,
+      "src": "/sprites/kael/kael_idle.png",
+      "trimmed": 0
+    },
+    "move": {
+      "anchorX": 0.5114,
+      "aspect": 1.419643,
+      "footPad": 0.0,
+      "frames": 1,
+      "loops": false,
+      "normalised": 0.6852,
+      "pxH": 224,
+      "restFill": 0.977679,
+      "settlesInto": "idle",
+      "size": 84207,
+      "src": "/sprites/kael/kael_move.png",
+      "trimmed": 0
+    },
+    "pain": {
+      "anchorX": 0.427,
+      "aspect": 0.9,
+      "footPad": 0.0,
+      "frames": 1,
+      "loops": false,
+      "normalised": 1.0,
+      "pxH": 320,
+      "restFill": 1.0,
+      "size": 146390,
+      "src": "/sprites/kael/kael_pain.png",
+      "still": true,
+      "trimmed": 0
+    },
+    "thinking": {
+      "anchorX": 0.422,
+      "aspect": 0.959375,
+      "footPad": 0.0,
+      "frames": 1,
+      "loops": false,
+      "normalised": 1.0,
+      "pxH": 320,
+      "restFill": 1.0,
+      "size": 150358,
+      "src": "/sprites/kael/kael_thinking.png",
+      "still": true,
+      "trimmed": 0
+    }
+  },
   "stamp": {
     "sha256": "3912d4e50dafcbbf3932edd55d79c3e27a1c40f99d66b5065ae5f4ccb2af39cc",
     "size": 160644

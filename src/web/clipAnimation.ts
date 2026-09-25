@@ -3,7 +3,24 @@
 export { abilitySlug, slotAbilityName, abilityClipName, idleStances } from './clipNaming.ts';
 import { abilitySlug } from './clipNaming.ts';
 
-export { idleWeightFor } from './animationData.ts';
+export { idleWeightFor, statureFor, type Stature } from './animationData.ts';
+
+import { ANIMATION_CLIPS } from '../engine/sprites.generated.ts';
+
+/**
+ * The packed clips for a unit, by its id.
+ *
+ * Strips the `~n` an encounter adds when it deploys the same creature more than
+ * once (see `createBattle`). Three Red Understudies are three units with three
+ * identities and ONE set of drawings -- art belongs to the definition, and
+ * asking the catalogue for `understudy_red~2` would quietly return nothing and
+ * leave the second and third copies as still images.
+ *
+ * Everything that reaches for a clip goes through here rather than indexing
+ * `ANIMATION_CLIPS` directly, because the failure is silent: a missing entry
+ * looks exactly like a character nobody has drawn yet.
+ */
+export const clipsOf = (id: string) => ANIMATION_CLIPS[id.split('~')[0]!];
 
 import {
   ANIMATION_TUNING,
